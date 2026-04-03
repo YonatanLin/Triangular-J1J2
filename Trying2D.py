@@ -4,7 +4,7 @@ import numpy as np
 from numpy import log, sin, cos, sqrt, pi
 import matplotlib.pyplot as plt
 from tenpy import NearestNeighborModel, CouplingModel, SpinHalfSite, TwoSiteDMRGEngine, MPS, CouplingMPOModel, \
-    SpinModel, FermionSite, FermionModel, Lattice
+    SpinModel, FermionSite, FermionModel, Lattice, SpinHalfFermionSite
 import tenpy.linalg.np_conserved as npc
 from tenpy.models import lattice
 from tenpy.algorithms import dmrg
@@ -47,6 +47,20 @@ def PrintCouplings(model, Lx, Ly, fancy_print=False):
     else:
         print(couplings_list)
 
+def CreateHamiltonianMatrixFromCouplingsList(couplings_list, N_sites):
+    H = np.zeros((N_sites, N_sites))
+    for coupling in couplings_list:
+        strength = coupling[1]
+        site1 = coupling[0][0][1]
+        site2 = coupling[0][1][1]
+        if "Cd" in coupling[0][0][0]:
+            H[site1, site2] = strength
+        else:
+            H[site2, site1] = strength
+    assert (np.abs(H - np.conj(np.transpose(H))) < 1e-15).all()
+    return H
+
+
 
 def GetSpinSpinCorrelations(psi):
     pm_corr = psi.correlation_function("Sp", "Sm")
@@ -73,19 +87,21 @@ def PlotLattice(lat, ax, additional_couplings_to_plot=None, plot_nn_couplings=Tr
     ax.set_xlim(-1)
     ax.set_ylim(-1)
 
-def plotSpinCorrelationsMomentumSpace(ax, fig, Kx, Ky, spin_corr_k, Lx, Ly):
+def ImshowMatrix(ax, fig, X, Y, spin_corr_k, xlabel = r"$k_x / \pi$",
+                                      ylabel=r"$k_y / \pi$", title=None):
     image = ax.imshow(
         np.real(spin_corr_k),
         origin='lower',
-        extent=[Kx.min(), Kx.max(), Ky.min(), Ky.max()],
+        extent=[X.min(), X.max(), Y.min(), Y.max()],
         cmap='RdBu',
         aspect='auto',
     )
     cbar = fig.colorbar(image, ax=ax, pad=0.02)
     cbar.set_label(r"$S(\mathbf{k})$")
-    ax.set_title(f"Spin structure factor on a {Lx}x{Ly} square lattice")
-    ax.set_xlabel(r"$k_x / \pi$")
-    ax.set_ylabel(r"$k_y / \pi$")
+    if title is not None:
+        ax.set_title(title)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
     ax.axhline(0.0, color='white', linewidth=0.6, alpha=0.5)
     ax.axvline(0.0, color='white', linewidth=0.6, alpha=0.5)
 
@@ -142,7 +158,8 @@ def PlotSquareLatticeStructureFactor(Lx=6, Ly=6):
     Kx, Ky, spin_corr_k = ComputeMomentumSpaceStructureFactor(spin_corr_x, square_lat, Lx, Ly)
 
     fig, ax = plt.subplots(figsize=(6, 5))
-    plotSpinCorrelationsMomentumSpace(ax, fig, Kx, Ky, spin_corr_k, Lx, Ly)
+    title = f"Spin structure factor on a {Lx}x{Ly} square lattice"
+    ImshowMatrix(ax, fig, Kx, Ky, spin_corr_k, title=title)
 
     square_lat.plot_brillouin_zone(ax)
 
@@ -211,10 +228,11 @@ def Generate120DegOrderedState(lat=None, Lx=None, Ly=None):
     return psi
 
 
-def RunDMRG(model, psi_init, plot_convergence=False, print_final_results=False):
-    chi_max = 800
+def RunDMRG(model, psi_init, plot_convergence=False, print_final_results=False,
+            expected_energy=None):
+    chi_max = 1600
     dmrg_params = {'mixer': True, 'max_E_err': 1.0e-10, 'trunc_params': {'chi_max': chi_max, 'svd_min': 1.0e-10},
-                   'combine': True, 'chi_list': {0: 20, 10: 50, 20: chi_max}, 'min_sweeps': 25, 'max_sweeps': 50,
+                   'combine': True, 'chi_list': {0: 20, 5: 50, 10: chi_max}, 'min_sweeps': 25, 'max_sweeps': 50,
                    'N_sweeps_check': 1}
 
     info = dmrg.run(psi_init, model, dmrg_params)
@@ -234,6 +252,8 @@ def RunDMRG(model, psi_init, plot_convergence=False, print_final_results=False):
         ax.set_title("DMRG Sweeps Energies")
         ax.set_xlabel("sweep")
         ax.set_ylabel("E")
+        if expected_energy is not None:
+            ax.axhline(expected_energy, color="red", linewidth=0.6, alpha=0.5, linestyle="dashed")
         plt.show()
     return E, sweeps, energies, info
 
@@ -304,7 +324,8 @@ def TestSquareLattice(Lx=5, Ly=5, bc=('open', 'open'), J2s=[0.0]):
         fig_energy.savefig("SquareLatticeJ1J2/energy_convergence_J2_" + str(J2) + ".png", bbox_inches='tight')
 
         fig_corr, ax_corr = plt.subplots(figsize=(6, 5))
-        plotSpinCorrelationsMomentumSpace(ax_corr, fig_corr, Kx, Ky, spin_corr_k, Lx, Ly)
+        title = f"Spin structure factor on a {Lx}x{Ly} square lattice"
+        ImshowMatrix(ax_corr, fig_corr, Kx, Ky, spin_corr_k, title=title)
         square_lat.plot_brillouin_zone(ax_corr)
         fig_corr.tight_layout()
 
@@ -368,7 +389,8 @@ def TestTriangularLattice():
         Kx, Ky, spin_corr_k = ComputeMomentumSpaceStructureFactor(spin_corr_x, triangular_lat, Lx, Ly, assert_realness=False)
 
         fig_corr, ax_corr = plt.subplots(figsize=(6, 5))
-        plotSpinCorrelationsMomentumSpace(ax_corr, fig_corr, Kx, Ky, spin_corr_k, Lx, Ly)
+        title = f"Spin structure factor on a {Lx}x{Ly} square lattice"
+        ImshowMatrix(ax_corr, fig_corr, Kx, Ky, spin_corr_k, title=title)
 
 
     plot = True
@@ -397,81 +419,105 @@ class FermionicPiFluxModel(CouplingMPOModel):
         neg_hoppings_list = []
         pos_hoppings_list = []
         plus_hc = True
-        two_sublattice = model_params["two_sublattice"]
         rec_long_side_coors = model_params["rec_long_side_coors"]
-        if two_sublattice:
-            AddAndTrackCoupling(self, 1.0, 1, "Cd", 1, "C", [-1, 0], pos_hoppings_list, plus_hc=plus_hc)
-            AddAndTrackCoupling(self, -1.0, 0, "Cd", 0, "C", [-1, 0], neg_hoppings_list, plus_hc=plus_hc)
-            AddAndTrackCoupling(self, 1.0, 1, "Cd", 0, "C", [0, 0], pos_hoppings_list, plus_hc=plus_hc)
-            AddAndTrackCoupling(self, -1.0, 1, "Cd", 0, "C", [1, 0], neg_hoppings_list, plus_hc=plus_hc)
-            AddAndTrackCoupling(self, 1.0, 0, "Cd", 1, "C", np.array([-1, 0]) - np.array(rec_long_side_coors),
-                                pos_hoppings_list, plus_hc=plus_hc)
-            AddAndTrackCoupling(self, 1.0, 0, "Cd", 1, "C", (-1)*np.array(rec_long_side_coors),
-                                pos_hoppings_list, plus_hc=plus_hc)
+        spinfull = model_params["spinfull"]
+        if spinfull:
+            unitcell_hopping_pairs = [(0,2), (1,3)]
         else:
-            Lx = self.lat.Ls[0]
-            Ly = self.lat.Ls[1]
-            for i in range(Lx):
-                for j in range(Ly):
-                    for basis_vec in ([0, 1], [1, 0], [-1, 1]):
-                        di = basis_vec[0]
-                        dj = basis_vec[1]
-                        if (i+di) > Lx-1 or (i+di) < 0 or (j+dj) > Ly-1 or (j + dj) < 0:
-                            continue
-                        strength = DeterminePiFluxCoupling(i, j, di, dj, self.lat.basis)
-                        self.add_local_term(strength, [("Cd",(i, j, 0)), ("C", (i+di,j+dj,0))], plus_hc = True)
-                        if strength > 0:
-                            pos_hoppings_list.append((0, 0, [di, dj]))
-                        else:
-                            neg_hoppings_list.append((0, 0, [di, dj]))
+            unitcell_hopping_pairs = [(0, 1)]
+        for pair in unitcell_hopping_pairs:
+            s1 = pair[0]
+            s2 = pair[1]
+            AddAndTrackCoupling(self, 1.0, s2, "Cd", s2, "C", [-1, 0], pos_hoppings_list, plus_hc=plus_hc)
+            AddAndTrackCoupling(self, -1.0, s1, "Cd", s1, "C", [-1, 0], neg_hoppings_list, plus_hc=plus_hc)
+            AddAndTrackCoupling(self, 1.0, s2, "Cd", s1, "C", [0, 0], pos_hoppings_list, plus_hc=plus_hc)
+            AddAndTrackCoupling(self, -1.0, s2, "Cd", s1, "C", [1, 0], neg_hoppings_list, plus_hc=plus_hc)
+            AddAndTrackCoupling(self, 1.0, s1, "Cd", s2, "C", np.array([-1, 0]) - np.array(rec_long_side_coors),
+                                pos_hoppings_list, plus_hc=plus_hc)
+            AddAndTrackCoupling(self, 1.0, s1, "Cd", s2, "C", (-1) * np.array(rec_long_side_coors),
+                                pos_hoppings_list, plus_hc=plus_hc)
 
         self.neg_hoppings_list = neg_hoppings_list
         self.pos_hoppings_list = pos_hoppings_list
 
 
-def TriangularPiFluxAnsatz(Lx=4, Ly=2):
+def TriangularPiFluxAnsatz(Lx=3, Ly=2, spinfull=True):
     site = FermionSite(conserve='N')
-    two_sublattice = True
-    rec_long_side_coors = None
-    if two_sublattice:
-        lat_basis = [[0.5, sqrt(3) / 2.], [2.0, 0]]
+
+    lat_basis = [[0.5, sqrt(3) / 2.], [2.0, 0]]
+    if spinfull:
+        unitcell_pos = [[-0.1, 0.0],  [0.1, 0.0], [0.9, 0.0], [1.1, 0.0]]
+    else:
         unitcell_pos = [[0.0, 0.0], [1.0, 0.0]]
-        rec_long_side_coors = [-1, 1]
-        nearest_neighbors = [(1, 1, [1, 0]), (0, 0, [1, 0]), (0,1,[0,0]), (0,1,[-1,0]),
-                             (1,0,[0,1]), (1,0,[-1,1])]
-    else:
-        unitcell_pos = None
-        nearest_neighbors = [(0, 0, [1, 0]), (0, 0, [0, 1]), (0, 0, [1, -1])]
-        lat_basis = [[1., 0.], [0.5, np.sqrt(3) / 2.]]
 
-    if two_sublattice:
-        triangular_lat = lattice.Lattice([Lx,Ly], [site, site], basis=lat_basis,
-                                 positions=unitcell_pos, bc=['periodic', 'open'], pairs={'nearest_neighbors':nearest_neighbors})
-    else:
-        triangular_lat = lattice.Lattice([Lx, Ly], [site], basis=lat_basis, bc=['open','open'],
-                                         pairs={'nearest_neighbors':nearest_neighbors})
+    rec_long_side_coors = [-1, 1]
+    #nearest_neighbors = [(1, 1, [1, 0]), (0, 0, [1, 0]), (0,1,[0,0]), (0,1,[-1,0]),
+    #                      (1,0,[0,1]), (1,0,[-1,1])]
+    nearest_neighbors = []
 
-    pi_flux_model = FermionicPiFluxModel({"lattice": triangular_lat, "two_sublattice":two_sublattice,
-                                          "rec_long_side_coors":rec_long_side_coors})
+    triangular_lat = lattice.Lattice([Lx, Ly], [site] * len(unitcell_pos), basis=lat_basis,
+                                     positions=unitcell_pos, bc=['periodic', 'open'],
+                                     pairs={'nearest_neighbors': nearest_neighbors},
+                                     order=('standard', (False, True, False), (1,0,2)))
 
-    pi_flux_model.init_H_from_terms()
-    plot_lattice = False
+    pi_flux_model = FermionicPiFluxModel({"lattice": triangular_lat, "rec_long_side_coors":rec_long_side_coors,
+                                          "spinfull":spinfull})
+    # PrintCouplings(pi_flux_model, Lx, Ly)
+    plot_lattice = True
     if plot_lattice:
         fig_lat, ax_lat = plt.subplots()
-        # PlotLattice(triangular_lat, ax_lat)
-        PlotLattice(triangular_lat, ax_lat, pi_flux_model.pos_hoppings_list, plot_nn_couplings=False)
+        plot_order = True
+        PlotLattice(triangular_lat, ax_lat, pi_flux_model.pos_hoppings_list, plot_nn_couplings=False, plot_order=plot_order)
         PlotLattice(triangular_lat, ax_lat, pi_flux_model.neg_hoppings_list, plot_nn_couplings=False,
-                     nnn_line_style="--")
+                    nnn_line_style="--", plot_order=plot_order)
+        fig_lat.savefig("PiFluxAnsatzResults/lattice.png", bbox_inches='tight')
         plt.show()
 
     N_sites = triangular_lat.N_sites
-    psi_init = MPS.from_product_state(
-        triangular_lat.mps_sites(),
-        ["full"] * (N_sites // 2) + ["empty"] * (N_sites // 2),
-        bc=triangular_lat.bc_MPS,
-        unit_cell_width=triangular_lat.mps_unit_cell_width,
-    )
-    RunDMRG(pi_flux_model, psi_init, plot_convergence=True, print_final_results=True)
+
+    pi_flux_model.init_H_from_terms()
+    couplings_list = pi_flux_model.all_coupling_terms().to_TermList()
+
+    H = CreateHamiltonianMatrixFromCouplingsList(couplings_list, N_sites)
+    if Lx > 2:
+        assert(np.max(np.abs(H)) < 1. + 1e-15)
+    C, _ = slater.correlation_matrix(H)
+    trunc_par = {"chi_max": 2000, "svd_min": 1e-6, "degeneracy_tol": 1e-12}
+    psi_from_slater = slater.C_to_MPS(C, trunc_par)
+
+    mps_slater_corr = psi_from_slater.correlation_function("Cd", "C")
+    
+    psi_dmrg = MPS.from_product_state(triangular_lat.mps_sites(),
+                                      ["full"] * (N_sites // 2) + ["empty"] * (N_sites // 2),
+                                      bc=triangular_lat.bc_MPS)
+    E_slater_mps = pi_flux_model.H_MPO.expectation_value(psi_from_slater)
+    RunDMRG(pi_flux_model, psi_dmrg, plot_convergence=True, print_final_results=True, expected_energy=E_slater_mps)
+    dmrg_corr = psi_dmrg.correlation_function("Cd", "C")
+
+    print("Energy for mps-slater:", E_slater_mps)
+    print("Energy from dmrg:", pi_flux_model.H_MPO.expectation_value(psi_dmrg))
+
+    X,Y = np.meshgrid(np.arange(0,N_sites),np.arange(0,N_sites))
+    fig_slater_corr, ax_slater_corr = plt.subplots()
+    fig_mps_slater_corr, ax_mps_slater_corr = plt.subplots()
+    fig_dmrg_corr, ax_dmrg_corr = plt.subplots()
+    ImshowMatrix(ax_slater_corr, fig_slater_corr, X, Y, C, "i", "j")
+    ImshowMatrix(ax_mps_slater_corr, fig_mps_slater_corr, X, Y, mps_slater_corr, "i", "j")
+    ImshowMatrix(ax_dmrg_corr, fig_mps_slater_corr, X, Y, dmrg_corr, "i", "j")
+
+    np.savetxt("PiFluxAnsatzResults/C_slater.csv", C)
+    np.savetxt("PiFluxAnsatzResults/C_slater_mps.csv", mps_slater_corr)
+    np.savetxt("PiFluxAnsatzResults/C_dmrg.csv", dmrg_corr)
+
+    fig_slater_corr.savefig("PiFluxAnsatzResults/slater_exact_correlations.png", bbox_inches='tight')
+    fig_mps_slater_corr.savefig("PiFluxAnsatzResults/slater_mps_correlations.png", bbox_inches='tight')
+    fig_dmrg_corr.savefig("PiFluxAnsatzResults/dmrg_correlations.png", bbox_inches='tight')
+
+    print("absolute value of overlap between slater and dmrg: ", np.abs(psi_dmrg.overlap(psi_from_slater)))
+    print("correlations max distance between slater-mps and exact slater: ", np.max(np.abs(mps_slater_corr - C)))
+    print("correlations max distance between slater-mps and dmrg: ", np.max(np.abs(mps_slater_corr - dmrg_corr)))
+    print("slater norm: ", psi_from_slater.norm)
+    print("dmrg norm: ", psi_dmrg.norm)
 
 
 
@@ -480,5 +526,6 @@ if __name__ == "__main__":
     #Generate120DegOrderedState()
     # TestTriangularLattice()
     # TestSquareLattice(6, 6, J2s=[0.0, 0.9])
-    TriangularPiFluxAnsatz()
+
+    TriangularPiFluxAnsatz(spinfull=True, Lx=3, Ly=2)
 

@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 from tenpy import TransferMatrix
 from tenpy.models import lattice
 from numpy.linalg import norm, eigh
-
+import temfpy.gutzwiller as gutz
 colors = ["blue", "orange", "green", "red", "purple", "pink",
               "magenta"]
 
@@ -103,12 +103,45 @@ def Hopping1D_iMPS():
                                 "b^")
     plt.show()
 
+def ContractMPS(mps):
+    mps_tensors_list = [mps.get_B(i) for i in range(mps.L)]
+    contracted_mps = mps_tensors_list[0]
+    for B in mps_tensors_list[1:]:
+        contracted_mps = tenpy.linalg.np_conserved.tensordot(
+            contracted_mps, B, axes=(['vR'], ['vL'])
+        )
+    contracted_mps = np.squeeze(contracted_mps.to_ndarray())
+    return contracted_mps
+
+def TryGutzwiller():
+    H = np.array([[0, -1, 0, -2], [-1, 0, -2, 0], [0, -2, 0, -1], [-2, 0, -1, 0]])
+    C, _ = slater.correlation_matrix(H)
+    trunc_par = {"chi_max": 100, "svd_min": 1e-12, "degeneracy_tol": 1e-12}
+    mps = slater.C_to_MPS(C, trunc_par)
+    contracted_mps = ContractMPS(mps)
+    print("The fermion mps gives the state: ")
+    for i in range(2):
+        for j in range(2):
+            for k in range(2):
+                for l in range(2):
+                    if(abs(contracted_mps[i,j,k,l]) > 1e-15):
+                        print(f"|{i},{j},{k},{l}>:{contracted_mps[i,j,k,l]}")
+
+    print("The spin mps gives the state: ")
+    mps_gutz = gutz.abrikosov(mps)
+    contracted_mps_gutz = ContractMPS(mps_gutz)
+    for i in range(2):
+        for j in range(2):
+            print(f"|{i},{j}>:{contracted_mps_gutz[i,j]}")
 
 
 if __name__ == "__main__":
     try_iMPS = False
-    try_MPS = True
+    try_MPS = False
+    try_Gutzwiller = True
 
+    if try_Gutzwiller:
+        TryGutzwiller()
     if try_iMPS:
         Hopping1D_iMPS()
 
@@ -136,3 +169,4 @@ if __name__ == "__main__":
                               label_svd=True, show_entanglement_diff=True, show_n_expect=show_n_expect)
                 plt.legend()
             plt.show()
+

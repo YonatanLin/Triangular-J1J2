@@ -482,7 +482,7 @@ def TriangularPiFluxAnsatz(Lx=2, Ly=3, spinfull=True, bc_MPS="infinite"):
     pi_flux_model.init_H_from_terms()
     couplings_list = pi_flux_model.all_coupling_terms().to_TermList()
 
-    chi_max = 1000
+    chi_max = 5000
     slater_trunc_par = {"chi_max": chi_max, "svd_min": 1e-7, "degeneracy_tol": 1e-12}
 
     mps_unitcell = len(unitcell_pos) * Ly

@@ -237,7 +237,7 @@ def RunDMRG(model, psi_init, plot_convergence=False, print_final_results=False,
     chi_max = 1600
     # chi_max = 300
     dmrg_params = {'mixer': True, 'max_E_err': 1.0e-10, 'trunc_params': {'chi_max': chi_max, 'svd_min': 1.0e-10},
-                   'combine': True, 'chi_list': {0: 20, 5: 50, 10: chi_max}, 'min_sweeps': 15, 'max_sweeps': 50,
+                   'combine': True, 'chi_list': {0: 20, 5: 50, 10: chi_max}, 'min_sweeps': 15, 'max_sweeps': 20,
                    'N_sweeps_check': 1}
     E_initial = model.H_MPO.expectation_value(psi_init)
     info = dmrg.run(psi_init, model, dmrg_params)
@@ -248,8 +248,6 @@ def RunDMRG(model, psi_init, plot_convergence=False, print_final_results=False,
     if print_final_results:
         print(f'E = {E_final:.13f}')
         print('final bond dimensions: ', psi_init.chi)
-        #mag_z = np.sum(psi_init.expectation_value('Sz'))
-        #print(f'magnetization in Z = {mag_z:.5f}')
 
     if plot_convergence:
         fig,ax = plt.subplots()
@@ -443,6 +441,22 @@ class FermionicPiFluxModel(CouplingMPOModel):
         self.pos_hoppings_list = pos_hoppings_list
 
 
+def CalculateExactCMatrixForPiFlux(Lx, Ly, spinfull, site,
+                                   lat_basis, unitcell_pos, pairs, order, rec_long_side_coors):
+    bc_slater = ["open", "periodic"]
+    triangular_lat = lattice.Lattice([Lx, Ly], [site] * len(unitcell_pos), basis=lat_basis,
+                                     positions=unitcell_pos, bc=bc_slater, pairs=pairs, order=order,
+                                     bc_MPS="finite")
+    pi_flux_model = FermionicPiFluxModel({"lattice": triangular_lat,
+                                          "rec_long_side_coors": rec_long_side_coors,
+                                          "spinfull": spinfull})
+
+    couplings_list = pi_flux_model.all_coupling_terms().to_TermList()
+    H = CreateHamiltonianMatrixFromCouplingsList(couplings_list, triangular_lat.N_sites)
+    C, _ = slater.correlation_matrix(H)
+    return C, triangular_lat
+
+
 def TriangularPiFluxAnsatz(Lx=2, Ly=3, spinfull=True, bc_MPS="infinite"):
     site = FermionSite(conserve='N')
     lat_basis = [[2.0, 0], [0.5, sqrt(3) / 2.]]
@@ -455,9 +469,9 @@ def TriangularPiFluxAnsatz(Lx=2, Ly=3, spinfull=True, bc_MPS="infinite"):
     #nearest_neighbors = [(1, 1, [1, 0]), (0, 0, [1, 0]), (0,1,[0,0]), (0,1,[-1,0]),
     #                      (1,0,[0,1]), (1,0,[-1,1])]
     nearest_neighbors = []
-    bc = ['periodic', 'open']
+    bc = ['open', 'periodic']
     if bc_MPS == "infinite":
-        bc[1] = 'periodic'
+        bc[0] = 'periodic'
     pairs = {'nearest_neighbors': nearest_neighbors}
     order = ('standard', (True, False, False), (0,1,2))
     triangular_lat = lattice.Lattice([Lx, Ly], [site] * len(unitcell_pos), basis=lat_basis,
@@ -482,10 +496,12 @@ def TriangularPiFluxAnsatz(Lx=2, Ly=3, spinfull=True, bc_MPS="infinite"):
     pi_flux_model.init_H_from_terms()
     couplings_list = pi_flux_model.all_coupling_terms().to_TermList()
 
-    chi_max = 5000
+    chi_max = 600
     slater_trunc_par = {"chi_max": chi_max, "svd_min": 1e-7, "degeneracy_tol": 1e-12}
 
     mps_unitcell = len(unitcell_pos) * Ly
+    Lx_short, Ly_short = 100, Ly
+    Lx_long, Ly_long = 101, Ly
     if bc_MPS == "finite":
         H = CreateHamiltonianMatrixFromCouplingsList(couplings_list, N_sites)
         if Lx > 2:
@@ -494,33 +510,22 @@ def TriangularPiFluxAnsatz(Lx=2, Ly=3, spinfull=True, bc_MPS="infinite"):
         psi_from_slater = slater.C_to_MPS(C, slater_trunc_par)
 
     else:
-        Lx_short, Ly_short = 100, Ly
-        Lx_long, Ly_long = 101, Ly
-        triangular_lat_short = lattice.Lattice([Lx_short, Ly_short], [site] * len(unitcell_pos), basis=lat_basis,
-                                         positions=unitcell_pos, bc=bc, pairs=pairs, order=order, bc_MPS="finite")
-        pi_flux_model_short = FermionicPiFluxModel({"lattice": triangular_lat_short,
-                                                    "rec_long_side_coors":rec_long_side_coors,
-                                                    "spinfull":spinfull})
-
-        triangular_lat_long = lattice.Lattice([Lx_long, Ly_long], [site] * len(unitcell_pos), basis=lat_basis,
-                                               positions=unitcell_pos, bc=bc, pairs=pairs, order=order, bc_MPS="finite")
-        pi_flux_model_long = FermionicPiFluxModel({"lattice": triangular_lat_long,
-                                                   "rec_long_side_coors": rec_long_side_coors,
-                                                   "spinfull": spinfull})
-        couplings_list_short = pi_flux_model_short.all_coupling_terms().to_TermList()
-        couplings_list_long = pi_flux_model_long.all_coupling_terms().to_TermList()
-        H_short = CreateHamiltonianMatrixFromCouplingsList(couplings_list_short, triangular_lat_short.N_sites)
-        H_long = CreateHamiltonianMatrixFromCouplingsList(couplings_list_long, triangular_lat_long.N_sites)
-
-        C_short, _ = slater.correlation_matrix(H_short)
-        C_long, _ = slater.correlation_matrix(H_long)
+        C_short, triangular_lat_short = CalculateExactCMatrixForPiFlux(Lx_short, Ly_short, spinfull, site,
+                                                                       lat_basis, unitcell_pos, pairs, order,
+                                                                       rec_long_side_coors)
+        C_long, _ = CalculateExactCMatrixForPiFlux(Lx_long, Ly_long, spinfull, site,
+                                                   lat_basis, unitcell_pos, pairs, order, rec_long_side_coors)
 
         middle_site_mps_ind_short = triangular_lat_short.lat2mps_idx([Lx_short // 2, 0, 0])
 
         psi_from_slater, error = slater.C_to_iMPS(C_short, C_long, slater_trunc_par,
                                                   sites_per_cell=mps_unitcell,
                                                   cut= middle_site_mps_ind_short)
-        C = []
+
+        C_10_unitcells, triangular_lat_10_unitcells = CalculateExactCMatrixForPiFlux(10, Ly_short, spinfull, site,
+                                                                       lat_basis, unitcell_pos, pairs, order,
+                                                                       rec_long_side_coors)
+        C = C_10_unitcells
 
     sites1 = None
     sites2 = None
@@ -528,14 +533,15 @@ def TriangularPiFluxAnsatz(Lx=2, Ly=3, spinfull=True, bc_MPS="infinite"):
         sites1 = np.arange(0, 10 * mps_unitcell)
         sites2 = np.arange(0, 10 * mps_unitcell)
 
-    mps_slater_corr = psi_from_slater.correlation_function("Cd", "C", sites1=sites1, sites2=sites2)
     E_slater_mps = pi_flux_model.H_MPO.expectation_value(psi_from_slater)
     print("Energy for mps-slater:", E_slater_mps)
-
+    mps_slater_corr = psi_from_slater.correlation_function("Cd", "C", sites1=sites1, sites2=sites2)
     psi_dmrg = MPS.from_product_state(triangular_lat.mps_sites(),
                                       ["full"] * (N_sites // 2) + ["empty"] * (N_sites // 2),
                                       bc=triangular_lat.bc_MPS)
-    RunDMRG(pi_flux_model, psi_dmrg, plot_convergence=True, print_final_results=True, expected_energy=E_slater_mps)
+    results_dir = "PiFluxAnsatzResults/"
+    RunDMRG(pi_flux_model, psi_dmrg, plot_convergence=True, print_final_results=True, expected_energy=E_slater_mps,
+            results_dir=results_dir, energies_fig_title="energies.png")
     dmrg_corr = psi_dmrg.correlation_function("Cd", "C", sites1=sites1, sites2=sites2)
 
     print("Energy for mps-slater:", E_slater_mps)
@@ -546,23 +552,21 @@ def TriangularPiFluxAnsatz(Lx=2, Ly=3, spinfull=True, bc_MPS="infinite"):
     fig_mps_slater_corr, ax_mps_slater_corr = plt.subplots()
     fig_dmrg_corr, ax_dmrg_corr = plt.subplots()
 
-    if bc == "finite":
-        ImshowMatrix(ax_slater_corr, fig_slater_corr, X, Y, C, "i", "j")
+    ImshowMatrix(ax_slater_corr, fig_slater_corr, X, Y, C, "i", "j")
     ImshowMatrix(ax_mps_slater_corr, fig_mps_slater_corr, X, Y, mps_slater_corr, "i", "j")
     ImshowMatrix(ax_dmrg_corr, fig_mps_slater_corr, X, Y, dmrg_corr, "i", "j")
 
-    np.savetxt("PiFluxAnsatzResults/C_slater.csv", C)
-    np.savetxt("PiFluxAnsatzResults/C_slater_mps.csv", mps_slater_corr)
-    np.savetxt("PiFluxAnsatzResults/C_dmrg.csv", dmrg_corr)
+    np.savetxt(results_dir + "C_slater.csv", C)
+    np.savetxt(results_dir + "C_slater_mps.csv", mps_slater_corr)
+    np.savetxt(results_dir + "C_dmrg.csv", dmrg_corr)
 
-    fig_slater_corr.savefig("PiFluxAnsatzResults/slater_exact_correlations.png", bbox_inches='tight')
-    fig_mps_slater_corr.savefig("PiFluxAnsatzResults/slater_mps_correlations.png", bbox_inches='tight')
-    fig_dmrg_corr.savefig("PiFluxAnsatzResults/dmrg_correlations.png", bbox_inches='tight')
+    fig_slater_corr.savefig(results_dir + "slater_exact_correlations.png", bbox_inches='tight')
+    fig_mps_slater_corr.savefig(results_dir + "slater_mps_correlations.png", bbox_inches='tight')
+    fig_dmrg_corr.savefig(results_dir + "dmrg_correlations.png", bbox_inches='tight')
 
     print("absolute value of overlap between slater and dmrg: ", np.abs(psi_dmrg.overlap(psi_from_slater)))
     print("correlations max distance between slater-mps and dmrg: ", np.max(np.abs(mps_slater_corr - dmrg_corr)))
-    if bc == "finite":
-        print("correlations max distance between slater-mps and exact slater: ", np.max(np.abs(mps_slater_corr - C)))
+    print("correlations max distance between slater-mps and exact slater: ", np.max(np.abs(mps_slater_corr - C)))
 
     print("slater norm: ", psi_from_slater.norm)
     print("dmrg norm: ", psi_dmrg.norm)

@@ -14,10 +14,16 @@ import pickle
 import temfpy.gutzwiller as gutz
 from TryingTemfpy import rc_params
 from pathlib import Path
+import json
 
 setup_logging(to_stdout="INFO")
 
 plt.rcParams.update(rc_params)
+
+default_chi_max = 1600
+default_dmrg_params = {'mixer': True, 'max_E_err': 1.0e-10, 'trunc_params': {'chi_max': default_chi_max, 'svd_min': 1.0e-7},
+                   'combine': True, 'chi_list': {0: 50, 3: 100, 7: default_chi_max}, 'min_sweeps': 10, 'max_sweeps': 30,
+                   'N_sweeps_check': 1}
 
 def AddAndTrackCoupling(model, strength, u1, op1, u2, op2, dx, couplings_list, plus_hc=False):
     model.add_coupling(strength, u1, op1, u2, op2, dx, plus_hc=plus_hc)
@@ -228,12 +234,9 @@ def Generate120DegOrderedState(lat=None, Lx=None, Ly=None, plot=False):
     return psi
 
 
-def RunDMRG(model, psi_init, plot_convergence=False, print_final_results=False,
-            expected_energy=None, results_dir="", energies_fig_title=None, chi_max=1600):
-    # chi_max = 1600
-    dmrg_params = {'mixer': True, 'max_E_err': 1.0e-10, 'trunc_params': {'chi_max': chi_max, 'svd_min': 1.0e-7},
-                   'combine': True, 'chi_list': {0: 50, 3: 100, 7: chi_max}, 'min_sweeps': 10, 'max_sweeps': 30,
-                   'N_sweeps_check': 1}
+def RunDMRG(model, psi_init, dmrg_params=default_dmrg_params,
+            plot_convergence=False, print_final_results=False,
+            expected_energy=None, results_dir="", energies_fig_title=None):
     E_initial = model.H_MPO.expectation_value(psi_init)
     info = dmrg.run(psi_init, model, dmrg_params)
     E_final = info['E']
@@ -280,10 +283,10 @@ def TestSquareLattice(Lx=5, Ly=5, bc=('open', 'open'), J2s=[0.0],
 
         J1J2_model.init_H_from_terms()
 
-        results_folder = "SquareLatticeJ1J2/"
+        results_dir = "SquareLatticeJ1J2/"
         fig_lat, ax_lat = plt.subplots()
         PlotLattice(square_lat, ax_lat, additional_couplings_to_plot=nnn_couplings_list)
-        fig_lat.savefig(results_folder + "lattice.png", bbox_inches='tight')
+        fig_lat.savefig(results_dir + "lattice.png", bbox_inches='tight')
 
         psi = MPS.from_product_state(
             square_lat.mps_sites(),
@@ -302,7 +305,7 @@ def TestSquareLattice(Lx=5, Ly=5, bc=('open', 'open'), J2s=[0.0],
         print("Initial energy per site: ", initial_energy_per_site)
         energies_fig_title = "energy_convergence_J2_" + str(J2) + ".png"
         E_initial, E_gs, sweeps, energies, info = RunDMRG(J1J2_model, psi, plot_convergence=True, print_final_results=True,
-                                                       results_dir=results_folder, energies_fig_title=energies_fig_title)
+                                                       results_dir=results_dir, energies_fig_title=energies_fig_title)
         energy_per_site = E_gs
 
         with open("Energy_J2_"+str(J2)+".txt", "w") as f:
@@ -312,7 +315,7 @@ def TestSquareLattice(Lx=5, Ly=5, bc=('open', 'open'), J2s=[0.0],
             energy_per_site /= square_lat.N_sites
         print(f"Energy per site = {energy_per_site:.13f}")
 
-        with open(results_folder + 'psi_gs_J2_'+str(J2)+".pkl", 'wb') as f:
+        with open(results_dir + 'psi_gs_J2_'+str(J2)+".pkl", 'wb') as f:
             pickle.dump(psi, f)
 
         spin_corr = GetSpinSpinCorrelations(psi)
@@ -383,6 +386,16 @@ def TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, flux, initial_state, conserve)
     return geometry_dir, state_dir
 
 
+def CreateTriangularCaseDir(main_results_dir,  Lx, Ly, bc, bc_MPS, flux, initial_state, conserve):
+    Path(main_results_dir).mkdir(parents=True, exist_ok=True)
+    geometry_dir, state_dir = TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, flux, initial_state, conserve)
+    results_dir = main_results_dir + geometry_dir
+    Path(results_dir).mkdir(parents=True, exist_ok=True)
+    results_dir += state_dir
+    Path(results_dir).mkdir(parents=True, exist_ok=True)
+    return results_dir
+
+
 def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, flux=0.0, conserve=True,
                        initial_state="Neel"):
     if isinstance(bc, str):
@@ -390,12 +403,11 @@ def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, flux=0.0, conserve=True,
         bc = (bc_parsed[0], bc_parsed[1])
 
     main_results_dir = "TriangularLatticeResults/"
-    Path(main_results_dir).mkdir(parents=True, exist_ok=True)
-    geometry_dir, state_dir = TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, flux, initial_state, conserve)
-    results_dir = main_results_dir + geometry_dir
-    Path(results_dir).mkdir(parents=True, exist_ok=True)
-    results_dir += state_dir
-    Path(results_dir).mkdir(parents=True, exist_ok=True)
+    dmrg_params = default_dmrg_params
+    results_dir = CreateTriangularCaseDir(main_results_dir,  Lx, Ly, bc, bc_MPS, flux, initial_state, conserve)
+    with open(results_dir + "dmrg_params.json", "w") as f:
+        json.dump(dmrg_params, f, indent=4)
+    exit(1)
 
     fig_lat, ax_lat = plt.subplots(figsize=(6, 5))
     if conserve:
@@ -433,7 +445,8 @@ def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, flux=0.0, conserve=True,
 
     psi = GetTriangularLatticeInitialState(initial_state, triangular_lat)
 
-    RunDMRG(J1J2_model, psi, plot_convergence=True, print_final_results=True, results_dir=results_dir,
+    RunDMRG(J1J2_model, psi, dmrg_params=dmrg_params,
+            plot_convergence=True, print_final_results=True, results_dir=results_dir,
             energies_fig_title="energies.png")
 
     sites1, sites2 = None, None
@@ -583,15 +596,20 @@ def TriangularPiFluxAnsatz(Lx=2, Ly=3, spinfull=True, bc_MPS="infinite", particl
                            chi_max_temfpy = 600):
     #if bc_MPS == "infinite":
     #    assert(Lx == 1)
+    main_results_dir = "PiFluxAnsatzResults/"
+
     site = FermionSite(conserve='N')
     triangular_lat, params_lat = GetPiFluxTriangularLattice(site, Lx, Ly, spinfull, bc_MPS)
+    bc_lat = triangular_lat.boundary_conditions
+    conserve_N = (site.conserve=='N')
+    results_dir = CreateTriangularCaseDir(main_results_dir, Lx, Ly, bc_lat, bc_MPS,
+                                      0.0, "Neel", conserve_N)
     rec_long_side_coors = params_lat["rec_long_side_coors"]
     unitcell_pos = params_lat["unitcell_pos"]
 
     pi_flux_model = FermionicPiFluxModel({"lattice": triangular_lat, "rec_long_side_coors":rec_long_side_coors,
-                                          "spinfull":spinfull})
-    middle_site_mps_ind = triangular_lat.lat2mps_idx([Lx // 2 - 1, Ly - 1, 3])
-    print("middle site: ", middle_site_mps_ind)
+                                          "spinfull":spinfull, "particle_hole":particle_hole})
+
     plot_lattice = True
     if plot_lattice:
         fig_lat, ax_lat = plt.subplots()
@@ -599,13 +617,12 @@ def TriangularPiFluxAnsatz(Lx=2, Ly=3, spinfull=True, bc_MPS="infinite", particl
         PlotLattice(triangular_lat, ax_lat, pi_flux_model.pos_hoppings_list, plot_nn_couplings=False, plot_order=plot_order)
         PlotLattice(triangular_lat, ax_lat, pi_flux_model.neg_hoppings_list, plot_nn_couplings=False,
                     nnn_line_style="--", plot_order=plot_order)
-        fig_lat.savefig("PiFluxAnsatzResults/lattice.png", bbox_inches='tight')
+        fig_lat.savefig(results_dir + "lattice.png", bbox_inches='tight')
         plt.show()
 
     N_sites = triangular_lat.N_sites
 
     pi_flux_model.init_H_from_terms()
-    couplings_list = pi_flux_model.all_coupling_terms().to_TermList()
 
     mps_unitcell = len(unitcell_pos) * Ly
     Lx_short = 100
@@ -634,9 +651,11 @@ def TriangularPiFluxAnsatz(Lx=2, Ly=3, spinfull=True, bc_MPS="infinite", particl
     psi_dmrg = MPS.from_product_state(triangular_lat.mps_sites(),
                                       ["full"] * (N_sites // 2) + ["empty"] * (N_sites // 2),
                                       bc=triangular_lat.bc_MPS)
-    results_dir = "PiFluxAnsatzResults/"
+    dmrg_params = default_dmrg_params
+    dmrg_params["trunc_params"]["chi_max"] = 500
+    dmrg_params["max_sweeps"] = 20
     RunDMRG(pi_flux_model, psi_dmrg, plot_convergence=True, print_final_results=True, expected_energy=E_slater_mps,
-            results_dir=results_dir, energies_fig_title="energies.png")
+            dmrg_params=dmrg_params, results_dir=results_dir, energies_fig_title="energies.png")
     dmrg_corr = psi_dmrg.correlation_function("Cd", "C", sites1=sites1, sites2=sites2)
 
     print("Energy for mps-slater:", E_slater_mps)
@@ -652,9 +671,10 @@ def TriangularPiFluxAnsatz(Lx=2, Ly=3, spinfull=True, bc_MPS="infinite", particl
     ImshowMatrix(ax_mps_slater_corr, fig_mps_slater_corr, X, Y, mps_slater_corr, "i", "j")
     ImshowMatrix(ax_dmrg_corr, fig_mps_slater_corr, X, Y, dmrg_corr, "i", "j")
 
-    np.savetxt(results_dir + "C_slater.csv", C)
-    np.savetxt(results_dir + "C_slater_mps.csv", mps_slater_corr)
-    np.savetxt(results_dir + "C_dmrg.csv", dmrg_corr)
+    with open(results_dir + 'psi_slater' + ".pkl", 'wb') as f:
+        pickle.dump(psi_from_slater, f)
+    with open(results_dir + 'psi_dmrg' + ".pkl", 'wb') as f:
+        pickle.dump(psi_dmrg, f)
 
     fig_slater_corr.savefig(results_dir + "slater_exact_correlations.png", bbox_inches='tight')
     fig_mps_slater_corr.savefig(results_dir + "slater_mps_correlations.png", bbox_inches='tight')
@@ -690,7 +710,7 @@ def TriangularPiFluxGutzwiller(Ly, finite=True):
     mps_unitcell = 4 * Ly
     chi_max = 600
     spin_site = SpinHalfSite(conserve='Sz')
-    results_folder = "TriangularPiFluxGutzwiller/"
+    results_dir = "TriangularPiFluxGutzwiller/"
 
     unit_cell_spin_lat = [[0.0, 0.0], [1.0, 0.0]]
     basis = [[2.0, 0.0], [0.5, sqrt(3) / 2.]]
@@ -751,14 +771,14 @@ def TriangularPiFluxGutzwiller(Ly, finite=True):
                                                               assert_realness=False)
     fig,ax = plt.subplots()
 
-    with open(results_folder + 'psi_gutzwiller' + ".pkl", 'wb') as f:
+    with open(results_dir + 'psi_gutzwiller' + ".pkl", 'wb') as f:
         pickle.dump(psi_gutzwiller, f)
 
     ImshowMatrix(ax, fig, Kx, Ky, spin_corr_k)
     spin_lat_no_unitcell = BuildTriangularLatticeAlignedWithX(Lx_short, Ly, spin_site, "finite")
     spin_lat_no_unitcell.plot_brillouin_zone(ax)
     ax.set_title("Spin Correlations")
-    fig.savefig(results_folder + "spin_correlations.png", bbox_inches='tight')
+    fig.savefig(results_dir + "spin_correlations.png", bbox_inches='tight')
     plt.show()
 
 
@@ -769,5 +789,6 @@ if __name__ == "__main__":
     # TestTriangularLattice()
     # TestSquareLattice(6, 6, J2s=[0.0, 0.9])
     # TestSquareLattice(2, 3, J2s=[0.0], bc=("periodic", "periodic"), bc_MPS="infinite")
-    # TriangularPiFluxAnsatz(spinfull=True, Lx=2, Ly=4)
-    TriangularPiFluxGutzwiller(3)
+    TriangularPiFluxAnsatz(spinfull=True, Lx=1, Ly=3, chi_max_temfpy=1000)
+    # TriangularJ1J2DMRG(1, 2, ("open", "open"), "infinite")
+    # TriangularPiFluxGutzwiller(3)

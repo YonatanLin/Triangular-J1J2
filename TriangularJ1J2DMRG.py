@@ -1,5 +1,7 @@
 import argparse
 
+import numpy as np
+
 from Trying2D import TriangularJ1J2DMRG, TriangularJ1J2CaseDirName
 from pathlib import Path
 
@@ -49,7 +51,6 @@ def build_parser():
     )
 
     return parser
-
 
 def main():
     args = build_parser().parse_args()

@@ -1,19 +1,13 @@
 
 from temfpy import slater
-import tenpy
 import numpy as np
 from numpy import log, sin, cos, sqrt, pi
 import matplotlib.pyplot as plt
-from tenpy.models import lattice
-from tenpy import MPS
-import tenpy.linalg.np_conserved as npc
+from numpy.linalg import eigh
 import temfpy.gutzwiller as gutz
-from tenpy import NearestNeighborModel, CouplingModel, SpinHalfSite, Chain, TwoSiteDMRGEngine, MPS, CouplingMPOModel, \
-    SpinModel, FermionSite, FermionModel, Lattice, SpinHalfFermionSite
+from tenpy import SpinHalfSite, Chain, MPS, CouplingMPOModel
 from Trying2D import RunDMRG, GetSpinSpinCorrelations
-from temfpy.gutzwiller import number_mask, parity_mask
-from tenpy import networks
-
+from Trying2D import ExplicitMPSNorm
 
 class HaldaneShastryModel(CouplingMPOModel):
     def init_terms(self, model_params):
@@ -44,6 +38,10 @@ def GutzwillerState(L, finite=True):
     trunc_par = {"chi_max": chi_max, "svd_min": svd_min, "degeneracy_tol": 1e-12}
     if finite:
         H = tight_binding(L)
+        e, v = eigh(H)
+        if np.min(np.abs(e)) < 1e-15:
+            print("cant handle zero modes in Gutzwiller projections")
+            exit(1)
         C, _ = slater.correlation_matrix(H, N=L)
         mps = slater.C_to_MPS(C, trunc_par)
     else:
@@ -57,6 +55,7 @@ def GutzwillerState(L, finite=True):
 
     # mps_gutz = gutz.abrikosov(mps)
     mps_gutz = gutz.abrikosov_ph(mps, return_canonical=False)
+    print("Gutzwiller norm: ", ExplicitMPSNorm(mps_gutz))
     mps_gutz.canonical_form()
     # for i_B, B in enumerate(mps_gutz._B):
     #    mps_gutz._B[i_B] = B.drop_charge()
@@ -99,6 +98,6 @@ def HaldaneShastry(L=20):
 
 
 if __name__ == "__main__":
-    L = 18
-    # GutzwillerState(L, False)
+    L = 26
+    # GutzwillerState(L)
     HaldaneShastry(L)

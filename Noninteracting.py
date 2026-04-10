@@ -2,6 +2,7 @@ import numpy as np
 import scipy as sp
 import matplotlib.pyplot as plt
 from numpy import pi, sin, cos, sqrt
+from scipy.spatial import Voronoi
 
 fontsize = 18
 rc_params = {
@@ -20,27 +21,100 @@ rc_params = {
 }
 plt.rcParams.update(rc_params)
 
+
+def rotate_vector(vec, tet):
+    c, s = np.cos(tet), np.sin(tet)
+    rotation_matrix = np.array([[c, -s], [s, c]])
+
+    # Perform the rotation
+    return np.dot(rotation_matrix, vec)
+
+def plot_bz1(ax, b1, b2):
+    """
+    Plots the 1st Brillouin Zone given two reciprocal lattice vectors.
+    """
+    # 1. Generate reciprocal lattice points (3x3 grid around origin is enough)
+    points = []
+    for i in [-1, 0, 1]:
+        for j in [-1, 0, 1]:
+            points.append(i * b1 + j * b2)
+    points = np.array(points)
+
+    vor = Voronoi(points)
+
+    center_idx = 4
+    region_idx = vor.point_region[center_idx]
+    region = vor.regions[region_idx]
+
+    if -1 not in region:  # Ensure it's a closed cell
+        verts = vor.vertices[region]
+        # Reorder vertices for a clean polygon plot
+        centroid = np.mean(verts, axis=0)
+        angles = np.arctan2(verts[:, 1] - centroid[1], verts[:, 0] - centroid[0])
+        verts = verts[np.argsort(angles)]
+
+        # Close the loop
+        verts = np.vstack([verts, verts[0]])
+
+        # 5. Plot on the provided axis
+        ax.plot(verts[:, 0], verts[:, 1], 'k--', linewidth=1.5, label='BZ1')
+
+    # Optional: Plot the reciprocal basis vectors for reference
+    ax.quiver([0, 0], [0, 0], [b1[0], b2[0]], [b1[1], b2[1]],
+              angles='xy', scale_units='xy', scale=1, color='red', alpha=0.5)
+
+def PiFluxSquaredEnergy(kx, ky):
+    a1 = np.array([1. / 2., sqrt(3) / 2.0])
+    a2 = np.array([3. / 2., -sqrt(3) / 2.0])
+    k1 = kx * a1[0] + ky * a1[1]
+    k2 = kx * a2[0] + ky * a2[1]
+    k3 = k1 + k2
+    E_sq = 4 * cos(k1) ** 2 + (1 + cos(k3) + cos(k2) - cos(k1)) ** 2 + (
+            sin(k3) - sin(k2) + sin(k1)) ** 2
+    return E_sq
+
 def bandStructure():
-    a1 = np.array([1./2., sqrt(3)/2.0])
-    a2 = np.array([3./2., -sqrt(3)/2.0])
-    a3 = a1 + a2
-    Kx, Ky = np.meshgrid(np.linspace(-3*pi/4, 3*pi/4, 1000), np.linspace(-3*pi/4, 3*pi/4, 1000))
-    k1 = Kx * a1[0] + Ky * a1[1]
-    k2 = Kx * a2[0] + Ky * a2[1]
-    k3 = Kx * a3[0] + Ky * a3[1]
+    pi_factor = 9./4.
+    Kx, Ky = np.meshgrid(np.linspace(-pi_factor*pi, pi_factor*pi, 1000),
+                         np.linspace(-pi_factor*pi, pi_factor*pi, 1000))
 
-    E_sq = 4 * cos(k1) ** 2 + (1 + cos(k3) + cos(k2) - cos(k1)) ** 2 + (sin(k3) - sin(k2) + sin(k1)) ** 2
+    k1_bz = 2 * pi * np.array([-0.5, -sqrt(3) / 2])
+    k2_bz = 2 * pi * np.array([0.5, -1.0 / (2 * sqrt(3))])
 
-    print("energy per site: ", np.sum(sqrt(E_sq)) / (Kx.shape[0]*Kx.shape[1]))
+    debug = True
+    fig, ax = plt.subplots()
+    if debug:
+        kxs = np.linspace(-2*pi, 2*pi, 500)
+        kys = np.linspace(-2*pi, 2*pi, 500)
+        E_tot = 0.0
+        N_states = 0
+        for kx in kxs:
+            for ky in kys:
+                k_vec = np.array([kx, ky])
+                k1_bz_unit = k1_bz / sqrt(np.dot(k1_bz, k1_bz))
+                k2_bz_unit = k2_bz / sqrt(np.dot(k2_bz, k2_bz))
+                kvec_k1bz = np.dot(k_vec, k1_bz_unit)
+                kvec_k2bz = np.dot(k_vec, k2_bz_unit)
+                if (-pi) < kvec_k1bz < pi and (-pi/sqrt(3)) < kvec_k2bz < (pi/sqrt(3)):
+                    E_sq = PiFluxSquaredEnergy(kx, ky)
+                    E_tot -= sqrt(E_sq)
+                    N_states += 1
+                    ax.plot(kx/pi, ky/pi, "ko", markersize=1)
+        print(f"energy per site: {E_tot / N_states}")
+
+    E_sq = PiFluxSquaredEnergy(Kx, Ky)
+    E_sq_theory = 2 * (3 + cos(2*Kx) - cos(Kx - sqrt(3)*Ky) + cos(Kx + sqrt(3)*Ky))
+    print("diff from theory: ", np.max(np.abs(E_sq - E_sq_theory)))
     print("E_sq minimum: ", np.min(E_sq))
 
-    fig, ax = plt.subplots()
-    im = ax.imshow((-1)*sqrt(E_sq), origin="lower", extent = (-0.75, 0.75, -0.75, 0.75), cmap='RdBu')
+    plot_bz1(ax, k1_bz/ pi, k2_bz / pi)
+    im = ax.imshow((-1)*sqrt(E_sq), origin="lower", extent = (-pi_factor, pi_factor, -pi_factor, pi_factor),
+                   cmap='RdBu')
     ax.set_xlabel("$k_x[\pi]$")
     ax.set_ylabel("$k_y[\pi]$")
-    fig.savefig("noninteracting_band_structure" + ".pdf", bbox_inches='tight')
     cbar = fig.colorbar(im)
     cbar.ax.tick_params(labelsize=16)
+    fig.savefig("noninteracting_band_structure" + ".pdf", bbox_inches='tight')
     plt.show()
 
 bandStructure()

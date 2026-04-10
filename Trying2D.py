@@ -1,17 +1,23 @@
-from temfpy import slater
+local = False
+if locel:
+   from temfpy import slater
+   import temfpy.gutzwiller as gutz
+
 import tenpy
 import numpy as np
 from numpy import log, sin, cos, sqrt, pi
 import matplotlib.pyplot as plt
-from tenpy import NearestNeighborModel, CouplingModel, SpinHalfSite, TwoSiteDMRGEngine, MPS, CouplingMPOModel, \
-    SpinModel, FermionSite, FermionModel, Lattice, SpinHalfFermionSite
+from tenpy.models.model import CouplingModel, CouplingMPOModel, Lattice
+from tenpy.networks.mps import MPS
+
 import tenpy.linalg.np_conserved as npc
 from tenpy.models import lattice
 from tenpy.algorithms import dmrg
 from numpy.linalg import norm, eigh
 from tenpy.tools.misc import setup_logging
 import pickle
-import temfpy.gutzwiller as gutz
+from tenpy.networks.site import FermionSite, SpinHalfSite
+from tenpy.models.spins import SpinModel
 from TryingTemfpy import rc_params
 from pathlib import Path
 import json

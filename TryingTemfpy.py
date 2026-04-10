@@ -1,15 +1,16 @@
-from temfpy import slater
+local = False
+if local:
+   from temfpy import slater
+   import temfpy.gutzwiller as gutz
+   from temfpy.gutzwiller import number_mask, parity_mask
+
 import tenpy
 import numpy as np
 from numpy import log, sin, cos, sqrt
 import matplotlib.pyplot as plt
-from tenpy import TransferMatrix
 from tenpy.models import lattice
 from numpy.linalg import norm, eigh
-from tenpy import MPS
 import tenpy.linalg.np_conserved as npc
-import temfpy.gutzwiller as gutz
-from temfpy.gutzwiller import number_mask, parity_mask
 from tenpy import networks
 
 fontsize=18

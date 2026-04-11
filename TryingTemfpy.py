@@ -12,6 +12,8 @@ from tenpy.models import lattice
 from numpy.linalg import norm, eigh
 import tenpy.linalg.np_conserved as npc
 from tenpy import networks
+from tenpy.models import FermionChain, Chain, FermionModel
+from tenpy import FermionSite
 
 fontsize=18
 rc_params = {
@@ -49,7 +51,7 @@ def Hopping1D_MPS(ax_entropy, ax_expectation_value, n = 20, color="red",
                   results_dir=None):
     H = -(np.eye(n, k=1) + np.eye(n, k=-1))
     H[0, n-1] = H[n-1, 0] = -1
-    C, _ = slater.correlation_matrix(H)
+    C, _ = slater.correlation_matrix(H, N=n//2)
     trunc_par = {"chi_max": chi_max, "svd_min": svd_min, "degeneracy_tol": 1e-12}
 
     # modes = slater.SchmidtModes.from_correlation_matrix(C[0], int(n/2), trunc_par)
@@ -57,6 +59,16 @@ def Hopping1D_MPS(ax_entropy, ax_expectation_value, n = 20, color="red",
     # schmidt_R = slater.SchmidtVectors.from_correlation_matrix(C[0], int(n/2)+1, trunc_par)
     # A = slater.MPSTensorData.from_schmidt_vectors(schmidt, schmidt_R, "left")
     mps = slater.C_to_MPS(C, trunc_par)
+    mps.canonical_form()
+
+    fermion_site = FermionSite(conserve='N')
+    chain = Chain(n, fermion_site, bc='periodic')
+    fermion_chain_model = FermionModel({"lattice":chain, "J":1.0,
+                                        "V":0.0, "mu":0.0})
+    E_mpo = fermion_chain_model.H_MPO.expectation_value(mps)
+    e, v = eigh(H)
+    print("E_MPO = ", E_mpo / (n // 2))
+    print("E expected = ", np.average(e[:n//2]))
 
     entanglement_from_mps = mps.entanglement_entropy()
     x = np.linspace(0, n-2 , n-1) / (n-2)
@@ -271,8 +283,8 @@ def TryGutzwiller():
 
 
 if __name__ == "__main__":
-    try_iMPS = True
-    try_MPS = False
+    try_iMPS = False
+    try_MPS = True
     try_Gutzwiller = False
     results_dir = "TemfpyGames/"
     # InitializeInfiniteEqualWeightTwoFermionState()
@@ -293,7 +305,7 @@ if __name__ == "__main__":
 
         if show_size_dependence:
             fig_entanglement, ax_entanglement = plt.subplots()
-            for i_n, n in enumerate(range(30, 80, 20)):
+            for i_n, n in enumerate(range(50, 70, 20)):
                 Hopping1D_MPS(ax_entanglement, ax_n_expect, n=n, color = colors[i_n], show_n_expect=show_n_expect,
                               results_dir=MPS_results_dir)
 

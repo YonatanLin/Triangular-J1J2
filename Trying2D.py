@@ -436,15 +436,15 @@ def CreateTriangularCaseDirFromInputFile(main_results_dir, input_file):
     with open(input_file, "r") as file:
         input_file_lines = file.readlines()
     params = input_file_lines[0].split(" ")
+    print(params)
     assert(params[0] == "Lx" and params[1] == "Ly" and params[2] == "bc" and params[3] == "bc_MPS"
-           and params[4] == "flux" and params[5] == "initial_state" and params[6] == "conserve")
+           and params[4] == "flux" and params[5] == "initial_state" and params[6] == "conserve" and params[7] == "J2\n")
     input_for_condor = open("condor_cases.txt", 'w')
     for line in input_file_lines[1:]:
         params = line.split(" ")
-        case_folder = CreateTriangularCaseDir(main_results_dir, params[0], params[1], params[2],
-                                              params[3], params[4], params[5], params[6])
-        input_for_condor.write(line + " " + case_folder + "\n")
-
+        case_folder = CreateTriangularCaseDir(main_results_dir, params[0], params[1], params[2].split("-"),
+                params[3], params[4], params[5], params[6], params[7][:-1])
+        input_for_condor.write(line[:-1] + " " + case_folder + "\n")
 
 
 def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, flux=0.0, conserve=True,

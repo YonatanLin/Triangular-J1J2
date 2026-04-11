@@ -35,6 +35,7 @@ def build_parser():
     )
 
     parser.add_argument("--flux", type=float, default=0.0, help="Flux value. Only 0 is currently supported.")
+    parser.add_argument("--J2", type=float, default=0.0, help="J2 - nnn coupling.")
     parser.add_argument(
         "--conserve",
         type=parse_bool,
@@ -54,16 +55,9 @@ def build_parser():
 def main():
     args = build_parser().parse_args()
     TriangularJ1J2DMRG(Lx=args.Lx, Ly=args.Ly, bc=args.bc, bc_MPS=args.bc_MPS,
-                       flux=args.flux, conserve=args.conserve, initial_state=args.initial_state)
+                       flux=args.flux, conserve=args.conserve, initial_state=args.initial_state,
+                       J2=args.J2)
 
 
 if __name__ == "__main__":
     main()
-    #main_results_dir = "TriangularLatticeResults/"
-    #Path(main_results_dir).mkdir(parents=True, exist_ok=True)
-    #geometry_dir, state_dir = TriangularJ1J2CaseDirName(1, 1, ("open", "periodic"),
-    #                                                    "infinite", 0.1, "120")
-    #results_dir = main_results_dir + geometry_dir
-    #Path(results_dir).mkdir(parents=True, exist_ok=True)
-    #results_dir += state_dir
-    #Path(results_dir).mkdir(parents=True, exist_ok=True)

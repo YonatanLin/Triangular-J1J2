@@ -1,5 +1,5 @@
 local = False
-if locel:
+if local:
    from temfpy import slater
    import temfpy.gutzwiller as gutz
 
@@ -26,7 +26,7 @@ setup_logging(to_stdout="INFO")
 
 plt.rcParams.update(rc_params)
 
-default_chi_max = 1600
+default_chi_max = 3000
 default_dmrg_params = {'mixer': True, 'max_E_err': 1.0e-10, 'trunc_params': {'chi_max': default_chi_max, 'svd_min': 1.0e-7},
                    'combine': True, 'chi_list': {0: 50, 3: 100, 7: default_chi_max}, 'min_sweeps': 10, 'max_sweeps': 30,
                    'N_sweeps_check': 1}
@@ -123,7 +123,7 @@ def ComputeMomentumSpaceStructureFactor(corr_x, lat, assert_realness=True):
     Kx, Ky = np.meshgrid(kx, ky)
     lat_basis = lat.basis
     unit_cell_positions = lat.unit_cell_positions
-    center_site_coordinates = [Lx // 2, Ly // 2, len(lat.basis) // 2]
+    center_site_coordinates = [Lx // 2, Ly // 2, len(unit_cell_positions) // 2]
     center_site_mps_index = lat.lat2mps_idx(center_site_coordinates)
     print("center site index for calculating correlations: ", center_site_mps_index)
 
@@ -346,12 +346,13 @@ def BuildTriangularLatticeAlignedWithX(Lx, Ly, site, bc_MPS,
         basis = [[1.0, 0.0], [0.5, sqrt(3) / 2.]]
 
     order = ('standard', (True, False, False), (0, 1, 2))
-    if unit_cell is None:
-        unit_cell = [[0.0, 0.0]]
-
     nearest_neighbors = []
     if unit_cell is None:
         nearest_neighbors = [[0, 0, [1, 0]], [0, 0, [0, 1]], [0, 0, [1, -1]]]
+
+    if unit_cell is None:
+        unit_cell = [[0.0, 0.0]]
+
     triangular_lat = lattice.Lattice([Lx, Ly], [site]*len(unit_cell), basis=basis,
                                      positions=unit_cell, bc=bc, pairs={'nearest_neighbors': nearest_neighbors},
                                      order=order, bc_MPS=bc_MPS)
@@ -378,7 +379,7 @@ def GetTriangularLatticeInitialState(initial_state, triangular_lat, magz=0):
     return psi
 
 
-def TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, flux, initial_state, conserve):
+def TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, flux, initial_state, conserve, J2):
     bc_string = ""
     for bc_ax in bc:
         if bc_ax == "periodic":
@@ -388,13 +389,13 @@ def TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, flux, initial_state, conserve)
             bc_string += "o"
 
     geometry_dir = f"Lx_{Lx}_Ly_{Ly}_bc_{bc_string}/"
-    state_dir = f"mps_{bc_MPS}_flux_{flux}_init_{initial_state}_conserve_{conserve}/"
+    state_dir = f"mps_{bc_MPS}_flux_{flux}_init_{initial_state}_conserve_{conserve}_J2_{J2}/"
     return geometry_dir, state_dir
 
 
-def CreateTriangularCaseDir(main_results_dir,  Lx, Ly, bc, bc_MPS, flux, initial_state, conserve):
+def CreateTriangularCaseDir(main_results_dir,  Lx, Ly, bc, bc_MPS, flux, initial_state, conserve, J2):
     Path(main_results_dir).mkdir(parents=True, exist_ok=True)
-    geometry_dir, state_dir = TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, flux, initial_state, conserve)
+    geometry_dir, state_dir = TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, flux, initial_state, conserve, J2)
     results_dir = main_results_dir + geometry_dir
     Path(results_dir).mkdir(parents=True, exist_ok=True)
     results_dir += state_dir
@@ -402,18 +403,34 @@ def CreateTriangularCaseDir(main_results_dir,  Lx, Ly, bc, bc_MPS, flux, initial
     return results_dir
 
 
+def CreateTriangularCaseDirFromInputFile(main_results_dir, input_file):
+    with open(input_file, "r") as file:
+        input_file_lines = file.readlines()
+    params = input_file_lines[0].split(" ")
+    print(params)
+    assert(params[0] == "Lx" and params[1] == "Ly" and params[2] == "bc" and params[3] == "bc_MPS"
+           and params[4] == "flux" and params[5] == "initial_state" and params[6] == "conserve" and params[7] == "J2\n")
+    input_for_condor = open("condor_cases.txt", 'w')
+    for line in input_file_lines[1:]:
+        params = line.split(" ")
+        case_folder = CreateTriangularCaseDir(main_results_dir, params[0], params[1], params[2].split("-"),
+                params[3], params[4], params[5], params[6], params[7][:-1])
+        input_for_condor.write(line[:-1] + " " + case_folder + "\n")
+
+
 def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, flux=0.0, conserve=True,
-                       initial_state="Neel"):
+                       initial_state="Neel", J2=0.0):
     if isinstance(bc, str):
         bc_parsed = bc.split("-")
         bc = (bc_parsed[0], bc_parsed[1])
 
     main_results_dir = "TriangularLatticeResults/"
     dmrg_params = default_dmrg_params
-    results_dir = CreateTriangularCaseDir(main_results_dir,  Lx, Ly, bc, bc_MPS, flux, initial_state, conserve)
+    results_dir = CreateTriangularCaseDir(main_results_dir,  Lx, Ly, bc, bc_MPS, flux, initial_state, conserve, J2)
+    if not local:
+        results_dir = "./"
     with open(results_dir + "dmrg_params.json", "w") as f:
         json.dump(dmrg_params, f, indent=4)
-    exit(1)
 
     fig_lat, ax_lat = plt.subplots(figsize=(6, 5))
     if conserve:
@@ -422,11 +439,13 @@ def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, flux=0.0, conserve=True,
         site = SpinHalfSite(conserve=None)
 
     triangular_lat = BuildTriangularLatticeAlignedWithX(Lx, Ly, site, bc_MPS, bc=bc)
+    
+    PlotLattice(triangular_lat, ax_lat)
+    fig_lat.savefig(results_dir + "lattice.png", bbox_inches='tight')
 
     center_site_mps_index = triangular_lat.lat2mps_idx([Lx // 2, Ly // 2, 0])
     print("center site mps index: ", center_site_mps_index)
     J1 = 1.0
-    J2 = 1.0
 
     J1J2_model = SpinModel({"lattice":triangular_lat, "Jx":J1, "Jy":J1, "Jz":J1})
     J1J2_model.manually_call_init_H = True
@@ -455,6 +474,9 @@ def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, flux=0.0, conserve=True,
             plot_convergence=True, print_final_results=True, results_dir=results_dir,
             energies_fig_title="energies.png")
 
+    with open(results_dir + 'psi_gs' + ".pkl", 'wb') as f:
+        pickle.dump(psi, f)
+
     sites1, sites2 = None, None
     lat_for_corr = triangular_lat
     if bc_MPS == "infinite":
@@ -470,7 +492,7 @@ def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, flux=0.0, conserve=True,
     fig_corr, ax_corr = plt.subplots(figsize=(6, 5))
     title = f"Spin structure factor on a {Lx}x{Ly} square lattice"
     ImshowMatrix(ax_corr, fig_corr, Kx, Ky, spin_corr_k, title=title)
-    lat_for_corr.plot_brillouin_zone(ax_corr)
+    #lat_for_corr.plot_brillouin_zone(ax_corr)
     fig_corr.savefig(results_dir + "momentum_space_correlations.png",
                      bbox_inches='tight')
 
@@ -609,7 +631,7 @@ def TriangularPiFluxAnsatz(Lx=2, Ly=3, spinfull=True, bc_MPS="infinite", particl
     bc_lat = triangular_lat.boundary_conditions
     conserve_N = (site.conserve=='N')
     results_dir = CreateTriangularCaseDir(main_results_dir, Lx, Ly, bc_lat, bc_MPS,
-                                      0.0, "Neel", conserve_N)
+                                      0.0, "Neel", conserve_N, 0.0)
     rec_long_side_coors = params_lat["rec_long_side_coors"]
     unitcell_pos = params_lat["unitcell_pos"]
 
@@ -795,6 +817,7 @@ if __name__ == "__main__":
     # TestTriangularLattice()
     # TestSquareLattice(6, 6, J2s=[0.0, 0.9])
     # TestSquareLattice(2, 3, J2s=[0.0], bc=("periodic", "periodic"), bc_MPS="infinite")
-    TriangularPiFluxAnsatz(spinfull=True, Lx=1, Ly=3, chi_max_temfpy=1000)
+    # TriangularPiFluxAnsatz(spinfull=True, Lx=1, Ly=3, chi_max_temfpy=1000)
+    CreateTriangularCaseDirFromInputFile("1/", "input.txt")
     # TriangularJ1J2DMRG(1, 2, ("open", "open"), "infinite")
     # TriangularPiFluxGutzwiller(3)

@@ -89,7 +89,7 @@ def PlotLattice(lat, ax, additional_couplings_to_plot=None, plot_nn_couplings=Tr
         lat.plot_coupling(ax, linewidth=1.0)
 
     lat.plot_coupling(ax, coupling=additional_couplings_to_plot, linewidth=0.5,
-                      color="green", linestyle=nnn_line_style)
+                      color="green", linestyle=nnn_line_style, wrap=True)
     if plot_order:
         lat.plot_order(ax)
     lat.plot_sites(ax)
@@ -128,7 +128,7 @@ def ComputeMomentumSpaceStructureFactor(corr_x, lat, assert_realness=True):
     center_site_mps_index = lat.lat2mps_idx(center_site_coordinates)
     print("center site index for calculating correlations: ", center_site_mps_index)
 
-    basis_vectors = np.asarray(lat_basis[:, :2], dtype=float)
+    basis_vectors = np.asarray(lat_basis, dtype=float)
     center_site_loc = (np.dot(center_site_coordinates[:2], basis_vectors) +
                        unit_cell_positions[center_site_coordinates[-1],:])
     print("center site index for calculating correlations: ", center_site_mps_index)
@@ -137,7 +137,7 @@ def ComputeMomentumSpaceStructureFactor(corr_x, lat, assert_realness=True):
     site_locations = site_coordinates @ basis_vectors
 
     for i in range(site_locations.shape[0]):
-        unitcell_index = i % len(unit_cell_positions)
+        unitcell_index = lat.mps2lat_idx(i)[-1]
         site_locations[i,:] += unit_cell_positions[unitcell_index, :]
 
     r_from_center = site_locations - center_site_loc
@@ -198,7 +198,11 @@ def Generate120DegOrderedState(lat=None, Lx=None, Ly=None, plot=False):
     else:
         site = lat.mps_sites()[0]
     basis = lat.basis
-    assert(basis[1][0] == 0.0 and basis[1][1] == 1.0)
+    unitcell_pos = lat.unit_cell_positions
+
+    aligned_with_x = (basis[0][1] == 0.0 or basis[1][1] == 0.0)
+    aligned_with_y = (basis[0][0] == 0.0 or basis[1][0] == 0.0)
+    assert(aligned_with_x or aligned_with_y)
 
     psi = MPS.from_product_state(lat.mps_sites(), ["up"] * lat.N_sites)
 
@@ -213,8 +217,11 @@ def Generate120DegOrderedState(lat=None, Lx=None, Ly=None, plot=False):
 
     for i in range(lat.N_sites):
         lat_ind = lat.mps2lat_idx(i)
-        y_cor = lat_ind[0] * basis[0][1] + lat_ind[1] * basis[1][1]
-        sublattice_ind = int((2 * y_cor) % 3)
+        if aligned_with_x:
+            column_cor = lat_ind[0] * basis[0][0] + lat_ind[1] * basis[1][0] + unitcell_pos[lat_ind[2], :][0]
+        else:
+            column_cor = lat_ind[0] * basis[0][1] + lat_ind[1] * basis[1][1] + unitcell_pos[lat_ind[2], :][1]
+        sublattice_ind = int((2 * column_cor) % 3)
         if sublattice_ind == 1:
             psi.apply_local_op(i, "rot_once")
         elif sublattice_ind == 2:
@@ -239,6 +246,27 @@ def Generate120DegOrderedState(lat=None, Lx=None, Ly=None, plot=False):
         plt.show()
 
     return psi
+
+
+def TestCorrelationsWithNontrivialUnitCell():
+    site = SpinHalfSite(conserve=None)
+    unit_cell_spin_lat = [[0.0, 0.0], [1.0, 0.0]]
+    basis = [[2.0, 0.0], [0.5, sqrt(3) / 2.]]
+    Lx, Ly = 14, 11
+    triangular_lat_enlarged = BuildTriangularLatticeAlignedWithX(Lx, Ly, site, "finite", unit_cell=unit_cell_spin_lat,
+                                                                 basis=basis)
+    fig_lat, ax_lat = plt.subplots()
+    PlotLattice(triangular_lat_enlarged, ax_lat, plot_order=True)
+    plt.show()
+
+    spin_120_state = Generate120DegOrderedState(triangular_lat_enlarged, Lx, Ly, False)
+    spin_corr_x = GetSpinSpinCorrelations(spin_120_state)
+    Kx, Ky, spin_corr_k = ComputeMomentumSpaceStructureFactor(spin_corr_x, triangular_lat_enlarged, assert_realness = False)
+    fig, ax = plt.subplots()
+    ImshowMatrix(ax, fig, Kx, Ky, np.abs(spin_corr_k))
+    triangular_lat = BuildTriangularLatticeAlignedWithX(Lx, Ly, site, "finite")
+    triangular_lat.plot_brillouin_zone(ax)
+    plt.show()
 
 
 def RunDMRG(model, psi_init, dmrg_params=default_dmrg_params,
@@ -348,7 +376,7 @@ def BuildTriangularLatticeAlignedWithX(Lx, Ly, site, bc_MPS,
 
     order = ('standard', (True, False, False), (0, 1, 2))
     using_default_unit_cell = unit_cell is None
-    if unit_cell is None:
+    if using_default_unit_cell:
         unit_cell = [[0.0, 0.0]]
 
     nearest_neighbors = []
@@ -394,7 +422,7 @@ def TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, flux, initial_state, conserve)
     return geometry_dir, state_dir
 
 
-def CreateTriangularCaseDir(main_results_dir,  Lx, Ly, bc, bc_MPS, flux, initial_state, conserve):
+def CreateTriangularCaseDir(main_results_dir, Lx, Ly, bc, bc_MPS, flux, initial_state, conserve):
     Path(main_results_dir).mkdir(parents=True, exist_ok=True)
     geometry_dir, state_dir = TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, flux, initial_state, conserve)
     results_dir = main_results_dir + geometry_dir
@@ -402,6 +430,21 @@ def CreateTriangularCaseDir(main_results_dir,  Lx, Ly, bc, bc_MPS, flux, initial
     results_dir += state_dir
     Path(results_dir).mkdir(parents=True, exist_ok=True)
     return results_dir
+
+
+def CreateTriangularCaseDirFromInputFile(main_results_dir, input_file):
+    with open(input_file, "r") as file:
+        input_file_lines = file.readlines()
+    params = input_file_lines[0].split(" ")
+    assert(params[0] == "Lx" and params[1] == "Ly" and params[2] == "bc" and params[3] == "bc_MPS"
+           and params[4] == "flux" and params[5] == "initial_state" and params[6] == "conserve")
+    input_for_condor = open("condor_cases.txt", 'w')
+    for line in input_file_lines[1:]:
+        params = line.split(" ")
+        case_folder = CreateTriangularCaseDir(main_results_dir, params[0], params[1], params[2],
+                                              params[3], params[4], params[5], params[6])
+        input_for_condor.write(line + " " + case_folder + "\n")
+
 
 
 def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, flux=0.0, conserve=True,
@@ -434,13 +477,13 @@ def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, flux=0.0, conserve=True,
 
     nnn_couplings_list = []
     if abs(J2) > 0.0:
-        for basis_vec in ([1,1], [-1,-1], [-1,2], [1,-2], [-2,1], [2,-1]):
+        for basis_vec in ([1,1], [-1,2], [-2,1]):
             AddAndTrackCoupling(J1J2_model,0.5 * J2, 0, "Sp", 0, "Sm", basis_vec,
-                                   nnn_couplings_list)
+                                nnn_couplings_list)
             AddAndTrackCoupling(J1J2_model, 0.5 * J2, 0, "Sm", 0, "Sp", basis_vec,
-                                   nnn_couplings_list)
+                                nnn_couplings_list)
             AddAndTrackCoupling(J1J2_model, J2, 0, "Sz", 0, "Sz", basis_vec,
-                                   nnn_couplings_list)
+                                nnn_couplings_list)
     J1J2_model.init_H_from_terms()
 
     PlotLattice(triangular_lat, ax_lat, additional_couplings_to_plot=nnn_couplings_list)
@@ -540,6 +583,7 @@ def GetPiFluxTriangularLattice(site, Lx, Ly, spinfull, bc_MPS):
     #                      (1,0,[0,1]), (1,0,[-1,1])]
     nearest_neighbors = []
     bc = ['open', 'periodic']
+    # bc = ['periodic', -1]
     if bc_MPS == "infinite":
         bc[0] = 'periodic'
     pairs = {'nearest_neighbors': nearest_neighbors}
@@ -584,7 +628,8 @@ def GetTriangularFluxSlaterMPS(Lx, Ly, spinfull, site, mps_unitcell, slater_trun
     if finite:
         C, triangular_lattice = CalculateExactCMatrixForPiFlux(Lx, Ly, spinfull, site,
                                                                zero_energy_tol = zero_energy_tol,
-                                                               particle_hole=particle_hole)
+                                                               particle_hole=particle_hole,
+                                                               plot_lattice=True)
 
         psi_from_slater = slater.C_to_MPS(C, trunc_par=slater_trunc_par)
     else:
@@ -829,8 +874,8 @@ def TriangularPiFluxGutzwiller(Ly, finite=True):
     fig,ax = plt.subplots()
 
     ImshowMatrix(ax, fig, Kx, Ky, spin_corr_k)
-    spin_lat_no_unitcell = BuildTriangularLatticeAlignedWithX(Lx_short, Ly, spin_site, "finite")
-    spin_lat_no_unitcell.plot_brillouin_zone(ax)
+    spin_lat_singlesite_unitcell = BuildTriangularLatticeAlignedWithX(Lx_short, Ly, spin_site, "finite")
+    spin_lat_singlesite_unitcell.plot_brillouin_zone(ax)
     ax.set_title("Spin Correlations")
     fig.savefig(results_dir + "spin_correlations.png", bbox_inches='tight')
     plt.show()
@@ -847,9 +892,10 @@ if __name__ == "__main__":
 
     #TriangularPiFluxAnsatz(spinfull=True, Lx=12, Ly=3, chi_max_temfpy=1000,
     #                       bc_MPS="finite")
-    #TriangularPiFluxAnsatz(spinfull=True, Lx=1, Ly=8, chi_max_temfpy=4000,
+    #TriangularPiFluxAnsatz(spinfull=True, Lx=1, Ly=3, chi_max_temfpy=4000,
     #                       bc_MPS="infinite")
     # TriangularPiFluxAnsatz(spinfull=True, Lx=12, Ly=4, chi_max_temfpy=3000, bc_MPS="finite")
-    # TriangularJ1J2DMRG(1, 2, ("open", "open"), "infinite")
+    TriangularJ1J2DMRG(2, 2, ("open", "open"), "finite")
 
-    TriangularPiFluxGutzwiller(5)
+    # TriangularPiFluxGutzwiller(4)
+    # TestCorrelationsWithNontrivialUnitCell()

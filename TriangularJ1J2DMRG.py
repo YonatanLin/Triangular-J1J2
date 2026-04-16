@@ -47,7 +47,7 @@ def build_parser():
     parser.add_argument(
         "--initial_state",
         type=str,
-        default="Neel",
+        default="Random",
         help="Initial state for DMRG.",
     )
 

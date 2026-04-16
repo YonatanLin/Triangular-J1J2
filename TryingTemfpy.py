@@ -1,8 +1,6 @@
-local = True
-if local:
-   from temfpy import slater
-   import temfpy.gutzwiller as gutz
-   from temfpy.gutzwiller import number_mask, parity_mask
+from temfpy import slater
+import temfpy.gutzwiller as gutz
+from temfpy.gutzwiller import number_mask, parity_mask
 
 import tenpy
 import numpy as np

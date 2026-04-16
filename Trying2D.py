@@ -1,8 +1,7 @@
-local = True
-if local:
-   from temfpy import slater
-   import temfpy.gutzwiller as gutz
+local = False
 
+from temfpy import slater
+import temfpy.gutzwiller as gutz
 import tenpy
 import numpy as np
 from numpy import log, sin, cos, sqrt, pi
@@ -446,9 +445,9 @@ def GetTriangularLatticeInitialState(initial_state, triangular_lat, magz=0):
     Lx = triangular_lat.Ls[0]
     Ly = triangular_lat.Ls[1]
     N_sites = triangular_lat.N_sites
-    if initial_state == "Neel":
+    if initial_state == "Random":
         N_up = N_sites // 2 + magz
-        N_down = N_sites - triangular_lat.N_sites // 2 - magz
+        N_down = N_sites - N_up
         down_indices =  np.random.choice(np.arange(0, N_sites), N_down)
         product_state = ["up"] * N_sites
         product_state[down_indices] = "down"
@@ -520,16 +519,18 @@ def DraftTriangularJ1J2DMRG(Lx, Ly, triangular_lat):
 
 
 def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, flux=0.0, conserve=True,
-                       initial_state="Neel", J2=0.0, basis=None, unit_cell=None):
+                       initial_state="Random", J2=0.0, basis=None, unit_cell=None):
     if isinstance(bc, str):
         bc_parsed = bc.split("-")
         bc = (bc_parsed[0], bc_parsed[1])
 
-    main_results_dir = "TriangularLatticeResults/"
     dmrg_params = default_dmrg_params
-    results_dir = CreateTriangularCaseDir(main_results_dir, Lx, Ly, bc, bc_MPS, flux, initial_state, conserve, J2)
-    if not local:
+    if local:
+        main_results_dir = "TriangularLatticeResults/"
+        results_dir = CreateTriangularCaseDir(main_results_dir, Lx, Ly, bc, bc_MPS, flux, initial_state, conserve, J2)
+    else:
         results_dir = "./"
+
     with open(results_dir + "dmrg_params.json", "w") as f:
         json.dump(dmrg_params, f, indent=4)
 
@@ -569,6 +570,9 @@ def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, flux=0.0, conserve=True,
         PrintCouplings(J1J2_model, Lx, Ly)
 
     psi = GetTriangularLatticeInitialState(initial_state, triangular_lat)
+
+    with open(results_dir + 'psi_initial' + ".pkl", 'wb') as f:
+        pickle.dump(psi, f)
 
     RunDMRG(J1J2_model, psi, dmrg_params=dmrg_params,
             plot_convergence=True, print_final_results=True, results_dir=results_dir,
@@ -737,7 +741,7 @@ def TriangularPiFluxAnsatz(Lx=2, Ly=3, spinfull=True, bc_MPS="infinite", particl
     bc_lat = triangular_lat.boundary_conditions
     conserve_N = (site.conserve=='N')
     results_dir = CreateTriangularCaseDir(main_results_dir, Lx, Ly, bc_lat, bc_MPS,
-                                      0.0, "Neel", conserve_N, 0.0)
+                                      0.0, "Random", conserve_N, 0.0)
     rec_long_side_coors = params_lat["rec_long_side_coors"]
     unitcell_pos = params_lat["unitcell_pos"]
 
@@ -1034,24 +1038,24 @@ if __name__ == "__main__":
 
     code_dir = "C:/Users/yonli/Desktop/Thesis/Triangular J1J2/Code/"
     #computeCorrelationsFromMPSFile(code_dir + "TriangularLatticeResults/FromCluster/", 1, 4, ("periodic", "periodic"),
-    #                               "infinite", 0.0, "Neel", 1, 0.125, Lx_for_infinite_bc_MPS=12)
+    #                               "infinite", 0.0, "Random", 1, 0.125, Lx_for_infinite_bc_MPS=12)
 
     #computeCorrelationsFromMPSFile(code_dir + "TriangularLatticeResults/FromCluster/", 12, 4, ("open", "periodic"), "finite",
-    #                               0.0, "Neel", 1, 0.125)
+    #                               0.0, "Random", 1, 0.125)
     computeCorrelationsFromMPSFile(code_dir + "TriangularLatticeResults/FromCluster/", 12, 5, ("open", "periodic"),
-                                   "finite", 0.0, "Neel", 1, 0.125)
+                                   "finite", 0.0, "Random", 1, 0.125)
     #computeCorrelationsFromMPSFile(code_dir + "TriangularLatticeResults/FromCluster/", 1, 6, ("periodic", "periodic"),
-    #                               "infinite", 0.0, "Neel", 1, 0.125, Lx_for_infinite_bc_MPS=12)
+    #                               "infinite", 0.0, "Random", 1, 0.125, Lx_for_infinite_bc_MPS=12)
 
-    # TriangularJ1J2DMRG(12, 4, ("open", "periodic"), "finite", J2=0.125, conserve=True, initial_state="Neel")
+    # TriangularJ1J2DMRG(12, 4, ("open", "periodic"), "finite", J2=0.125, conserve=True, initial_state="Random")
     #######################################################
     #unit_cell = [[0.0, 0.0], [1.0, 0.0]]
     #basis = [[2.0, 0.0], [0.5, sqrt(3) / 2.]]
     #computeCorrelationsFromMPSFile(code_dir + "TriangularPiFluxGutzwiller/", 6, 4, ("open", "periodic"),
-    #                               "finite", 0.0, "Neel", 1, 0.125, basis=basis, unit_cell=unit_cell,
+    #                               "finite", 0.0, "Random", 1, 0.125, basis=basis, unit_cell=unit_cell,
     #                               psi_fname="psi_gutzwiller.pkl")
     #computeCorrelationsFromMPSFile(code_dir + "TriangularPiFluxGutzwiller/", 6, 5, ("open", "periodic"),
-    #                              "finite", 0.0, "Neel", 1, 0.125, basis=basis, unit_cell=unit_cell,
+    #                              "finite", 0.0, "Random", 1, 0.125, basis=basis, unit_cell=unit_cell,
     #                               psi_fname="psi_gutzwiller.pkl")
     ########################################################
 

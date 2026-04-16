@@ -1,4 +1,4 @@
-local = False
+local = True
 if local:
    from temfpy import slater
    import temfpy.gutzwiller as gutz

@@ -59,9 +59,6 @@ def plot_bz1(ax, b1, b2):
         # 5. Plot on the provided axis
         ax.plot(verts[:, 0], verts[:, 1], 'k--', linewidth=1.5, label='BZ1')
 
-    # Optional: Plot the reciprocal basis vectors for reference
-    ax.quiver([0, 0], [0, 0], [b1[0], b2[0]], [b1[1], b2[1]],
-              angles='xy', scale_units='xy', scale=1, color='red', alpha=0.5)
 
 def PiFluxSquaredEnergy(kx, ky):
     a1 = np.array([1. / 2., sqrt(3) / 2.0])
@@ -70,18 +67,18 @@ def PiFluxSquaredEnergy(kx, ky):
     k2 = kx * a2[0] + ky * a2[1]
     k3 = k1 + k2
     E_sq = 4 * cos(k1) ** 2 + (1 + cos(k3) + cos(k2) - cos(k1)) ** 2 + (
-            sin(k3) - sin(k2) + sin(k1)) ** 2
+            sin(k3) + sin(k2) - sin(k1)) ** 2
     return E_sq
 
 def bandStructure():
-    pi_factor = 9./4.
+    pi_factor = 1.5
     Kx, Ky = np.meshgrid(np.linspace(-pi_factor*pi, pi_factor*pi, 1000),
                          np.linspace(-pi_factor*pi, pi_factor*pi, 1000))
 
     k1_bz = 2 * pi * np.array([-0.5, -sqrt(3) / 2])
     k2_bz = 2 * pi * np.array([0.5, -1.0 / (2 * sqrt(3))])
 
-    debug = True
+    debug = False
     fig, ax = plt.subplots()
     if debug:
         kxs = np.linspace(-2*pi, 2*pi, 500)
@@ -114,6 +111,7 @@ def bandStructure():
     ax.set_ylabel("$k_y[\pi]$")
     cbar = fig.colorbar(im)
     cbar.ax.tick_params(labelsize=16)
+    ax.legend()
     fig.savefig("noninteracting_band_structure" + ".pdf", bbox_inches='tight')
     plt.show()
 

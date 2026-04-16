@@ -73,12 +73,14 @@ def HaldaneShastry(L=20):
     site = SpinHalfSite(conserve="Sz")
     chain = Chain(L, site, bc='periodic')
     haldane_shastry_model = HaldaneShastryModel({"lattice":chain})
-    print(haldane_shastry_model.all_coupling_terms().to_TermList())
-    psi_dmrg = MPS.from_product_state(chain.mps_sites(), ["up"] * (L // 2) + ["down"] * (L - L//2))
-    RunDMRG(haldane_shastry_model, psi_dmrg, plot_convergence=True, print_final_results=True)
+
     psi_gutz = GutzwillerState(L)
-    energy_dmrg = haldane_shastry_model.H_MPO.expectation_value(psi_dmrg)
     energy_gutz = haldane_shastry_model.H_MPO.expectation_value(psi_gutz)
+
+    psi_dmrg = MPS.from_product_state(chain.mps_sites(), ["up"] * (L // 2) + ["down"] * (L - L//2))
+    RunDMRG(haldane_shastry_model, psi_dmrg, plot_convergence=True, print_final_results=True, expected_energy=energy_gutz,
+            energies_fig_title="energies.pdf", results_dir="HaldaneShastry/")
+    energy_dmrg = haldane_shastry_model.H_MPO.expectation_value(psi_dmrg)
     # expected_energy = (-1) * ((L / (2*pi)) ** 2) * (pi ** 2 / 24) * (L + 5. / L)
     expected_energy = (-pi**2 / 24.) * (L + 5. / L)
     # expected_energy = (-1 / 24.) * ((2*pi/L) ** 2) * ((L**2 - 1)) * (L / 2)
@@ -93,11 +95,12 @@ def HaldaneShastry(L=20):
     fig,ax = plt.subplots()
     ax.plot(spin_correlations_dmrg[L//2, :], "ro", label="dmrg")
     ax.plot(spin_correlations_gutz[L//2, :], "b^", label="Gutzwiller")
+    fig.savefig("HaldaneShastry/hs_correlations.pdf", bbox_inches='tight')
     ax.legend()
     plt.show()
 
 
 if __name__ == "__main__":
-    L = 26
+    L = 22
     # GutzwillerState(L)
     HaldaneShastry(L)

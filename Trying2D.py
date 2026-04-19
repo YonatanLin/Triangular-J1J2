@@ -946,7 +946,7 @@ def GetGutzwillerToDMRGPermutation(Lx, Ly):
 
 def PermuteGutzwillerWavefunctionToDMRGOrder(psi_gutz, Lx, Ly):
     gutz_perm = GetGutzwillerToDMRGPermutation(Lx, Ly)
-    perm_trunc_err = psi_gutz.permute_sites(gutz_perm)
+    perm_trunc_err = psi_gutz.permute_sites(gutz_perm, trunc_par={"chi_max":3*np.max(psi_gutz.chi)}
     print(f"truncation error from permuting Gutzwiller wavefunction: ", perm_trunc_err)
 
 

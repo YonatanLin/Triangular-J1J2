@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 from numpy.linalg import eigh
 import temfpy.gutzwiller as gutz
 from tenpy import SpinHalfSite, Chain, MPS, CouplingMPOModel
-from Trying2D import RunDMRG, GetSpinSpinCorrelations
+from Trying2D import RunDMRG, CalculateSpinSpinCorrelations
 from Trying2D import ExplicitMPSNorm
 
 class HaldaneShastryModel(CouplingMPOModel):
@@ -89,8 +89,8 @@ def HaldaneShastry(L=20):
     print(f"Expected energy per-site: {expected_energy / L}")
     print("overlap between dmrg wavefunction and Gutzwiller wavefunction: ", np.abs(psi_dmrg.overlap(psi_gutz)))
 
-    spin_correlations_dmrg = GetSpinSpinCorrelations(psi_dmrg)
-    spin_correlations_gutz = GetSpinSpinCorrelations(psi_gutz)
+    spin_correlations_dmrg = CalculateSpinSpinCorrelations(psi_dmrg)
+    spin_correlations_gutz = CalculateSpinSpinCorrelations(psi_gutz)
     print(spin_correlations_gutz.shape)
     fig,ax = plt.subplots()
     ax.plot(spin_correlations_dmrg[L//2, :], "ro", label="dmrg")

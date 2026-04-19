@@ -1,0 +1,14 @@
+PiFluxAnsatzResults
+TemfpyGames
+TriangularLatticeResults
+SquareLatticeJ1J2
+TriangularPiFluxGutzwiller
+__pycache__
+.idea
+*.pdf
+*.png
+memory_profile_logs
+TemfpySlaterExample.py
+memory_profile_triangular_dmrg.py
+triangular_dmrg_memory_report.json
+NewTenpyTriangularLatticeResults

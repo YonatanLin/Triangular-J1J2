@@ -585,7 +585,7 @@ def calculateGutzwillerEnergyTriangularJ1J2(Lx, Ly, J2=0.125,
         triangular_lat = BuildTriangularLatticeAlignedWithX(Lx, Ly, site, bc_MPS, bc)
         J1J2_model = GenerateJ1J2SpinTriangularModel(J2, triangular_lat)
         psi_copy = psi.copy()
-        psi = PermuteGutzwillerWavefunctionToDMRGOrder(psi, Lx_gutz, Ly)
+        PermuteGutzwillerWavefunctionToDMRGOrder(psi, Lx_gutz, Ly)
         print("orig overlap with permutation: ", psi.overlap(psi_copy))
         print("permutation norm squared: ", psi.overlap(psi))
 
@@ -946,9 +946,8 @@ def GetGutzwillerToDMRGPermutation(Lx, Ly):
 
 def PermuteGutzwillerWavefunctionToDMRGOrder(psi_gutz, Lx, Ly):
     gutz_perm = GetGutzwillerToDMRGPermutation(Lx, Ly)
-    perm_trunc_err = psi_gutz.permute_sites(gutz_perm, trunc_par={"chi_max": 3000})
+    perm_trunc_err = psi_gutz.permute_sites(gutz_perm)
     print(f"truncation error from permuting Gutzwiller wavefunction: ", perm_trunc_err)
-    return psi_gutz
 
 
 def calculateOverlapBetweenGutzwillerAndDMRG(dmrg_dir, gutzwiller_dir, Lx, Ly, old_tenpy_version=False):
@@ -1016,6 +1015,8 @@ def TriangularPiFluxGutzwiller(Ly, finite=True, Lx=6, chi_max=3000):
     else:
         psi_gutzwiller = gutz.abrikosov(psi_from_slater, return_canonical=True)
 
+    PermuteGutzwillerWavefunctionToDMRGOrder(psi_gutzwiller, 2*Lx, Ly)
+
     if debug:
         psi_slater_grouped_pairs = psi_from_slater.copy()
         psi_slater_grouped_pairs.group_sites(2)
@@ -1040,13 +1041,15 @@ def TriangularPiFluxGutzwiller(Ly, finite=True, Lx=6, chi_max=3000):
     with open(results_dir + 'psi_gutzwiller' + ".pkl", 'wb') as f:
         pickle.dump(psi_gutzwiller, f)
 
+    assert(abs(psi_gutzwiller.overlap(psi_gutzwiller) - 1.0) < 1e-7)
+
     if debug:
         with open(results_dir + 'psi_gutzwiller_not_canonical' + ".pkl", 'wb') as f:
             pickle.dump(psi_gutzwiller, f)
         print(f"norm of canonical psi_gutzwiller is {psi_gutzwiller.overlap(psi_gutzwiller)}")
         print(f"explicit norm of canonical psi_gutzwiller is {ExplicitMPSNorm(psi_gutzwiller)}")
 
-    psi_gutzwiller.norm = 1 # need to set explicitly, see canonical_form_infinite1
+
     if not particle_hole:
         return
     if finite:

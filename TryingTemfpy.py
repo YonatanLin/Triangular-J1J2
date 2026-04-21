@@ -19,7 +19,7 @@ fontsize=18
 rc_params = {
     "font.family": "serif",
     "figure.dpi": 200,
-    'text.usetex': True,
+    #'text.usetex': True,
     "axes.labelsize": fontsize,
     "axes.titlesize": fontsize,
     "xtick.labelsize": fontsize,

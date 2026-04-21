@@ -549,7 +549,7 @@ def GenerateJ1J2SpinTriangularModel(J2, triangular_lat):
             AddAndTrackCoupling(J1J2_model, J2, 0, "Sz", 0, "Sz", basis_vec,
                                 nnn_couplings_list)
     J1J2_model.init_H_from_terms()
-    return J1J2_model
+    return J1J2_model, nnn_couplings_list
 
 
 def BuildSpinTriangularLatticeWithGutzwillerOrdering(Lx, Ly, site, bc_MPS, bc):
@@ -580,10 +580,10 @@ def calculateGutzwillerEnergyTriangularJ1J2(Lx, Ly, J2=0.125,
 
     if reorder_lattice:
         triangular_lat = BuildSpinTriangularLatticeWithGutzwillerOrdering(Lx, Ly, site, bc_MPS, bc)
-        J1J2_model = GenerateJ1J2SpinTriangularModel(J2, triangular_lat)
+        J1J2_model, nnn_couplings_list = GenerateJ1J2SpinTriangularModel(J2, triangular_lat)
     else:
         triangular_lat = BuildTriangularLatticeAlignedWithX(Lx, Ly, site, bc_MPS, bc)
-        J1J2_model = GenerateJ1J2SpinTriangularModel(J2, triangular_lat)
+        J1J2_model, nnn_couplings_list = GenerateJ1J2SpinTriangularModel(J2, triangular_lat)
         psi_copy = psi.copy()
         PermuteGutzwillerWavefunctionToDMRGOrder(psi, Lx_gutz, Ly)
         print("orig overlap with permutation: ", psi.overlap(psi_copy))
@@ -626,8 +626,7 @@ def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, flux=0.0, conserve=True,
     center_site_mps_index = triangular_lat.lat2mps_idx([Lx // 2, Ly // 2, 0])
     print("center site mps index: ", center_site_mps_index)
 
-    J1J2_model = GenerateJ1J2SpinTriangularModel(J2, triangular_lat)
-
+    J1J2_model, nnn_couplings_list = GenerateJ1J2SpinTriangularModel(J2, triangular_lat)
 
     fig_lat, ax_lat = plt.subplots(figsize=(6, 5))
     PlotLattice(triangular_lat, ax_lat, additional_couplings_to_plot=nnn_couplings_list)
@@ -982,7 +981,7 @@ def TriangularPiFluxGutzwiller(Ly, finite=True, Lx=6, chi_max=3000):
     psi_from_slater, _ = GetTriangularFluxSlaterMPS(Lx, Ly, spinfull, site, mps_unitcell, slater_trunc_par,
                                                     finite=finite, particle_hole=particle_hole)
 
-    if debug:
+    if True:
         triangular_lat, params = GetPiFluxTriangularLattice(site, Lx, Ly, spinfull, "finite")
         pi_flux_model = FermionicPiFluxModel({"lattice": triangular_lat,
                                               "rec_long_side_coors": params["rec_long_side_coors"],

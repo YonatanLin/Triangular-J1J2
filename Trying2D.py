@@ -746,9 +746,11 @@ def GetPiFluxTriangularLattice(site, Lx, Ly, spinfull, bc_MPS):
         for j in range(Ly):
             ordering.append((i, j, 2))
             ordering.append((i, j, 3))
+    ordering = np.array(ordering)
 
     triangular_lat = lattice.Lattice([Lx, Ly], [site] * len(unitcell_pos), basis=lat_basis,
-                                     positions=unitcell_pos, bc=bc, pairs=pairs, bc_MPS=bc_MPS, order=order)
+                                     positions=unitcell_pos, bc=bc, pairs=pairs, bc_MPS=bc_MPS)
+    triangular_lat.order = ordering
     return triangular_lat, {"rec_long_side_coors": rec_long_side_coors, "unitcell_pos":unitcell_pos}
 
 
@@ -788,7 +790,7 @@ def GetTriangularFluxSlaterMPS(Lx, Ly, spinfull, site, mps_unitcell, slater_trun
         C, triangular_lattice = CalculateExactCMatrixForPiFlux(Lx, Ly, spinfull, site,
                                                                zero_energy_tol = zero_energy_tol,
                                                                particle_hole=particle_hole,
-                                                               plot_lattice=False)
+                                                               plot_lattice=True)
 
         psi_from_slater = slater.C_to_MPS(C, trunc_par=slater_trunc_par)
     else:
@@ -1067,7 +1069,7 @@ def TriangularPiFluxGutzwiller(Ly, finite=True, Lx=6, chi_max=3000):
     spin_lat = BuildTriangularLatticeAlignedWithX(2 * Lx, Ly, spin_site, "finite")
     fig_lat, ax_lat = plt.subplots()
     PlotLattice(spin_lat, ax_lat)
-    fig_lat.savefig("spin_lattice.png", bbox_inches='tight')
+    fig_lat.savefig(results_dir + "spin_lattice.png", bbox_inches='tight')
 
     Kx, Ky, spin_corr_k = ComputeMomentumSpaceStructureFactorSymmetrized(spin_corr_x, spin_lat)
     np.savetxt(results_dir + "Kx.csv", Kx)
@@ -1236,7 +1238,7 @@ if __name__ == "__main__":
     #TriangularPiFluxAnsatz(spinfull=True, Lx=4, Ly=4,
     #                       chi_max_temfpy=100, bc_MPS="finite")
 
-    # TriangularPiFluxGutzwiller(3, Lx=3, chi_max=100)
+    TriangularPiFluxGutzwiller(3, Lx=3, chi_max=100)
 
     #unit_cell_spin_lat = [[0.0, 0.0], [1.0, 0.0]]
     #basis = [[2.0, 0.0], [0.5, sqrt(3) / 2.]]
@@ -1273,5 +1275,5 @@ if __name__ == "__main__":
     # PermuteGutzwillerResults()
     # GutzwillerDMRGComparisons()
     # DMRGCorrelations()
-    GutzwillerDMRGComparisons()
+    # GutzwillerDMRGComparisons()
     # PermuteGutzwillerResults()

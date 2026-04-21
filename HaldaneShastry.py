@@ -53,7 +53,11 @@ def GutzwillerState(L, finite=True):
         mps, error = slater.C_to_iMPS(C_short, C_long, trunc_par, sites_per_cell=2,
                                       cut=L_short // 2)
 
-    # mps_gutz = gutz.abrikosov(mps)
+    for i in range(len(mps._B)):
+        Bi = mps._B[i]
+        physical_axis_shape = Bi.to_ndarray().shape[1]
+        mps._B[i] = Bi.scale_axis(1.5*np.ones(physical_axis_shape), axis=1)
+
     mps_gutz = gutz.abrikosov_ph(mps, return_canonical=False)
     print("Gutzwiller norm: ", ExplicitMPSNorm(mps_gutz))
     mps_gutz.canonical_form()

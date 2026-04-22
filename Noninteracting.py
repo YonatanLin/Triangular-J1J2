@@ -1,5 +1,4 @@
 import numpy as np
-import scipy as sp
 import matplotlib.pyplot as plt
 from numpy import pi, sin, cos, sqrt
 from scipy.spatial import Voronoi
@@ -70,7 +69,7 @@ def PiFluxSquaredEnergy(kx, ky):
             sin(k3) + sin(k2) - sin(k1)) ** 2
     return E_sq
 
-def bandStructure():
+def PiFluxBandStructure(Ly=4, plot=False):
     pi_factor = 1.5
     Kx, Ky = np.meshgrid(np.linspace(-pi_factor*pi, pi_factor*pi, 1000),
                          np.linspace(-pi_factor*pi, pi_factor*pi, 1000))
@@ -78,41 +77,51 @@ def bandStructure():
     k1_bz = 2 * pi * np.array([-0.5, -sqrt(3) / 2])
     k2_bz = 2 * pi * np.array([0.5, -1.0 / (2 * sqrt(3))])
 
-    debug = False
-    fig, ax = plt.subplots()
-    if debug:
-        kxs = np.linspace(-2*pi, 2*pi, 500)
-        kys = np.linspace(-2*pi, 2*pi, 500)
-        E_tot = 0.0
-        N_states = 0
-        for kx in kxs:
-            for ky in kys:
-                k_vec = np.array([kx, ky])
-                k1_bz_unit = k1_bz / sqrt(np.dot(k1_bz, k1_bz))
-                k2_bz_unit = k2_bz / sqrt(np.dot(k2_bz, k2_bz))
-                kvec_k1bz = np.dot(k_vec, k1_bz_unit)
-                kvec_k2bz = np.dot(k_vec, k2_bz_unit)
-                if (-pi) < kvec_k1bz < pi and (-pi/sqrt(3)) < kvec_k2bz < (pi/sqrt(3)):
-                    E_sq = PiFluxSquaredEnergy(kx, ky)
-                    E_tot -= sqrt(E_sq)
-                    N_states += 1
-                    ax.plot(kx/pi, ky/pi, "ko", markersize=1)
-        print(f"energy per site: {E_tot / N_states}")
+    debug = True
+    if plot:
+        fig, ax = plt.subplots()
+
+    kxs = np.linspace(-2 * pi, 2 * pi, 200)
+    E_tot = 0.0
+    N_states = 0
+    for i_kx, kx in enumerate(kxs):
+        for j in range(Ly):
+            m = j - Ly // 2
+            ky = 2. / sqrt(3) * ((2 * pi * m / Ly) - 0.5 * kx)
+
+            k_vec = np.array([kx, ky])
+            k1_bz_unit = k1_bz / sqrt(np.dot(k1_bz, k1_bz))
+            k2_bz_unit = k2_bz / sqrt(np.dot(k2_bz, k2_bz))
+            kvec_k1bz = np.dot(k_vec, k1_bz_unit)
+            kvec_k2bz = np.dot(k_vec, k2_bz_unit)
+            if ((-pi) - 1e-6) < kvec_k1bz < (pi + 1e-6) and (-pi / sqrt(3) - 1e-6) < kvec_k2bz < (
+                    (pi / sqrt(3)) + 1e-6):
+                E_sq = PiFluxSquaredEnergy(kx, ky)
+                E_tot -= sqrt(E_sq)
+                N_states += 1
+                if plot:
+                    ax.plot(kx / pi, ky / pi, "ko", markersize=1)
+    E_per_mode = E_tot / N_states
+    print(f"energy per site: {E_per_mode}")
 
     E_sq = PiFluxSquaredEnergy(Kx, Ky)
     E_sq_theory = 2 * (3 + cos(2*Kx) - cos(Kx - sqrt(3)*Ky) + cos(Kx + sqrt(3)*Ky))
     print("diff from theory: ", np.max(np.abs(E_sq - E_sq_theory)))
     print("E_sq minimum: ", np.min(E_sq))
+    if plot:
+        plot_bz1(ax, k1_bz/ pi, k2_bz / pi)
 
-    plot_bz1(ax, k1_bz/ pi, k2_bz / pi)
-    im = ax.imshow((-1)*sqrt(E_sq), origin="lower", extent = (-pi_factor, pi_factor, -pi_factor, pi_factor),
-                   cmap='RdBu')
-    ax.set_xlabel("$k_x[\pi]$")
-    ax.set_ylabel("$k_y[\pi]$")
-    cbar = fig.colorbar(im)
-    cbar.ax.tick_params(labelsize=16)
-    ax.legend()
-    fig.savefig("noninteracting_band_structure" + ".pdf", bbox_inches='tight')
-    plt.show()
+    if plot:
+        im = ax.imshow((-1)*sqrt(E_sq), origin="lower", extent = (-pi_factor, pi_factor, -pi_factor, pi_factor),
+                       cmap='RdBu')
+        ax.set_xlabel("$k_x[\pi]$")
+        ax.set_ylabel("$k_y[\pi]$")
+        cbar = fig.colorbar(im)
+        cbar.ax.tick_params(labelsize=16)
+        ax.legend()
+        fig.savefig("noninteracting_band_structure" + ".pdf", bbox_inches='tight')
+        plt.show()
+    return E_per_mode
 
-bandStructure()
+if __name__ == "__main__":
+    PiFluxBandStructure()

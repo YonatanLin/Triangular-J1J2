@@ -1037,7 +1037,7 @@ def TriangularPiFluxGutzwiller(Ly, finite=True, Lx=6, chi_max=3000):
     psi_from_slater, _ = GetTriangularFluxSlaterMPS(Lx, Ly, spinfull, site, mps_unitcell, slater_trunc_par,
                                                     finite=finite, particle_hole=particle_hole)
 
-    if debug:
+    if True:
         triangular_lat, params = GetPiFluxTriangularLattice(site, Lx, Ly, spinfull, "finite")
         pi_flux_model = FermionicPiFluxModel({"lattice": triangular_lat,
                                               "rec_long_side_coors": params["rec_long_side_coors"],

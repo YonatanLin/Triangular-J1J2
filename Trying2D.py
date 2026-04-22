@@ -824,7 +824,7 @@ def GetTriangularFluxSlaterMPS(Lx, Ly, spinfull, site, mps_unitcell, slater_trun
         C, triangular_lattice = CalculateExactCMatrixForPiFlux(Lx, Ly, spinfull, site,
                                                                zero_energy_tol = zero_energy_tol,
                                                                particle_hole=particle_hole,
-                                                               plot_lattice=True)
+                                                               plot_lattice=False)
 
         psi_from_slater = slater.C_to_MPS(C, trunc_par=slater_trunc_par)
     else:

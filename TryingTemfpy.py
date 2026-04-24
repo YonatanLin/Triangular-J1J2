@@ -19,7 +19,6 @@ fontsize=18
 rc_params = {
     "font.family": "serif",
     "figure.dpi": 200,
-    #'text.usetex': True,
     "axes.labelsize": fontsize,
     "axes.titlesize": fontsize,
     "xtick.labelsize": fontsize,
@@ -28,6 +27,8 @@ rc_params = {
     "figure.titlesize": fontsize,
     "legend.loc": "upper left",
 }
+if local:
+    rc_params['text.usetex'] = True
 
 plt.rcParams.update(rc_params)
 colors = ["blue", "orange", "green", "red", "purple", "pink",

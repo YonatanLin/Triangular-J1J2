@@ -1,7 +1,7 @@
 from temfpy.gutzwiller import abrikosov, abrikosov_ph
 
 from TryingTemfpy import local
-
+from scipy.optimize import curve_fit
 
 import matplotlib.pyplot as plt
 from TryingTemfpy import rc_params
@@ -182,7 +182,7 @@ def PlotSquareLatticeStructureFactor(Lx=6, Ly=6):
     site = SpinHalfSite(conserve=None)
     square_lat = lattice.Square(Lx=Lx, Ly=Ly, site=site, bc=['open', 'open'])
 
-    fig_lat, ax_lat = plt.subplots()
+    fig_lat, ax_lat = plt.subplots(figsize=(6, 5))
     square_lat.plot_order(ax_lat)
     square_lat.plot_coupling(ax_lat)
     square_lat.plot_sites(ax_lat)
@@ -262,13 +262,13 @@ def Generate120DegOrderedState(lat=None, Lx=None, Ly=None, plot=False):
         magz_expected = 0.5 * np.array([1, 1, -1, 1, -1, 1, 1, -1, 1, -1, 1, 1, 1, 1, -1, 1])
         assert ((magz - magz_expected) == 0.0).all()
     if plot:
-        fig_lat, ax_lat = plt.subplots()
+        fig_lat, ax_lat = plt.subplots(figsize=(6, 5))
         lat.plot_order(ax_lat)
         lat.plot_coupling(ax_lat)
         lat.plot_sites(ax_lat)
         spin_corr_x = CalculateSpinSpinCorrelations(psi)
         Kx, Ky, spin_corr_k = ComputeMomentumSpaceStructureFactorSymmetrized(spin_corr_x, lat)
-        fig_corr, ax_corr = plt.subplots()
+        fig_corr, ax_corr = plt.subplots(figsize=(6, 5))
         ImshowMatrix(ax_corr, fig_corr, Kx, Ky, spin_corr_k)
         lat.plot_brillouin_zone(ax_corr)
         plt.show()
@@ -301,7 +301,7 @@ def GenerateStripeOrderedState(lat, plot=False):
     psi.canonical_form()
 
     if plot:
-        fig_lat, ax_lat = plt.subplots()
+        fig_lat, ax_lat = plt.subplots(figsize=(6, 5))
         lat.plot_order(ax_lat)
         lat.plot_coupling(ax_lat)
         lat.plot_sites(ax_lat)
@@ -328,13 +328,13 @@ def TestCorrelationsWithNontrivialUnitCell(state="120"):
 
     print(spin_state.expectation_value("Sz"))
 
-    fig_lat, ax_lat = plt.subplots()
+    fig_lat, ax_lat = plt.subplots(figsize=(6, 5))
     PlotLattice(triangular_lat_enlarged, ax_lat, plot_order=True)
     plt.show()
 
     spin_corr_x = CalculateSpinSpinCorrelations(spin_state)
     Kx, Ky, spin_corr_k = ComputeMomentumSpaceStructureFactorSymmetrized(spin_corr_x, triangular_lat_enlarged)
-    fig, ax = plt.subplots()
+    fig, ax = plt.subplots(figsize=(6, 5))
     ImshowMatrix(ax, fig, Kx, Ky, np.abs(spin_corr_k))
     triangular_lat = BuildTriangularLatticeAlignedWithX(Lx, Ly, site, "finite")
     triangular_lat.plot_brillouin_zone(ax)
@@ -359,7 +359,7 @@ def RunDMRG(model, psi_init, dmrg_params=default_dmrg_params,
         np.savetxt("Energies.txt", np.array([E_initial] + energies))
 
     if plot_convergence:
-        fig,ax = plt.subplots()
+        fig,ax = plt.subplots(figsize=(6, 5))
         ax.plot([-1] + sweeps, [E_initial] + energies, "o")
         ax.set_title("DMRG Sweeps Energies")
         ax.set_xlabel("sweep")
@@ -395,7 +395,7 @@ def TestSquareLattice(Lx=5, Ly=5, bc=('open', 'open'), J2s=[0.0],
         J1J2_model.init_H_from_terms()
 
         results_dir = "SquareLatticeJ1J2/"
-        fig_lat, ax_lat = plt.subplots()
+        fig_lat, ax_lat = plt.subplots(figsize=(6, 5))
         PlotLattice(square_lat, ax_lat, additional_couplings_to_plot=nnn_couplings_list)
         fig_lat.savefig(results_dir + "lattice.png", bbox_inches='tight')
 
@@ -491,7 +491,7 @@ def GetTriangularLatticeInitialState(initial_state, triangular_lat, magz=0):
     return psi
 
 
-def TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, flux, initial_state, conserve, J2):
+def TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, initial_state, conserve, J2):
     bc_string = ""
     for bc_ax in bc:
         if bc_ax == "periodic":
@@ -501,13 +501,13 @@ def TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, flux, initial_state, conserve,
             bc_string += "o"
 
     geometry_dir = f"Lx_{Lx}_Ly_{Ly}_bc_{bc_string}/"
-    params_dir = f"mps_{bc_MPS}_flux_{flux}_init_{initial_state}_conserve_{conserve}_J2_{J2}/"
+    params_dir = f"{bc_MPS}_init_{initial_state}_conserve_{conserve}_J2_{J2}/"
     return geometry_dir, params_dir
 
 
-def CreateTriangularCaseDir(main_results_dir, Lx, Ly, bc, bc_MPS, flux, initial_state, conserve, J2):
+def CreateTriangularCaseDir(main_results_dir, Lx, Ly, bc, bc_MPS, initial_state, conserve, J2):
     Path(main_results_dir).mkdir(parents=True, exist_ok=True)
-    geometry_dir, params_dir = TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, flux, initial_state, conserve, J2)
+    geometry_dir, params_dir = TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, initial_state, conserve, J2)
     results_dir = main_results_dir + geometry_dir
     Path(results_dir).mkdir(parents=True, exist_ok=True)
     results_dir += params_dir
@@ -526,7 +526,7 @@ def CreateTriangularCaseDirFromInputFile(main_results_dir, input_file):
     for line in input_file_lines[1:]:
         params = line.split(" ")
         case_folder = CreateTriangularCaseDir(main_results_dir, params[0], params[1], params[2].split("-"),
-                params[3], params[4], params[5], params[6], params[7][:-1])
+                                              params[3], params[5], params[6], params[7][:-1])
         input_for_condor.write(line[:-1] + " " + case_folder + "\n")
 
 
@@ -560,19 +560,15 @@ def BuildSpinTriangularLatticeWithGutzwillerOrdering(Lx, Ly, site, bc_MPS, bc):
     return triangular_lat
     
     
-def calculateGutzwillerEnergyTriangularJ1J2(Lx, Ly, J2=0.125,
-                            bc_MPS="finite", bc=("open", "periodic"), reorder_lattice=True):
+def calculateGutzwillerEnergyTriangularJ1J2(gutz_results_dir, Lx, Ly, chi, J2=0.125, bc_MPS="finite", bc=("open", "periodic"),
+                                            reorder_lattice=False):
     Lx_gutz = int(Lx // 2)
-    #psi_path = "C:/Users/yonli/Desktop/Thesis/Triangular J1J2/Code" + \
-    #           f"/TriangularPiFluxGutzwiller/Lx_{Lx_gutz}_Ly_{Ly}_bc_op/psi_gutzwiller.pkl"
-    psi_path = "C:/Users/yonli/Desktop/Thesis/Triangular J1J2/Code" + \
-               f"/TriangularPiFluxGutzwiller/Lx_{Lx_gutz}_Ly_{Ly}_chi_6000/psi_gutzwiller.pkl"
+    psi_path = gutz_results_dir + f"Lx_{Lx_gutz}_Ly_{Ly}_chi_{chi}/psi_gutzwiller.pkl"
     site = SpinHalfSite(conserve="Sz")
 
     with open(psi_path, 'rb') as f:
         psi = pickle.load(f)
         psi.unit_cell_width = 1
-    print(psi.L)
 
     triangular_lat = BuildTriangularLatticeAlignedWithX(Lx, Ly, site, bc_MPS, bc)
     J1J2_model, _ = GenerateJ1J2SpinTriangularModel(J2, triangular_lat)
@@ -582,7 +578,7 @@ def calculateGutzwillerEnergyTriangularJ1J2(Lx, Ly, J2=0.125,
         print("orig overlap with permutation: ", psi.overlap(psi_copy))
         print("permutation norm squared: ", psi.overlap(psi))
 
-        fig, ax = plt.subplots()
+        fig, ax = plt.subplots(figsize=(6, 5))
         PlotLattice(triangular_lat, ax)
         plt.show()
     print(triangular_lat.N_sites)
@@ -590,10 +586,11 @@ def calculateGutzwillerEnergyTriangularJ1J2(Lx, Ly, J2=0.125,
     if bc_MPS == "finite":
         E /= triangular_lat.N_sites
     print("Energy: ", E)
+    return E
 
 
 def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, flux=0.0, conserve=True,
-                       initial_state="Random", J2=0.0, basis=None, unit_cell=None):
+                       initial_state="Random", J2=0.0):
     if isinstance(bc, str):
         bc_parsed = bc.split("-")
         bc = (bc_parsed[0], bc_parsed[1])
@@ -601,7 +598,7 @@ def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, flux=0.0, conserve=True,
     dmrg_params = default_dmrg_params
     if local:
         main_results_dir = "TriangularLatticeResults/"
-        results_dir = CreateTriangularCaseDir(main_results_dir, Lx, Ly, bc, bc_MPS, flux, initial_state, conserve, J2)
+        results_dir = CreateTriangularCaseDir(main_results_dir, Lx, Ly, bc, bc_MPS, initial_state, conserve, J2)
     else:
         results_dir = "./"
 
@@ -799,7 +796,7 @@ def CalculateExactCMatrixForPiFlux(Lx, Ly, spinfull, site, zero_energy_tol=1e-9,
                                           "spinfull": spinfull, "particle_hole":particle_hole,
                                           "init_H_MPO": False})
     if plot_lattice:
-        fig, ax = plt.subplots()
+        fig, ax = plt.subplots(figsize=(6, 5))
         PlotLattice(triangular_lat, ax, additional_couplings_to_plot=pi_flux_model.pos_hoppings_list)
         PlotLattice(triangular_lat, ax, additional_couplings_to_plot=pi_flux_model.neg_hoppings_list,
                     nnn_line_style="--", )
@@ -854,8 +851,8 @@ def TriangularPiFluxAnsatz(Lx=2, Ly=3, spinfull=True, bc_MPS="infinite", particl
 
     bc_lat = triangular_lat.boundary_conditions
     conserve_N = (site.conserve=='N')
-    results_dir = CreateTriangularCaseDir(main_results_dir, Lx, Ly, bc_lat, bc_MPS,
-                                      0.0, "Random", conserve_N, 0.0)
+    results_dir = CreateTriangularCaseDir(main_results_dir, Lx, Ly, bc_lat, bc_MPS, "Random", conserve_N,
+                                          0.0)
     rec_long_side_coors = params_lat["rec_long_side_coors"]
     unitcell_pos = params_lat["unitcell_pos"]
 
@@ -865,7 +862,7 @@ def TriangularPiFluxAnsatz(Lx=2, Ly=3, spinfull=True, bc_MPS="infinite", particl
 
     plot_lattice = True
     if plot_lattice:
-        fig_lat, ax_lat = plt.subplots()
+        fig_lat, ax_lat = plt.subplots(figsize=(6, 5))
         plot_order = False
         PlotLattice(triangular_lat, ax_lat, pi_flux_model.pos_hoppings_list, plot_nn_couplings=False, plot_order=plot_order)
         PlotLattice(triangular_lat, ax_lat, pi_flux_model.neg_hoppings_list, plot_nn_couplings=False,
@@ -924,9 +921,9 @@ def TriangularPiFluxAnsatz(Lx=2, Ly=3, spinfull=True, bc_MPS="infinite", particl
 
     assert(C.shape[0] == C.shape[1])
     X,Y = np.meshgrid(np.arange(0,C.shape[0]),np.arange(0,C.shape[0]))
-    fig_slater_corr, ax_slater_corr = plt.subplots()
-    fig_mps_slater_corr, ax_mps_slater_corr = plt.subplots()
-    fig_dmrg_corr, ax_dmrg_corr = plt.subplots()
+    fig_slater_corr, ax_slater_corr = plt.subplots(figsize=(6, 5))
+    fig_mps_slater_corr, ax_mps_slater_corr = plt.subplots(figsize=(6, 5))
+    fig_dmrg_corr, ax_dmrg_corr = plt.subplots(figsize=(6, 5))
 
     ImshowMatrix(ax_slater_corr, fig_slater_corr, X, Y, C, "i", "j")
     ImshowMatrix(ax_mps_slater_corr, fig_mps_slater_corr, X, Y, mps_slater_corr, "i", "j")
@@ -996,7 +993,7 @@ def PermuteGutzwillerWavefunctionToDMRGOrder(psi_gutz, Lx, Ly):
 
 
 def calculateOverlapBetweenGutzwillerAndDMRG(dmrg_dir, gutzwiller_dir, old_tenpy_version=False,
-                                             psi_gutz_fname='psi_gutzwiller_permuted.pkl'):
+                                             psi_gutz_fname='psi_gutzwiller.pkl'):
     with open(dmrg_dir + 'psi_gs.pkl', 'rb') as f_dmrg:
         psi_dmrg = pickle.load(f_dmrg)
     with open(gutzwiller_dir + psi_gutz_fname, 'rb') as f_gutz:
@@ -1009,8 +1006,9 @@ def calculateOverlapBetweenGutzwillerAndDMRG(dmrg_dir, gutzwiller_dir, old_tenpy
             B = psi_dmrg.get_B(i)
             B_inverted = B[:, ::-1, :]
             psi_dmrg.set_B(i, B_inverted, form=psi_dmrg.form[i])
-
-    print("overlap between wavefunctions: ", psi_dmrg.overlap(psi_gutz))
+    overlap = abs(psi_dmrg.overlap(psi_gutz))
+    print("overlap between wavefunctions: ", overlap)
+    return overlap
 
 
 def RescaleMPSForGutzwiller(psi):
@@ -1053,7 +1051,7 @@ def TriangularPiFluxGutzwiller(Ly, finite=True, Lx=6, chi_max=3000):
         print("occ up: ", np.sum(avg_occ[1::2]))
         print("occ down: ", np.sum(avg_occ[0::2]))
 
-        fig_occ, ax_occ = plt.subplots()
+        fig_occ, ax_occ = plt.subplots(figsize=(6, 5))
         ax_occ.plot(avg_occ, "o")
         plt.show()
 
@@ -1073,7 +1071,7 @@ def TriangularPiFluxGutzwiller(Ly, finite=True, Lx=6, chi_max=3000):
             site_doubled = psi_slater_grouped_pairs.sites[i]
             site_doubled.add_op("combined_occ", n_conseq_op)
 
-        fig_double_occ, ax_double_occ = plt.subplots()
+        fig_double_occ, ax_double_occ = plt.subplots(figsize=(6, 5))
         ax_double_occ.plot(psi_slater_grouped_pairs.expectation_value(["combined_occ"]),
                            "o")
         plt.show()
@@ -1083,8 +1081,12 @@ def TriangularPiFluxGutzwiller(Ly, finite=True, Lx=6, chi_max=3000):
         norm = ExplicitMPSNorm(psi_gutzwiller)
         print(f"norm of psi_gutzwiller is {norm}")
 
-    results_dir = gutzwiller_results_dir + f"Lx_{Lx}_Ly_{Ly}_chi_{chi_max}/"
-    Path(results_dir).mkdir(parents=True, exist_ok=True)
+    if local:
+        results_dir = gutzwiller_results_dir + f"Lx_{Lx}_Ly_{Ly}_chi_{chi_max}/"
+        Path(results_dir).mkdir(parents=True, exist_ok=True)
+    else:
+        results_dir = "./"
+
     with open(results_dir + 'psi_gutzwiller' + ".pkl", 'wb') as f:
         pickle.dump(psi_gutzwiller, f)
 
@@ -1108,7 +1110,7 @@ def TriangularPiFluxGutzwiller(Ly, finite=True, Lx=6, chi_max=3000):
     np.savetxt(results_dir + "spin_corr_x.csv", spin_corr_x)
 
     spin_lat = BuildTriangularLatticeAlignedWithX(2 * Lx, Ly, spin_site, "finite")
-    fig_lat, ax_lat = plt.subplots()
+    fig_lat, ax_lat = plt.subplots(figsize=(6, 5))
     PlotLattice(spin_lat, ax_lat)
     fig_lat.savefig(results_dir + "spin_lattice.png", bbox_inches='tight')
 
@@ -1117,7 +1119,7 @@ def TriangularPiFluxGutzwiller(Ly, finite=True, Lx=6, chi_max=3000):
     np.savetxt(results_dir + "Ky.csv", Ky)
     np.savetxt(results_dir + "spin_corr_k.csv", spin_corr_k)
 
-    fig,ax = plt.subplots()
+    fig,ax = plt.subplots(figsize=(6, 5))
     ImshowMatrix(ax, fig, Kx, Ky, spin_corr_k)
     spin_lat_singlesite_unitcell = BuildTriangularLatticeAlignedWithX(Lx, Ly, spin_site, "finite")
     spin_lat_singlesite_unitcell.plot_brillouin_zone(ax)
@@ -1130,7 +1132,7 @@ def ComputeCorrelationsFromMPSFile(parent_results_path, Lx, Ly, bc, bc_MPS, flux
                                    conserve=None, J2=None, psi_fname="psi_gs.pkl", sort_charge=False,
                                    Lx_for_infinite_bc_MPS=None, psi_dir=None, from_dmrg=True, from_corr_file=False):
     if psi_dir is None:
-        geometry_path, params_path = TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, flux, initial_state, conserve, J2)
+        geometry_path, params_path = TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, initial_state, conserve, J2)
         psi_dir = parent_results_path + geometry_path + params_path
     else:
         psi_dir = parent_results_path + psi_dir
@@ -1166,13 +1168,14 @@ def ComputeCorrelationsFromMPSFile(parent_results_path, Lx, Ly, bc, bc_MPS, flux
 
 
 def PlotCorrelationsFromFiles(results_dir, energy_ax=None, initial_state="",
-                              show_energies = True, psi_fname="psi_gs.pkl"):
+                              show_energies = True, psi_fname="psi_gs.pkl", output_dir=None,
+                              fig_title=""):
     Kx = np.loadtxt(results_dir + "Kx.csv")
     Ky = np.loadtxt(results_dir + "Ky.csv")
     corr_k = np.loadtxt(results_dir + "spin_corr_k.csv", dtype=np.complex128)
     if show_energies:
         if energy_ax is None:
-            fig, energy_ax = plt.subplots()
+            fig, energy_ax = plt.subplots(figsize=(6, 5))
         energies = np.loadtxt(results_dir + "Energies.txt")
         energy_ax.plot(energies, "o", label=initial_state)
 
@@ -1182,12 +1185,14 @@ def PlotCorrelationsFromFiles(results_dir, energy_ax=None, initial_state="",
 
     print("Magentization of gs: ", psi.get_total_charge(only_physical_legs=True))
     print("Magentization of gs: ", np.sum(psi.expectation_value("Sz")))
-    fig, ax = plt.subplots()
 
+    fig, ax = plt.subplots(figsize=(6, 5))
     triangular_lat = BuildTriangularLatticeAlignedWithX(4, 4, SpinHalfSite(conserve='Sz'), "finite")
     triangular_lat.plot_brillouin_zone(ax)
     ImshowMatrix(ax, fig, Kx, Ky, np.real(corr_k))
     assert (np.max(np.abs(np.imag(corr_k))) < 1e-14)
+    if output_dir is not None:
+        fig.savefig(output_dir + f"correlations_{fig_title}.png", bbox_inches='tight')
 
 
 def PlotRealSpaceCorrelations(results_dir):
@@ -1195,54 +1200,113 @@ def PlotRealSpaceCorrelations(results_dir):
     print(corr_x.shape)
     X = np.array([0.0, 1.0])
     Y = np.array([0.0, 1.0])
-    fig, ax = plt.subplots()
+    fig, ax = plt.subplots(figsize=(6, 5))
     ImshowMatrix(ax, fig, X, Y, np.real(corr_x), label="real part")
     ax.legend()
     
 
-def GutzwillerDMRGComparisons():
+def GutzwillerDMRGOverlaps(J2s, gutz_dir, Lx, Ly, chi_gutz,
+                           output_dir, dmrg_initial_state):
     # main_results_dir = "TriangularPiFluxGutzwiller/"
     # case_dir = "Lx_3_Ly_6_chi_6000/"
     # PlotCorrelationsFromFiles(code_dir + main_results_dir + case_dir, show_energies=False,
     #                          psi_fname="psi_gutzwiller.pkl")
     # plt.show()
-    # calculateGutzwillerEnergyTriangularJ1J2(6, 6, J2=0.125)
-    # calculateGutzwillerEnergyTriangularJ1J2(8, 6, J2=0.125)
-    # calculateGutzwillerEnergyTriangularJ1J2(10, 6, J2=0.125)
-    # calculateGutzwillerEnergyTriangularJ1J2(12, 6, J2=0.125)
 
-    #Ls = np.array([6, 8, 10, 12])
-    #Es = np.array([-0.48526, -0.48691, -0.48785, -0.48847])
-    #plt.plot(1./Ls, Es, "--")
-    #plt.xlim(0.0, 0.17)
-    #plt.ylim(-0.51, -0.48)
-    #plt.show()
+    # dmrg_dir = code_dir + \
+    #            "TriangularLatticeResults/FromCluster/Lx_12_Ly_5_bc_op/finite_init_stripe_conserve_1_J2_0.125/"
+    # gutz_dir = code_dir + "TriangularPiFluxGutzwiller/Lx_6_Ly_5_bc_op/"
 
-    #dmrg_dir = code_dir + \
-    #           "TriangularLatticeResults/FromCluster/Lx_12_Ly_5_bc_op/mps_finite_flux_0.0_init_Neel_conserve_1_J2_0.135/"
-    #dmrg_dir = code_dir + \
-    #          "NewTenpyTriangularLatticeResults/Lx_6_Ly_6_bc_op/mps_finite_flux_0.0_init_Random_conserve_1_J2_0.125/"
-    #gutz_dir = code_dir + "TriangularPiFluxGutzwiller/Lx_3_Ly_6_chi_6000/"
+    overlaps = []
+    dmrg_energies = []
+    gutz_energies = []
+    gutz_case_dir = gutz_dir + f"Lx_{Lx//2}_Ly_{Ly}_chi_{chi_gutz}/"
 
-    #dmrg_dir = code_dir + \
-    #           "TriangularLatticeResults/FromCluster/Lx_12_Ly_5_bc_op/mps_finite_flux_0.0_init_Neel_conserve_1_J2_0.125/"
-    dmrg_dir = code_dir + \
-               "TriangularLatticeResults/FromCluster/Lx_12_Ly_5_bc_op/mps_finite_flux_0.0_init_stripe_conserve_1_J2_0.125/"
-    gutz_dir = code_dir + "TriangularPiFluxGutzwiller/Lx_6_Ly_5_bc_op/"
-    calculateOverlapBetweenGutzwillerAndDMRG(dmrg_dir, gutz_dir, 12, 5, old_tenpy_version=False)
+    for J2 in J2s:
+        dmrg_geom_dir, dmrg_params_dir = (
+            TriangularJ1J2CaseDirName(Lx, Ly, ("open", "periodic"), "finite",
+                                      dmrg_initial_state, 1, J2))
+        dmrg_dir = code_dir + "NewTenpyTriangularLatticeResults/" + dmrg_geom_dir + dmrg_params_dir
 
+        sweep_energies = np.loadtxt(dmrg_dir + "Energies.txt", dtype=np.float64)
+        dmrg_energy = sweep_energies[-1] / (Lx * Ly)
+        dmrg_energies.append(dmrg_energy)
+
+        gutz_energy = calculateGutzwillerEnergyTriangularJ1J2(gutz_dir, Lx, Ly, chi_gutz, J2=J2)
+        gutz_energies.append(gutz_energy)
+
+        PlotCorrelationsFromFiles(dmrg_dir, show_energies=False, output_dir=output_dir,
+                                  fig_title=f"dmrg_J2_{J2}")
+
+        overlap_J2 = calculateOverlapBetweenGutzwillerAndDMRG(dmrg_dir, gutz_case_dir, old_tenpy_version=False)
+        overlaps.append(overlap_J2)
+
+    fig, ax = plt.subplots(figsize=(6, 5))
+    ax.plot(J2s, overlaps, "o")
+    ax.set_xlabel("$J_2$")
+    ax.set_ylabel("overlap")
+    fig.savefig(output_dir + f"overlaps_initial_state_{dmrg_initial_state}.png", bbox_inches='tight')
+
+    fig, ax = plt.subplots(figsize=(6, 5))
+    ax.plot(J2s, dmrg_energies, "ro", label="dmrg")
+    ax.plot(J2s, gutz_energies, "bo", label="Gutzwiller")
+    ax.set_xlabel("$J_2$")
+    ax.set_ylabel("$E$")
+    ax.legend()
+    fig.savefig(output_dir + f"energies_initial_state_{dmrg_initial_state}.png", bbox_inches='tight')
+
+
+def linear_model(x, m, b):
+    return m * x + b
+
+
+def FitLinearModel(x, y):
+    popt, pcov = curve_fit(linear_model, x, y)
+    m = popt[0]
+    b = popt[1]
+    x0 = (-1) * b / m
+    dm = np.sqrt(pcov[0, 0])
+    db = np.sqrt(pcov[1, 1])
+    dx0 = np.sqrt((db / m) ** 2 + (dm * b / (m ** 2)) ** 2)
+
+    return {"m": m, "b": b, "db": db, "dm": dm}
+
+
+def GutzwillerBondDimensionScaling(gutz_results_dir, Lx, Ly, chis,
+                                   output_dir):
+    Es = []
+    inv_chis = np.array(1. / np.array(chis))
+    for chi in chis:
+        E = calculateGutzwillerEnergyTriangularJ1J2(gutz_results_dir, Lx, Ly, chi)
+        Es.append(E)
+
+    fit_params = FitLinearModel(inv_chis, Es)
+    m, b, db, dm = fit_params["m"], fit_params["b"], fit_params["db"], fit_params["dm"]
+
+    fig, ax = plt.subplots(figsize=(6, 5))
+    ax.plot(inv_chis, Es, "bo")
+
+    inv_chis_plot_fit = np.linspace(0.0, np.max(inv_chis), 2)
+    ax.plot(inv_chis_plot_fit, m*inv_chis_plot_fit + b, "b--")
+    ax.errorbar([0.0], [b], yerr=[db], fmt="ro")
+
+    ax.set_xlabel("$1 / \chi$")
+    ax.set_ylabel("$E$")
+    print(f"Energy for chi=inf: {b} +- {db}")
+    fig.savefig(output_dir + "Gutzwiller_E_chi_scaling.png", bbox_inches="tight")
+    plt.show()
 
 
 def DMRGCorrelations():
     main_results_dir = "NewTenpyTriangularLatticeResults/"
-    case_dir = f"Lx_6_Ly_6_bc_op/mps_finite_flux_0.0_init_Random_conserve_1_J2_{0.0}/"
+    case_dir = f"Lx_6_Ly_6_bc_op/finite_init_Random_conserve_1_J2_{0.0}/"
     PlotCorrelationsFromFiles(code_dir + main_results_dir + case_dir)
     plt.show()
 
     for J2 in [0.1, 0.11, 0.12, 0.125, 0.13, 0.14, 0.15]:
-        fig, energy_ax = plt.subplots()
+        fig, energy_ax = plt.subplots(figsize=(6, 5))
         for initial_state in ["stripe", "Random"]:
-            case_dir = f"Lx_6_Ly_6_bc_op/mps_finite_flux_0.0_init_{initial_state}_conserve_1_J2_{J2}/"
+            case_dir = f"Lx_6_Ly_6_bc_op/finite_0.0_init_{initial_state}_conserve_1_J2_{J2}/"
             PlotCorrelationsFromFiles(code_dir + main_results_dir + case_dir, energy_ax=energy_ax,
                                       initial_state=initial_state)
         energy_ax.legend()
@@ -1275,7 +1339,7 @@ def TryCylinderFlux():
         strength_with_flux = fermion_model.coupling_strength_add_ext_flux(1.0, dx, [0, pi / 4])
         fermion_model.add_coupling(strength_with_flux, u1, 'Cd', u2, 'C', dx)
         fermion_model.add_coupling(np.conj(strength_with_flux), u2, 'Cd', u1, 'C', -np.array(dx))
-    fig, ax = plt.subplots()
+    fig, ax = plt.subplots(figsize=(6, 5))
     PlotLattice(lat, ax)
     plt.show()
 
@@ -1330,17 +1394,18 @@ def TryPiFluxMonopoleState(Lx=3, Ly=3, chi_max=1000):
     spin_corr = CalculateSpinSpinCorrelations(psi_gutz)
     spin_lat = BuildTriangularLatticeAlignedWithX(Lx, Ly, FermionSite(), "finite", bc=('open', 'periodic'))
     Kx, Ky, corr_k = ComputeMomentumSpaceStructureFactorSymmetrized(spin_corr, spin_lat)
-    fig, ax = plt.subplots()
+    fig, ax = plt.subplots(figsize=(6, 5))
     ImshowMatrix(ax, fig, Kx, Ky, corr_k)
     spin_lat.plot_brillouin_zone(ax)
     plt.show()
 
-    fig, ax = plt.subplots()
+    fig, ax = plt.subplots(figsize=(6, 5))
     PlotLattice(lat, ax)
     plt.show()
 
 
 if __name__ == "__main__":
+    output_dir = "C:/Users/yonli/Desktop/Thesis/Triangular J1J2/Meetings/27_4_2026/"
     # PlotSquareLatticeStructureFactor(Lx=3, Ly=3)
     # TestTriangularLattice()
     # TestSquareLattice(6, 6, J2s=[0.0, 0.9])
@@ -1348,7 +1413,7 @@ if __name__ == "__main__":
     #TriangularPiFluxAnsatz(spinfull=True, Lx=4, Ly=4,
     #                       chi_max_temfpy=100, bc_MPS="finite")
     # TryPiFluxMonopoleState()
-    TriangularPiFluxAnsatz(1, 5, False, "infinite", False)
+    # TriangularPiFluxAnsatz(1, 5, False, "infinite", False)
     # TriangularPiFluxAnsatz(4, 4, True, "finite", True)
     # TriangularPiFluxGutzwiller(3, Lx=3, chi_max=100)
 
@@ -1367,7 +1432,7 @@ if __name__ == "__main__":
     # TriangularPiFluxGutzwiller(4)
     #PlotRealSpaceCorrelations(code_dir + "TriangularPiFluxGutzwiller/Lx_3_Ly_6_chi_6000/")
     #PlotRealSpaceCorrelations(code_dir +
-    #                          "NewTenpyTriangularLatticeResults/Lx_6_Ly_6_bc_op/mps_finite_flux_0.0_init_Random_conserve_1_J2_0.125/")
+    #                          "NewTenpyTriangularLatticeResults/Lx_6_Ly_6_bc_op/finite_init_Random_conserve_1_J2_0.125/")
 
     # plt.show()
     # ComputeCorrelationsFromMPSFile(code_dir + "TriangularLatticeResults/FromCluster/", 12, 5, ("open", "periodic"),
@@ -1387,7 +1452,23 @@ if __name__ == "__main__":
     #TriangularJ1J2DMRG(3, 3, ("open", "periodic"), "finite",
     #                   J2=0.125, conserve=True, initial_state="Random")
     # PermuteGutzwillerResults()
-    # GutzwillerDMRGComparisons()
+    # GutzwillerDMRGOverlaps()
     # DMRGCorrelations()
-    # GutzwillerDMRGComparisons()
+
+    J2s = [0.0, 0.02, 0.04, 0.06, 0.08, 0.1, 0.12, 0.125, 0.13, 0.14, 0.15,
+           0.16, 0.17, 0.18, 0.19, 0.2]
+    # J2s = [0.0, 0.02, 0.04, 0.06, 0.08, 0.12, 0.125, 0.13, 0.14, 0.15]
+    gutz_dir = code_dir + "GutzwillerResults/"
+    Lx, Ly = 6, 6
+    GutzwillerDMRGOverlaps(J2s, gutz_dir, Lx, Ly, 7000, output_dir, "Random")
+
+    #gutz_dir = code_dir + "GutzwillerResults/"
+    #GutzwillerBondDimensionScaling(gutz_dir, 6, 6, [4000, 5000, 6000],
+    #                               output_dir)
+
+    #J2s = [0.125]
+    #gutz_dir = code_dir + "GutzwillerResults/Lx_6_Ly_4_chi_6000/"
+    #Lx, Ly = 12, 4
+    #GutzwillerDMRGOverlaps(J2s, gutz_dir, Lx, Ly)
+
     # PermuteGutzwillerResults()

@@ -719,10 +719,11 @@ class MonopoleCondensatePiFluxModel(CouplingMPOModel):
         plus_hc = True
         init_MPO = model_params["init_H_MPO"]
         monopole_Q = model_params["monopole_Q"]
+        self.init_MPO = init_MPO
         assert(monopole_Q == round(monopole_Q))
         lat = self.lat
-        bc = lat.boundary_conditions[0]
-        assert(bc[0] == "open" and bc[1] == "periodic")
+        bc = lat.boundary_conditions
+        assert(bc[1] == "periodic")
 
         Lx, Ly = lat.Ls[0], lat.Ls[1]
         dphi = monopole_Q * 2*pi / (lat.N_sites / len(lat.unit_cell_positions))
@@ -730,11 +731,14 @@ class MonopoleCondensatePiFluxModel(CouplingMPOModel):
         Nx, Ny = Lx, Ly
         nys, nxs = np.arange(0, Ny), np.arange(0, Nx)
         ys_ybonds, xs_ybonds = np.meshgrid(nys, nxs)
-        # ys_diagbonds, xs_diagbonds = np.meshgrid(nys, (nxs[:-1] if bc[0] == "open" else nxs))
-        ys_diagbonds, xs_diagbonds = np.meshgrid(nys, nxs[:-1])
-        strength_x = 1.0
+        ys_diagbonds, xs_diagbonds = np.meshgrid(nys, (nxs[:-1] if bc[0] == "open" else nxs))
         strength_y = np.exp(-1j * dphi * xs_ybonds) * (1 - 2 * ((xs_ybonds + 1) % 2))
         strength_diag = np.exp(-1j * dphi * (xs_diagbonds + 0.5)) * (1 - 2 * ((xs_diagbonds + 1) % 2))
+        strength_x = np.ones(xs_diagbonds.shape, dtype=np.complex128)
+
+        if bc[0] == "periodic":
+            strength_x[-1, :] *= np.exp(1j * dphi * ys_ybonds[-1, :] * Nx) # x bonds on last column
+            strength_diag[-1, :] *= np.exp(-1j * dphi * ys_ybonds[-1, :] * Nx) # diag bonds on last column
 
         for i in range(len(lat.unit_cell_positions)):
             sgn = 1 - 2*i
@@ -742,8 +746,9 @@ class MonopoleCondensatePiFluxModel(CouplingMPOModel):
             self.add_coupling(sgn * strength_diag, i, "Cd", i, "C", [-1, 1], plus_hc=plus_hc)
             self.add_coupling(sgn * strength_x, i, "Cd", i, "C", [1, 0], plus_hc=plus_hc)
 
-        if init_MPO:
-            self.init_H_from_terms()
+    def init_H_from_terms(self):
+        if(self.init_MPO):
+            super().init_H_from_terms()
 
 
 def getPiFluxLatticeOrdering(Lx, Ly, unit_cell_size):
@@ -841,8 +846,6 @@ def GetTriangularFluxSlaterMPS(Lx, Ly, spinfull, site, mps_unitcell, slater_trun
 
 def TriangularPiFluxAnsatz(Lx=2, Ly=3, spinfull=True, bc_MPS="infinite", particle_hole=False,
                            chi_max_temfpy = 600):
-    #if bc_MPS == "infinite":
-    #    assert(Lx == 1)
     main_results_dir = "PiFluxAnsatzResults/"
 
     site = FermionSite(conserve='N')
@@ -1206,16 +1209,6 @@ def PlotRealSpaceCorrelations(results_dir):
 
 def GutzwillerDMRGOverlaps(J2s, gutz_dir, Lx, Ly, chi_gutz,
                            output_dir, dmrg_initial_state):
-    # main_results_dir = "TriangularPiFluxGutzwiller/"
-    # case_dir = "Lx_3_Ly_6_chi_6000/"
-    # PlotCorrelationsFromFiles(code_dir + main_results_dir + case_dir, show_energies=False,
-    #                          psi_fname="psi_gutzwiller.pkl")
-    # plt.show()
-
-    # dmrg_dir = code_dir + \
-    #            "TriangularLatticeResults/FromCluster/Lx_12_Ly_5_bc_op/finite_init_stripe_conserve_1_J2_0.125/"
-    # gutz_dir = code_dir + "TriangularPiFluxGutzwiller/Lx_6_Ly_5_bc_op/"
-
     overlaps = []
     dmrg_energies = []
     gutz_energies = []
@@ -1343,25 +1336,86 @@ def TryCylinderFlux():
     plt.show()
 
 
-def TryMonopoleModelHofstadter(output_dir, Lx, Ly):
+def TryMonopoleModelHofstadter(output_dir, Lx, Ly, plot=True,
+                               bc=('open', 'periodic')):
     fermion_site = FermionSite(conserve='N')
-    bc = ('open', 'periodic')
     lat = BuildTriangularLatticeAlignedWithX(Lx, Ly, fermion_site, "finite", bc=bc,
                                              unit_cell=[[-0.1, 0.0], [0.1, 0.0]])
-    fig, ax = plt.subplots(figsize=(6, 5))
-    for monopole_Q in range(Lx * Ly):
-        monopole_model = MonopoleCondensatePiFluxModel({"init_H_MPO": True, "lattice": lat,
+
+    if plot:
+        fig, ax = plt.subplots(figsize=(6, 5))
+    debug = False
+    if debug:
+        monopole_model = MonopoleCondensatePiFluxModel({"init_H_MPO": False, "lattice": lat,
+                                                        "monopole_Q": 1})
+        PrintCouplings(monopole_model, True)
+        fig, ax = plt.subplots()
+        PlotLattice(lat, ax)
+        plt.show()
+        exit(1)
+
+    monopole_Qs = np.arange(0, Lx*Ly)
+    energies = np.zeros((Lx * Ly, monopole_Qs.shape[0]))
+    for monopole_Q in monopole_Qs:
+    # for monopole_Q in range(2):
+        monopole_model = MonopoleCondensatePiFluxModel({"init_H_MPO": False, "lattice": lat,
                                                         "monopole_Q": monopole_Q})
         couplings_list = monopole_model.all_coupling_terms().to_TermList()
 
         H = CreateHamiltonianMatrixFromCouplingsList(couplings_list, lat.N_sites, dtype=np.complex128)
+        if(len(lat.unit_cell_positions) == 2):
+            H_up = H[0::2, 0::2]
+            H_down = H[1::2, 1::2]
+            e_up, _ = eigh(H_up)
+            e_down, _ = eigh(H_down)
+            energies[:, monopole_Q] = e_up
+            e = np.concatenate([e_up, e_down])
+        else:
+            e, _ = eigh(H)
+            energies[:, monopole_Q] = e
+        if plot:
+            ax.plot(monopole_Q / (Lx*Ly) * np.ones(e.shape), e, "bo", markersize=1)
 
-        e, v = eigh(H)
-        ax.plot(monopole_Q / (Lx*Ly) * np.ones(e.shape), e, "bo", markersize=1)
+    if plot:
+        ax.set_xlabel(r"$\phi / 2\pi$")
+        ax.set_ylabel(r"$\epsilon$")
+        fig.savefig(f"{output_dir}Hofstadter_Lx_{Lx}_Ly_{Ly}_x_{bc[0]}.png", bbox_inches='tight')
+        plt.show()
 
-    ax.set_xlabel(r"$\phi / 2\pi$")
-    ax.set_ylabel(r"$\epsilon$")
-    fig.savefig(output_dir + "Hofstadter.png", bbox_inches='tight')
+    return energies
+
+
+def CheckMegnatizedPiFluxEnergyVsMonopoleDensity(Lx, Ly, magnetization, bc, ax, color="b", plot=True):
+    single_particle_energies = TryMonopoleModelHofstadter(None, Lx, Ly, plot=False, bc=bc)
+    energies = np.zeros(single_particle_energies.shape[0])
+    N_filling = Lx * Ly
+    m = magnetization * Lx * Ly
+    N_up = int(np.ceil((N_filling + m) / 2))
+    N_down = N_filling - N_up
+    assert((N_up + N_down) == N_filling)
+
+    for monopole_Q in range(single_particle_energies.shape[1]):
+        e_Q = single_particle_energies[:, monopole_Q]
+        energy_up = np.sum(e_Q[0:N_up])
+        energy_down = np.sum(e_Q[0:N_down])
+        energies[monopole_Q] = (energy_up + energy_down) / N_filling
+
+    if plot:
+        ax.axvline(magnetization / 2, linestyle="--", color='black', linewidth=0.6, alpha=0.75)
+        ax.axvline(magnetization, linestyle="--", color='black', linewidth=0.6, alpha=0.75)
+        ax.plot(np.arange(0, energies.shape[0]) / (Lx * Ly), energies, color+"o",
+                label=f"x {bc[0]}")
+        ax.legend()
+    return np.min(energies)
+
+
+def CheckOptimalMonopoleStateEnergyVsMagnetization(Lx, Ly):
+    magzs = [0.05, 0.1, 0.15, 0.2, 0.25, 0.3]
+    es = []
+    for magz in magzs:
+        e = CheckMegnatizedPiFluxEnergyVsMonopoleDensity(Lx, Ly, magz, ("open", "periodic"), None, plot=False)
+        es.append(e)
+    plt.plot(magzs, es, "o")
     plt.show()
 
 
@@ -1438,8 +1492,21 @@ if __name__ == "__main__":
     #TriangularPiFluxAnsatz(spinfull=True, Lx=4, Ly=4,
     #                       chi_max_temfpy=100, bc_MPS="finite")
 
-    TryPiFluxMonopoleState(6, 4, monopole_Q=1)
-    # TryMonopoleModelHofstadter(output_dir, 12, 12)
+    # TryPiFluxMonopoleState(3, 3, monopole_Q=1)
+    # TryMonopoleModelHofstadter(output_dir, 18, 18, bc=("periodic", "periodic"))
+
+    # fig, ax = plt.subplots(figsize=(6, 5))
+    # magz = 1. / 3.
+    # Lx = 18
+    # Ly = 18
+    # CheckMegnatizedPiFluxEnergyVsMonopoleDensity(Lx, Ly, magz, ("open", "periodic"), ax)
+    # CheckMegnatizedPiFluxEnergyVsMonopoleDensity(Lx, Ly, magz, ("periodic", "periodic"), ax, color="r")
+    # ax.set_xlabel(r"$\phi / 2\pi$")
+    # ax.set_ylabel(r"$e$")
+    # fig.savefig(f"{output_dir}ener_vs_mon_dens_magz_{magz}.png", bbox_inches='tight')
+    # plt.show()
+
+    # CheckOptimalMonopoleStateEnergyVsMagnetization(12, 12)
 
     # TriangularPiFluxAnsatz(1, 5, False, "infinite", False)
     # TriangularPiFluxAnsatz(4, 4, True, "finite", True)

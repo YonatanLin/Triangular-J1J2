@@ -589,6 +589,15 @@ def calculateGutzwillerEnergyTriangularJ1J2(gutz_results_dir, Lx, Ly, chi, J2=0.
     return E
 
 
+def SaveSimulationOutput(results_dir, spin_corr_x, Kx, Ky, spin_corr_k, fig_corr_k, fig_lat):
+    np.savetxt(results_dir + "spin_corr_x.csv", spin_corr_x)
+    np.savetxt(results_dir + "spin_corr_k.csv", spin_corr_k)
+    np.savetxt(results_dir + "Kx.csv", Kx)
+    np.savetxt(results_dir + "Ky.csv", Ky)
+    fig_corr_k.savefig(results_dir + "momentum_space_correlations.png", bbox_inches='tight')
+    fig_lat.savefig(results_dir + "lattice.png", bbox_inches='tight')
+
+
 def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, flux=0.0, conserve=True,
                        initial_state="Random", J2=0.0):
     if isinstance(bc, str):
@@ -620,7 +629,6 @@ def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, flux=0.0, conserve=True,
 
     fig_lat, ax_lat = plt.subplots(figsize=(6, 5))
     PlotLattice(triangular_lat, ax_lat, additional_couplings_to_plot=nnn_couplings_list)
-    fig_lat.savefig(results_dir + "lattice.png", bbox_inches='tight')
 
     print_couplings = False
     if print_couplings:
@@ -646,20 +654,15 @@ def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, flux=0.0, conserve=True,
         lat_for_corr = BuildTriangularLatticeAlignedWithX(Lx_large, Ly, site, bc_MPS)
 
     spin_corr_x = CalculateSpinSpinCorrelations(psi, sites1, sites2)
-    np.savetxt("spin_corr_x.csv", spin_corr_x)
 
     Kx, Ky, spin_corr_k = ComputeMomentumSpaceStructureFactorSymmetrized(spin_corr_x, lat_for_corr,
                                                                          assert_realness=False)
-    np.savetxt("Kx.csv", Kx)
-    np.savetxt("Ky.csv", Ky)
-    np.savetxt("spin_corr_k.csv", spin_corr_k)
 
     fig_corr, ax_corr = plt.subplots(figsize=(6, 5))
     title = f"Spin structure factor on a {Lx}x{Ly} square lattice"
     ImshowMatrix(ax_corr, fig_corr, Kx, Ky, spin_corr_k, title=title)
-    #lat_for_corr.plot_brillouin_zone(ax_corr)
-    fig_corr.savefig(results_dir + "momentum_space_correlations.png",
-                     bbox_inches='tight')
+    lat_for_corr.plot_brillouin_zone(ax_corr)
+    SaveSimulationOutput(results_dir, spin_corr_x, Kx, Ky, spin_corr_k, fig_corr, fig_lat)
 
 
 def DeterminePiFluxCoupling(x, y, dx, dy, basis_vectors):
@@ -1435,6 +1438,7 @@ def DetermineSpinsOccupation(N_spins, H, e):
     N_down = int(np.argmax(e_down > Ef))
     return N_up, N_down
 
+
 def TryPiFluxMonopoleState(Lx, Ly, chi_max=1000, monopole_Q=1, magnetization=0.0):
     fermion_site = FermionSite(conserve='N')
     bc = ('open', 'periodic')
@@ -1472,27 +1476,38 @@ def TryPiFluxMonopoleState(Lx, Ly, chi_max=1000, monopole_Q=1, magnetization=0.0
         N_up = int(round((N_filling + m) / 2))
 
     C, _ = slater.correlation_matrix(H, 2*N_up)
-    
+
     slater_trunc_par = {"chi_max": chi_max, "svd_min": 1e-7, "degeneracy_tol": 1e-12}
 
     psi_from_slater = slater.C_to_MPS(C, trunc_par=slater_trunc_par)
     RescaleMPSForGutzwiller(psi_from_slater)
 
+    results_dir = "./"
+    if local:
+        results_dir = "MonopoleCondensateGutzwiller/"
+
     psi_gutz = gutz.abrikosov_ph(psi_from_slater, return_canonical=True)
+    with open(results_dir + "psi_gutzwiller.pkl", "wb") as f:
+        pickle.dump(psi_gutz, f)
 
     gutz_magz = np.sum(psi_gutz.expectation_value("Sz"))
     print(f"input required magz = {0.5 * magnetization * N_filling}, gutz magz = {gutz_magz}")
-    spin_corr = CalculateSpinSpinCorrelations(psi_gutz)
-    spin_lat = BuildTriangularLatticeAlignedWithX(Lx, Ly, fermion_site, "finite", bc=('open', 'periodic'))
-    Kx, Ky, corr_k = ComputeMomentumSpaceStructureFactorSymmetrized(spin_corr, spin_lat)
-    fig, ax = plt.subplots(figsize=(6, 5))
-    ImshowMatrix(ax, fig, Kx, Ky, corr_k)
-    spin_lat.plot_brillouin_zone(ax)
-    plt.show()
+    spin_corr_x = CalculateSpinSpinCorrelations(psi_gutz)
 
-    fig, ax = plt.subplots(figsize=(6, 5))
-    PlotLattice(lat, ax)
-    plt.show()
+    spin_lat = BuildTriangularLatticeAlignedWithX(Lx, Ly, fermion_site, "finite", bc=('open', 'periodic'))
+    Kx, Ky, spin_corr_k = ComputeMomentumSpaceStructureFactorSymmetrized(spin_corr_x, spin_lat)
+
+    fig_corr, ax_corr = plt.subplots(figsize=(6, 5))
+    ImshowMatrix(ax_corr, fig_corr, Kx, Ky, spin_corr_k)
+    spin_lat.plot_brillouin_zone(ax_corr)
+
+    fig_lat, ax_lat = plt.subplots(figsize=(6, 5))
+    PlotLattice(spin_lat, ax_lat)
+
+    SaveSimulationOutput(results_dir, spin_corr_x, Kx, Ky, spin_corr_k, fig_corr, fig_lat)
+    if local:
+        plt.show()
+
 
 
 if __name__ == "__main__":
@@ -1504,8 +1519,8 @@ if __name__ == "__main__":
     # TriangularPiFluxAnsatz(spinfull=True, Lx=4, Ly=4,
     #                       chi_max_temfpy=100, bc_MPS="finite")
 
-    Lx = 6
-    Ly = 6
+    Lx = 3
+    Ly = 3
     magz = 1./3.
     #magz = 0.0
     monopole_Q = round(magz * (Lx * Ly / 2))

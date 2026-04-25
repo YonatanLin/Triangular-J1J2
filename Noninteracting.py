@@ -102,16 +102,17 @@ def PiFluxBandStructure(Ly=4, plot=False):
                 if plot:
                     ax.plot(kx / pi, ky / pi, "ko", markersize=1)
     E_per_mode = E_tot / N_states
-    print(f"energy per site: {E_per_mode}")
 
     E_sq = PiFluxSquaredEnergy(Kx, Ky)
     E_sq_theory = 2 * (3 + cos(2*Kx) - cos(Kx - sqrt(3)*Ky) + cos(Kx + sqrt(3)*Ky))
-    print("diff from theory: ", np.max(np.abs(E_sq - E_sq_theory)))
-    print("E_sq minimum: ", np.min(E_sq))
+
     if plot:
         plot_bz1(ax, k1_bz/ pi, k2_bz / pi)
 
     if plot:
+        print(f"energy per site: {E_per_mode}")
+        print("diff from theory: ", np.max(np.abs(E_sq - E_sq_theory)))
+        print("E_sq minimum: ", np.min(E_sq))
         im = ax.imshow((-1)*sqrt(E_sq), origin="lower", extent = (-pi_factor, pi_factor, -pi_factor, pi_factor),
                        cmap='RdBu')
         ax.set_xlabel("$k_x[\pi]$")

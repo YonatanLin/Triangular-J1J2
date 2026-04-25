@@ -1419,7 +1419,23 @@ def CheckOptimalMonopoleStateEnergyVsMagnetization(Lx, Ly):
     plt.show()
 
 
-def TryPiFluxMonopoleState(Lx=3, Ly=3, chi_max=1000, monopole_Q=1):
+def DetermineSpinsOccupation(N_spins, H, e):
+    eps_round = 1e-14
+    Ef = e[N_spins - 1] + eps_round
+
+    H_up = H[0::2, 0::2]
+    H_down = H[1::2, 1::2]
+    e_up, _ = eigh(H_up)
+    e_down, _ = eigh(H_down)
+    for i in range(e_up.shape[0]):
+        assert (np.min(np.abs(e_up[i] - e)) < 1e-14)
+        assert (np.min(np.abs(e_down[i] - e)) < 1e-14)
+
+    N_up = int(np.argmax(e_up > Ef))
+    N_down = int(np.argmax(e_down > Ef))
+    return N_up, N_down
+
+def TryPiFluxMonopoleState(Lx, Ly, chi_max=1000, monopole_Q=1, magnetization=0.0):
     fermion_site = FermionSite(conserve='N')
     bc = ('open', 'periodic')
     lat = BuildTriangularLatticeAlignedWithX(Lx, Ly, fermion_site, "finite", bc = bc
@@ -1445,24 +1461,18 @@ def TryPiFluxMonopoleState(Lx=3, Ly=3, chi_max=1000, monopole_Q=1):
                 print("expect spin conservation!")
                 exit(1)
 
-    N_filling = lat.N_sites // 2
-    eps_round = 1e-14
-    Ef = e[N_filling-1] + eps_round
+    N_filling = lat.N_sites//2
+    N_up, N_down_holes = DetermineSpinsOccupation(N_filling, H, e)
 
-    H_up = H[0::2, 0::2]
-    H_down = H[1::2, 1::2]
-    e_up, _ = eigh(H_up)
-    e_down, _ = eigh(H_down)
-    for i in range(e_up.shape[0]):
-        assert(np.min(np.abs(e_up[i] - e)) < 1e-14)
-        assert (np.min(np.abs(e_down[i] - e)) < 1e-14)
+    assert(N_up + N_down_holes == N_filling)
+    print(f"N_up={N_up}, N_down_holes={N_down_holes}")
 
-    N_up = np.argmax(e_up > Ef)
-    N_down = np.argmax(e_down > Ef)
+    if magnetization > 1e-15:
+        m = int(round(magnetization * N_filling))
+        N_up = int(round((N_filling + m) / 2))
 
-    assert(N_up + N_down == N_filling)
-    print(f"N_up={N_up}, N_down={N_down}")
-    C, _ = slater.correlation_matrix(H, N_filling + (N_up - N_down))
+    C, _ = slater.correlation_matrix(H, 2*N_up)
+    
     slater_trunc_par = {"chi_max": chi_max, "svd_min": 1e-7, "degeneracy_tol": 1e-12}
 
     psi_from_slater = slater.C_to_MPS(C, trunc_par=slater_trunc_par)
@@ -1470,6 +1480,8 @@ def TryPiFluxMonopoleState(Lx=3, Ly=3, chi_max=1000, monopole_Q=1):
 
     psi_gutz = gutz.abrikosov_ph(psi_from_slater, return_canonical=True)
 
+    gutz_magz = np.sum(psi_gutz.expectation_value("Sz"))
+    print(f"input required magz = {0.5 * magnetization * N_filling}, gutz magz = {gutz_magz}")
     spin_corr = CalculateSpinSpinCorrelations(psi_gutz)
     spin_lat = BuildTriangularLatticeAlignedWithX(Lx, Ly, fermion_site, "finite", bc=('open', 'periodic'))
     Kx, Ky, corr_k = ComputeMomentumSpaceStructureFactorSymmetrized(spin_corr, spin_lat)
@@ -1489,10 +1501,15 @@ if __name__ == "__main__":
     # TestTriangularLattice()
     # TestSquareLattice(6, 6, J2s=[0.0, 0.9])
 
-    #TriangularPiFluxAnsatz(spinfull=True, Lx=4, Ly=4,
+    # TriangularPiFluxAnsatz(spinfull=True, Lx=4, Ly=4,
     #                       chi_max_temfpy=100, bc_MPS="finite")
 
-    # TryPiFluxMonopoleState(3, 3, monopole_Q=1)
+    Lx = 6
+    Ly = 6
+    magz = 1./3.
+    #magz = 0.0
+    monopole_Q = round(magz * (Lx * Ly / 2))
+    TryPiFluxMonopoleState(Lx, Ly, monopole_Q=monopole_Q, magnetization = magz)
     # TryMonopoleModelHofstadter(output_dir, 18, 18, bc=("periodic", "periodic"))
 
     # fig, ax = plt.subplots(figsize=(6, 5))

@@ -3,23 +3,8 @@ import matplotlib.pyplot as plt
 from numpy import pi, sin, cos, sqrt
 from scipy.spatial import Voronoi
 
-fontsize = 18
-rc_params = {
-    "font.family": "serif",
-    "figure.dpi": 300,
-    'text.usetex': True,
-    #"axes.labelsize": 50,
-    #"axes.titlesize": 50,
-    "axes.labelsize": fontsize,
-    "axes.titlesize": fontsize,
-    "xtick.labelsize": fontsize,
-    "ytick.labelsize": fontsize,
-    "legend.fontsize": fontsize,
-    "figure.titlesize": fontsize,
-    "legend.loc": "upper left",
-}
+from TryingTemfpy import rc_params
 plt.rcParams.update(rc_params)
-
 
 def rotate_vector(vec, tet):
     c, s = np.cos(tet), np.sin(tet)

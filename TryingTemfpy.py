@@ -17,7 +17,8 @@ from tenpy import FermionSite
 
 fontsize=18
 rc_params = {
-    "font.family": "serif",
+    #"font.family": "serif",
+    "text.usetex": local,
     "figure.dpi": 200,
     "axes.labelsize": fontsize,
     "axes.titlesize": fontsize,
@@ -27,8 +28,6 @@ rc_params = {
     "figure.titlesize": fontsize,
     "legend.loc": "upper left",
 }
-if local:
-    rc_params['text.usetex'] = True
 
 plt.rcParams.update(rc_params)
 colors = ["blue", "orange", "green", "red", "purple", "pink",

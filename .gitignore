@@ -13,3 +13,4 @@ memory_profile_triangular_dmrg.py
 triangular_dmrg_memory_report.json
 NewTenpyTriangularLatticeResults
 GutzwillerResults
+LocalGutzwillerResults

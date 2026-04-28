@@ -17,7 +17,7 @@ from tenpy import FermionSite
 
 fontsize=18
 rc_params = {
-    #"font.family": "serif",
+    "font.family": "serif",
     "text.usetex": local,
     "figure.dpi": 200,
     "axes.labelsize": fontsize,

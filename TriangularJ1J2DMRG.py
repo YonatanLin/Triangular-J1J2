@@ -50,14 +50,15 @@ def build_parser():
         default="Random",
         help="Initial state for DMRG.",
     )
+    parser.add_argument("--geometry", type=str, default="YC", help="Geometry type - either XC or YC")
 
     return parser
 
 def main():
     args = build_parser().parse_args()
     TriangularJ1J2DMRG(Lx=args.Lx, Ly=args.Ly, bc=args.bc, bc_MPS=args.bc_MPS,
-                       flux=args.flux, conserve=args.conserve, initial_state=args.initial_state,
-                       J2=args.J2)
+                       conserve=args.conserve, initial_state=args.initial_state,
+                       J2=args.J2, geometry=args.geometry)
 
 
 if __name__ == "__main__":

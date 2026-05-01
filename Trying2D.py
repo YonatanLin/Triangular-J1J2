@@ -29,6 +29,7 @@ from pathlib import Path
 import json
 
 setup_logging(to_stdout="INFO")
+print(f"num threads: {tenpy.tools.process.mkl_get_nthreads()}")
 
 default_chi_max = 3000
 default_dmrg_params = {'mixer': True, 'max_E_err': 1.0e-10, 'trunc_params': {'chi_max': default_chi_max, 'svd_min': 1.0e-7},

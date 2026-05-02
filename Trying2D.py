@@ -98,7 +98,8 @@ def PlotLattice(lat, ax, additional_couplings_to_plot=None, plot_nn_couplings=Tr
     if plot_nn_couplings:
         lat.plot_coupling(ax, linewidth=1.0)
 
-    lat.plot_coupling(ax, coupling=additional_couplings_to_plot, linewidth=0.5,
+    if additional_couplings_to_plot is not None:
+        lat.plot_coupling(ax, coupling=additional_couplings_to_plot, linewidth=0.5,
                       color="green", linestyle=nnn_line_style, wrap=True)
     if plot_order:
         lat.plot_order(ax)
@@ -110,7 +111,7 @@ def PlotLattice(lat, ax, additional_couplings_to_plot=None, plot_nn_couplings=Tr
 
 
 def PlotModelHoppingsByPhase(model, ax, linewidth_min=0.4, linewidth_max=3.0, plot_sites=True,
-                             plot_order=True, add_colorbar=True):
+                             plot_order=False, add_colorbar=True):
     couplings_list = model.all_coupling_terms().to_TermList()
     lat = model.lat
     basis_vectors = np.asarray(lat.basis, dtype=float)
@@ -580,7 +581,7 @@ class TriangularXC(tenpy.models.lattice.Lattice):
 
 def BuildTriangularLattice(Lx, Ly, site, bc_MPS,
                            bc = ('periodic', 'periodic'), unit_cell = None, basis=None,
-                           geometry="YC", spinfull_fermions=False):
+                           geometry="YC", spinfull_fermions=False, nearest_neighbors=[]):
     if geometry == "YC":
         using_default_basis = basis is None
         if basis is None:
@@ -590,11 +591,11 @@ def BuildTriangularLattice(Lx, Ly, site, bc_MPS,
         if using_default_unit_cell:
             unit_cell = [[0.0, 0.0]]
 
-        nearest_neighbors = []
         next_nearest_neighbors = []
-        if using_default_unit_cell and using_default_basis:
+        if using_default_basis:
+            assert(nearest_neighbors == [])
             nearest_neighbors = [[0, 0, [1, 0]], [0, 0, [0, 1]],
-                                 [0, 0, [1, -1]]]
+                                 [0, 0, [-1, 1]]]
             next_nearest_neighbors = [[0, 0, [1, 1]], [0, 0, [-1, 2]],
                                       [0, 0, [-2, 1]]]
 
@@ -826,45 +827,69 @@ class MonopoleCondensatePiFluxModel(CouplingMPOModel):
         plus_hc = True
         init_MPO = model_params["init_H_MPO"]
         monopole_Q = model_params["monopole_Q"]
-        flux = model_params["flux"]
+        flux = model_params["flux"] * pi
         particle_hole = True
         if "particle_hole" in model_params.keys():
             particle_hole = model_params["particle_hole"]
         self.init_MPO = init_MPO
         assert(monopole_Q == round(monopole_Q))
         lat = self.lat
+
         bc = lat.boundary_conditions
         assert(bc[1] == "periodic")
 
         Lx, Ly = lat.Ls[0], lat.Ls[1]
-        dphi = monopole_Q * 2*pi / (lat.N_sites / len(lat.unit_cell_positions))
+        dphi = monopole_Q * 2 * pi / (lat.N_sites / len(lat.unit_cell_positions))
+
+        geometry = "YC"
+        if isinstance(lat, TriangularXC):
+            geometry = "XC"
+            assert(abs(dphi) < 1e-15)
 
         Nx, Ny = Lx, Ly
         nys, nxs = np.arange(0, Ny), np.arange(0, Nx)
-        ys_ybonds, xs_ybonds = np.meshgrid(nys, nxs)
+        ys_ybonds, xs_ybonds = np.meshgrid(nys, nxs) #first coordinate (row) is the x coordinate
         ys_diagbonds, xs_diagbonds = np.meshgrid(nys, (nxs[:-1] if bc[0] == "open" else nxs))
-        strength_y = np.exp(-1j * dphi * xs_ybonds) * (1 - 2 * ((xs_ybonds + 1) % 2))
-        strength_diag = np.exp(-1j * dphi * (xs_diagbonds + 0.5)) * (1 - 2 * ((xs_diagbonds + 1) % 2))
         strength_x = np.ones(xs_diagbonds.shape, dtype=np.complex128)
+        if geometry == "YC":
+            strength_y = np.exp(-1j * dphi * xs_ybonds) * (1 - 2 * ((xs_ybonds + 1) % 2))
+            strength_diag = np.exp(-1j * dphi * (xs_diagbonds + 0.5)) * (1 - 2 * ((xs_diagbonds + 1) % 2))
+        else:
+            strength_y = 1 - 2 * ((xs_ybonds + ys_ybonds) % 2)
+            strength_y_short = 1 - 2 * ((xs_diagbonds + ys_diagbonds) % 2)
+            strength_diag = (-1) * strength_y
+            strength_diag_short = (-1) * strength_y_short
 
         if bc[0] == "periodic":
-            strength_x[-1, :] *= np.exp(1j * dphi * ys_ybonds[-1, :] * Nx) # x bonds on last column
-            strength_diag[-1, :] *= np.exp(-1j * dphi * ys_ybonds[-1, :] * Nx) # diag bonds on last column
+            if geometry == "YC":
+                strength_x[-1, :] *= np.exp(1j * dphi * ys_ybonds[-1, :] * Nx) # x bonds on last column
+                strength_diag[-1, :] *= np.exp(-1j * dphi * ys_ybonds[-1, :] * Nx) # diag bonds on last column
+            else:
+                assert(abs(dphi) < 1e-15)
 
-        n_sites_unitcell = len(lat.unit_cell_positions)
-        assert(n_sites_unitcell == 1 or n_sites_unitcell == 2)
-        for i in range(n_sites_unitcell):
+        for u1, u2, dr in lat.pairs["nearest_neighbors"]:
             sgn = 1
             if particle_hole:
-                sgn = 1 - 2*i  # particle hole transformation on the down spins
-            dx_y = [0, 1]
-            dx_diag = [-1, 1]
-            dx_x = [1, 0]
-            dxs = (dx_y, dx_diag, dx_x)
-            strengths = (strength_y, strength_diag, strength_x)
-            for i_dx, dx in enumerate(dxs):
-                strength_with_flux = self.coupling_strength_add_ext_flux(strengths[i_dx], dx, [0, flux])
-                self.add_coupling(sgn * strength_with_flux, i, "Cd", i, "C", dx, plus_hc=plus_hc)
+                assert (u1 % 2 == u2 % 2)
+                sgn = (-1) ** u1  # particle hole transformation on the down spins
+
+            basis_vectors = np.asarray(lat.basis, dtype=float)
+            dy = (lat.unit_cell_positions[u2][1] - lat.unit_cell_positions[u1][1]) + (np.dot(dr, basis_vectors))[1]
+            dx = (lat.unit_cell_positions[u2][0] - lat.unit_cell_positions[u1][0]) + (np.dot(dr, basis_vectors))[0]
+            if abs(dy) < 1e-15:
+                strength = strength_x
+            elif np.sign(dx) == np.sign(dy):
+                strength = strength_y
+                if geometry == "XC" and dr[0] >= 1:
+                        strength = strength_y_short
+            else:
+                strength = strength_diag
+                if geometry == "XC" and dr[0] >= 1:
+                    strength = (-1) * strength_diag_short
+
+
+            strength_with_flux = self.coupling_strength_add_ext_flux(strength, dr, [0, flux])
+            self.add_coupling(sgn * strength_with_flux, u1, "Cd", u2, "C", dr, plus_hc=plus_hc)
 
     def init_H_from_terms(self):
         if(self.init_MPO):
@@ -892,7 +917,7 @@ def getPiFluxLatticeOrdering(Lx, Ly, unit_cell_size):
     return ordering
 
 
-def GetPiFluxTriangularLattice(site, Lx, Ly, spinfull, bc_MPS):
+def GetPiFluxTriangularLattice(site, Lx, Ly, spinfull, bc_MPS, geometry):
     if spinfull:
        unit_cell = [[-0.1, 0.0], [0.1, 0.0]]
     else:
@@ -901,17 +926,31 @@ def GetPiFluxTriangularLattice(site, Lx, Ly, spinfull, bc_MPS):
     bc = ['open', 'periodic']
     if bc_MPS == "infinite":
         bc[0] = 'periodic'
-    return BuildTriangularLattice(Lx, Ly, site, bc_MPS, bc=bc, unit_cell=unit_cell, geometry="YC")
+
+    nearest_neighbors = []
+    if spinfull:
+        if geometry == "YC":
+            dxs = ([1, 0], [0, 1], [-1, 1])
+            for i in range(2):
+                for dx in dxs:
+                    nearest_neighbors += [[i, i, dx]]
+
+    return BuildTriangularLattice(Lx, Ly, site, bc_MPS, bc=bc, unit_cell=unit_cell, geometry=geometry,
+                                  spinfull_fermions=spinfull, nearest_neighbors=nearest_neighbors)
 
 
-def CalculateExactCMatrixForPiFlux(Lx, Ly, spinfull, site, zero_energy_tol=1e-9,
+def CalculateExactCMatrixForPiFlux(Lx, Ly, spinfull, site, geometry, zero_energy_tol=1e-9,
                                    plot_lattice=False, pi_flux_model=None, flux=0.0, particle_hole=True):
-    bc_slater = ["open", "periodic"]
-    triangular_lat = GetPiFluxTriangularLattice(site, Lx, Ly, spinfull, "finite")
+    triangular_lat = GetPiFluxTriangularLattice(site, Lx, Ly, spinfull, "finite", geometry)
 
     if pi_flux_model is None:
         pi_flux_model = MonopoleCondensatePiFluxModel({"lattice" : triangular_lat, "init_H_MPO" : False,
                                                       "monopole_Q" : 0, "flux" : flux, "particle_hole" : particle_hole})
+
+        #fig, ax = plt.subplots()
+        #PlotModelHoppingsByPhase(pi_flux_model, ax, plot_order=True)
+        #plt.show()
+
     if plot_lattice:
         fig, ax = plt.subplots(figsize=(6, 5))
         PlotLattice(triangular_lat, ax, additional_couplings_to_plot=pi_flux_model.pos_hoppings_list)
@@ -934,12 +973,12 @@ def CalculateExactCMatrixForPiFlux(Lx, Ly, spinfull, site, zero_energy_tol=1e-9,
     return C, triangular_lat
 
 
-def GetTriangularFluxSlaterMPS(Lx, Ly, spinfull, site, imps_unitcell, slater_trunc_par, periodicity,
+def GetTriangularFluxSlaterMPS(Lx, Ly, spinfull, site, geometry, imps_unitcell, slater_trunc_par, periodicity,
                                finite = True, pi_flux_model=None, flux=0.0, particle_hole=True):
     zero_energy_tol = 1e3 * slater_trunc_par["degeneracy_tol"]
     C = None
     if finite:
-        C, triangular_lattice = CalculateExactCMatrixForPiFlux(Lx, Ly, spinfull, site,
+        C, triangular_lattice = CalculateExactCMatrixForPiFlux(Lx, Ly, spinfull, site, geometry,
                                                                zero_energy_tol = zero_energy_tol,
                                                                plot_lattice=False, pi_flux_model=pi_flux_model,
                                                                flux=flux, particle_hole=particle_hole)
@@ -947,11 +986,11 @@ def GetTriangularFluxSlaterMPS(Lx, Ly, spinfull, site, imps_unitcell, slater_tru
         psi_from_slater = slater.C_to_MPS(C, trunc_par=slater_trunc_par)
     else:
         Lx_short, Lx_long = Lx, Lx + periodicity
-        C_short, triangular_lat_short = CalculateExactCMatrixForPiFlux(Lx_short, Ly, spinfull, site,
+        C_short, triangular_lat_short = CalculateExactCMatrixForPiFlux(Lx_short, Ly, spinfull, site, geometry,
                                                                        zero_energy_tol=zero_energy_tol,
                                                                        pi_flux_model=pi_flux_model,
                                                                        flux=flux, particle_hole=particle_hole)
-        C_long, _ = CalculateExactCMatrixForPiFlux(Lx_long, Ly, spinfull, site, zero_energy_tol=zero_energy_tol,
+        C_long, _ = CalculateExactCMatrixForPiFlux(Lx_long, Ly, spinfull, site, geometry, zero_energy_tol=zero_energy_tol,
                                                    pi_flux_model=pi_flux_model, flux=flux, particle_hole=particle_hole)
 
         middle_site_mps_ind_short = triangular_lat_short.lat2mps_idx([Lx_short // 2, 0, 0])
@@ -962,12 +1001,14 @@ def GetTriangularFluxSlaterMPS(Lx, Ly, spinfull, site, imps_unitcell, slater_tru
     return psi_from_slater, C
 
 
-def TriangularPiFluxAnsatz(Lx=2, Ly=3, spinfull=True, bc_MPS="infinite",
+def TriangularPiFluxAnsatz(Lx=2, Ly=3, spinfull=True, bc_MPS="finite",
                            chi_max_temfpy = 600, flux=0.0, geometry="YC", particle_hole=True):
+    if not spinfull:
+        particle_hole = False
     main_results_dir = "PiFluxAnsatzResults/"
 
     site = FermionSite(conserve='N')
-    triangular_lat = GetPiFluxTriangularLattice(site, Lx, Ly, spinfull, bc_MPS)
+    triangular_lat = GetPiFluxTriangularLattice(site, Lx, Ly, spinfull, bc_MPS, geometry)
 
     bc_lat = triangular_lat.boundary_conditions
     conserve_N = (site.conserve=='N')
@@ -993,21 +1034,22 @@ def TriangularPiFluxAnsatz(Lx=2, Ly=3, spinfull=True, bc_MPS="infinite",
             plt.show()
 
     periodicity = 2
-    imps_unitcell = periodicity * len(triangular_lat.unit_cell_positions) * Ly
-    Lx_short_for_iMPS = 200
+    unitcell_size = len(triangular_lat.unit_cell_positions)
+    imps_unitcell = periodicity * unitcell_size * Ly
+    Lx_short_for_iMPS = 250
     slater_trunc_par = {"chi_max": chi_max_temfpy, "svd_min": 1e-6, "degeneracy_tol": 1e-12}
     zero_energy_tol = 1e3 * slater_trunc_par["degeneracy_tol"]
     Lx_exact_C_infinite = 10
     if bc_MPS == "finite":
-        psi_from_slater, C = GetTriangularFluxSlaterMPS(Lx, Ly, spinfull, site, imps_unitcell, slater_trunc_par, periodicity,
+        psi_from_slater, C = GetTriangularFluxSlaterMPS(Lx, Ly, spinfull, site, geometry, imps_unitcell, slater_trunc_par, periodicity,
                                                         finite=True, pi_flux_model=pi_flux_model, flux=flux,
                                                         particle_hole=particle_hole)
         psi_from_slater.canonical_form()
     else:
-        psi_from_slater, _ = GetTriangularFluxSlaterMPS(Lx_short_for_iMPS, Ly, spinfull, site, imps_unitcell,
+        psi_from_slater, _ = GetTriangularFluxSlaterMPS(Lx_short_for_iMPS, Ly, spinfull, site, geometry, imps_unitcell,
                                                         slater_trunc_par, periodicity, finite=False, flux=flux,
                                                         particle_hole=particle_hole)
-        C, _ = CalculateExactCMatrixForPiFlux(periodicity * Lx_exact_C_infinite, Ly, spinfull, site,
+        C, _ = CalculateExactCMatrixForPiFlux(periodicity * Lx_exact_C_infinite, Ly, spinfull, site, geometry,
                                               zero_energy_tol = zero_energy_tol, flux=flux, particle_hole=particle_hole)
         psi_from_slater.canonical_form()
 
@@ -1025,7 +1067,7 @@ def TriangularPiFluxAnsatz(Lx=2, Ly=3, spinfull=True, bc_MPS="infinite",
     else:
         E_slater_mps_per_site /= avg_occupation
     print("Energy per mode for mps-slater:", E_slater_mps_per_site)
-    print("Energy per mode exact: ", PiFluxBandStructure(Ly))
+    print("Energy per mode exact: ", PiFluxBandStructure(unitcell_size * Ly, geometry=geometry))
     mps_slater_corr = psi_from_slater.correlation_function("Cd", "C", sites1=sites1, sites2=sites2)
 
     assert(C.shape[0] == C.shape[1])
@@ -1090,25 +1132,36 @@ def RescaleMPSForGutzwiller(psi):
         psi._B[i] = Bi.scale_axis(1.5 * np.ones(physical_axis_shape), axis=1)
 
 
-def TriangularPiFluxGutzwiller(Ly, finite=True, Lx=6, chi_max=3000, flux=0.0):
-    spinfull = True
+def TriangularPiFluxGutzwiller(Ly, geometry, finite=True, Lx=6, chi_max=3000, flux=0.0):
     site = FermionSite(conserve='N')
     imps_unitcell = 4 * Ly
     spin_site = SpinHalfSite(conserve='Sz')
     gutzwiller_results_dir = "LocalGutzwillerResults/"
 
-    particle_hole = True
+    spinfull = True
+    particle_hole = spinfull
     debug = False
+
+    #fig_lat, ax_lat = plt.subplots()
+    #lat = GetPiFluxTriangularLattice(site, Lx, Ly, True, "finite", geometry)
+    #PlotLattice(lat, ax_lat)
+    #plt.show()
 
     slater_trunc_par = {"chi_max": chi_max, "svd_min": 1e-7, "degeneracy_tol": 1e-12}
     periodicity = 2
-    psi_from_slater, _ = GetTriangularFluxSlaterMPS(Lx, Ly, spinfull, site, imps_unitcell, slater_trunc_par, periodicity,
-                                                    finite=finite, flux=flux)
+    psi_from_slater, _ = GetTriangularFluxSlaterMPS(Lx, Ly, spinfull, site, geometry, imps_unitcell, slater_trunc_par, periodicity,
+                                                    finite=finite, flux=flux, particle_hole=particle_hole)
 
-    if True:
-        triangular_lat = GetPiFluxTriangularLattice(site, Lx, Ly, spinfull, "finite")
+    if debug:
+        triangular_lat = GetPiFluxTriangularLattice(site, Lx, Ly, spinfull, "finite", geometry)
         pi_flux_model = MonopoleCondensatePiFluxModel({"lattice" : triangular_lat,
-                                                       "init_H_MPO" : True, "flux" : flux, "monopole_Q" : 0.0})
+                                                       "init_H_MPO" : True, "flux" : flux, "monopole_Q" : 0.0,
+                                                       "particle_hole": particle_hole})
+
+        fig, ax_lat = plt.subplots(figsize=(6,5))
+        PlotModelHoppingsByPhase(pi_flux_model, ax_lat, plot_order=False)
+        plt.show()
+
         print(f"energy per mode of triangular pi flux gs = "
               f"{pi_flux_model.H_MPO.expectation_value(psi_from_slater) / (0.5 * triangular_lat.N_sites)}")
 
@@ -1628,14 +1681,18 @@ if __name__ == "__main__":
     # TriangularPiFluxAnsatz(2, 5, False, "infinite")
     # TriangularPiFluxAnsatz(2, 5, True, "infinite", particle_hole=False)
     # TriangularPiFluxAnsatz(10, 5, True, "finite", particle_hole=False)
+    #TriangularPiFluxAnsatz(2, 4, False, "infinite", geometry="XC",
+    #                       chi_max_temfpy=1000)
 
-    #TriangularPiFluxAnsatz(50, 4, False, "finite",
-    #                       flux = pi)
+    # TriangularPiFluxAnsatz(500, 4, False, "finite", geometry="XC")
     #TriangularPiFluxAnsatz(1, 3, False, "finite",
     #                       flux=pi)
+    # TriangularPiFluxAnsatz(20, 3, spinfull=False, geometry="XC", particle_hole=False)
 
     # TriangularPiFluxAnsatz(4, 4, True, "finite")
-    # TriangularPiFluxGutzwiller(4, Lx=6, chi_max=1000, flux=0)
+    # TriangularPiFluxGutzwiller(6, "YC", Lx=6, chi_max=600, flux=0)
+    TriangularPiFluxGutzwiller(4, "XC", Lx=12, chi_max=600, flux=0.0)
+    # TriangularPiFluxGutzwiller(2, "XC", Lx=4, chi_max=600, flux=0.0)
     # TriangularPiFluxGutzwiller(6, Lx=3, chi_max=6000, flux=pi)
 
     #arr = np.array([[0.0, 1.0, 2.0], [4.0, 5.0, 6.0], [8.0, 9.0, 1.0]])
@@ -1646,7 +1703,7 @@ if __name__ == "__main__":
     #arr = np.array([0, 1, 2, 3, 4, 5, 6])
     #print(arr[0:7:2])
 
-    # lat = GetPiFluxTriangularLattice(FermionSite, 3, 3, True, "finite")
+    # lat = GetPiFluxTriangularLattice(FermionSite, 3, 3, True, "finite", geometry)
 
     # TestCorrelationsWithNontrivialUnitCell("120", "XC")
 
@@ -1724,9 +1781,9 @@ if __name__ == "__main__":
 
     #PlotCorrelationsFromFiles(code_dir + "/LocalJ1J2TriangularDMRGResults/Lx_10_Ly_2_bc_oo_XC/finite_init_Random_conserve_True_J2_0.0/",
     #                          show_energies=False)
-    #PlotCorrelationsFromFiles(code_dir + "/LocalJ1J2TriangularDMRGResults/Lx_10_Ly_2_bc_op_XC/finite_init_Random_conserve_True_J2_0.0/",
+    #PlotCorrelationsFromFiles(code_dir + "/LocalJ1J2TriangularDMRGResults/Lx_10_Ly_3_bc_op_XC/finite_init_Random_conserve_True_J2_0.0/",
     #                         show_energies=False)
     #ComputeCorrelationsFromMPSFile(code_dir + "/LocalJ1J2TriangularDMRGResults/",
     #                               10, 2, ("open", "open"), "finite", "Random", True,
     #                               0.0, "XC")
-    # plt.show()
+    #plt.show()

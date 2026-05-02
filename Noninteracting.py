@@ -54,7 +54,7 @@ def PiFluxSquaredEnergy(kx, ky):
             sin(k3) + sin(k2) - sin(k1)) ** 2
     return E_sq
 
-def PiFluxBandStructure(Ly=4, plot=False, tet=0.):
+def PiFluxBandStructure(Ly=4, plot=False, tet=0., geometry="YC"):
     pi_factor = 1.5
     Kx, Ky = np.meshgrid(np.linspace(-pi_factor*pi, pi_factor*pi, 1000),
                          np.linspace(-pi_factor*pi, pi_factor*pi, 1000))
@@ -72,7 +72,10 @@ def PiFluxBandStructure(Ly=4, plot=False, tet=0.):
     for i_kx, kx in enumerate(kxs):
         for j in range(Ly):
             m = j - Ly // 2
-            ky = 2. / sqrt(3) * (((2 * pi * m + tet) / Ly) - 0.5 * kx)
+            if geometry == "YC":
+                ky = (2. / sqrt(3)) * (((2 * pi * m + tet) / Ly) - 0.5 * kx)
+            elif geometry == "XC":
+                ky = (2. / sqrt(3)) * (2 * pi * m + tet) / (Ly)
 
             k_vec = np.array([kx, ky])
             k1_bz_unit = k1_bz / sqrt(np.dot(k1_bz, k1_bz))
@@ -110,4 +113,5 @@ def PiFluxBandStructure(Ly=4, plot=False, tet=0.):
     return E_per_mode
 
 if __name__ == "__main__":
-    PiFluxBandStructure(Ly=4, plot=True, tet=0)
+    PiFluxBandStructure(Ly=8, plot=True, tet=0, geometry="XC")
+    # PiFluxBandStructure(Ly=5, plot=True, tet=pi)

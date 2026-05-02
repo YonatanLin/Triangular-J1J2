@@ -581,24 +581,24 @@ class TriangularXC(tenpy.models.lattice.Lattice):
 
 
 def BuildTriangularLattice(Lx, Ly, site, bc_MPS,
-                           bc = ('periodic', 'periodic'), unit_cell = None, basis=None,
-                           geometry="YC", spinfull_fermions=False, nearest_neighbors=[]):
+                           bc = ('periodic', 'periodic'), geometry="YC", spinfull_fermions=False,
+                           nearest_neighbors=[]):
     if geometry == "YC":
-        using_default_basis = basis is None
-        if basis is None:
-            basis = [[1.0, 0.0], [0.5, sqrt(3) / 2.]]
+        basis = [[1.0, 0.0], [0.5, sqrt(3) / 2.]]
 
-        using_default_unit_cell = unit_cell is None
-        if using_default_unit_cell:
-            unit_cell = [[0.0, 0.0]]
+        unit_cell = [[0.0, 0.0]]
+        if spinfull_fermions:
+            unit_cell = [[-0.1, 0.0], [0.1, 0.0]]
 
+
+        nearest_neighbors = []
         next_nearest_neighbors = []
-        if using_default_basis:
-            assert(nearest_neighbors == [])
-            nearest_neighbors = [[0, 0, [1, 0]], [0, 0, [0, 1]],
-                                 [0, 0, [-1, 1]]]
-            next_nearest_neighbors = [[0, 0, [1, 1]], [0, 0, [-1, 2]],
-                                      [0, 0, [-2, 1]]]
+        num_flavors = 2 if spinfull_fermions else 1
+        for i in range(num_flavors):
+            nearest_neighbors += [[i, i, [1, 0]], [i, i, [0, 1]],
+                                 [i, i, [-1, 1]]]
+            next_nearest_neighbors = [[i, i, [1, 1]], [i, i, [-1, 2]],
+                                       [i, i, [-2, 1]]]
 
         triangular_lat = lattice.Lattice([Lx, Ly], [site]*len(unit_cell), basis=basis,
                                         positions=unit_cell, bc=bc, pairs={'nearest_neighbors': nearest_neighbors,
@@ -919,11 +919,6 @@ def getPiFluxLatticeOrdering(Lx, Ly, unit_cell_size):
 
 
 def GetPiFluxTriangularLattice(site, Lx, Ly, spinfull, bc_MPS, geometry):
-    if spinfull:
-       unit_cell = [[-0.1, 0.0], [0.1, 0.0]]
-    else:
-        unit_cell = [[0.0, 0.0]]
-
     bc = ['open', 'periodic']
     if bc_MPS == "infinite":
         bc[0] = 'periodic'
@@ -936,7 +931,7 @@ def GetPiFluxTriangularLattice(site, Lx, Ly, spinfull, bc_MPS, geometry):
                 for dx in dxs:
                     nearest_neighbors += [[i, i, dx]]
 
-    return BuildTriangularLattice(Lx, Ly, site, bc_MPS, bc=bc, unit_cell=unit_cell, geometry=geometry,
+    return BuildTriangularLattice(Lx, Ly, site, bc_MPS, bc=bc, geometry=geometry,
                                   spinfull_fermions=spinfull, nearest_neighbors=nearest_neighbors)
 
 
@@ -949,7 +944,7 @@ def CalculateExactCMatrixForPiFlux(Lx, Ly, spinfull, site, geometry, zero_energy
                                                       "monopole_Q" : 0, "flux" : flux, "particle_hole" : particle_hole})
 
         #fig, ax = plt.subplots()
-        #PlotModelHoppingsByPhase(pi_flux_model, ax, plot_order=True)
+        #PlotModelHoppingsByPhase(pi_flux_model, ax, plot_order=False)
         #plt.show()
 
     if plot_lattice:
@@ -1037,7 +1032,7 @@ def TriangularPiFluxAnsatz(Lx=2, Ly=3, spinfull=True, bc_MPS="finite",
     periodicity = 2
     unitcell_size = len(triangular_lat.unit_cell_positions)
     imps_unitcell = periodicity * unitcell_size * Ly
-    Lx_short_for_iMPS = 250
+    Lx_short_for_iMPS = 200
     slater_trunc_par = {"chi_max": chi_max_temfpy, "svd_min": 1e-6, "degeneracy_tol": 1e-12}
     zero_energy_tol = 1e3 * slater_trunc_par["degeneracy_tol"]
     Lx_exact_C_infinite = 10
@@ -1161,7 +1156,8 @@ def TriangularPiFluxGutzwiller(Ly, geometry, finite=True, Lx=6, chi_max=3000, fl
 
         fig, ax_lat = plt.subplots(figsize=(6,5))
         PlotModelHoppingsByPhase(pi_flux_model, ax_lat, plot_order=False)
-        plt.show()
+        if local:
+            plt.show()
 
         print(f"energy per mode of triangular pi flux gs = "
               f"{pi_flux_model.H_MPO.expectation_value(psi_from_slater) / (0.5 * triangular_lat.N_sites)}")
@@ -1678,7 +1674,10 @@ if __name__ == "__main__":
 
     # CheckOptimalMonopoleStateEnergyVsMagnetization(12, 12)
 
+    TriangularPiFluxAnsatz(2, 4, True, "infinite", particle_hole=False,
+                           chi_max_temfpy=1500)
     # TriangularPiFluxAnsatz(2, 4, False, "infinite")
+
     # TriangularPiFluxAnsatz(2, 5, False, "infinite")
     # TriangularPiFluxAnsatz(2, 5, True, "infinite", particle_hole=False)
     # TriangularPiFluxAnsatz(10, 5, True, "finite", particle_hole=False)
@@ -1692,7 +1691,7 @@ if __name__ == "__main__":
 
     # TriangularPiFluxAnsatz(4, 4, True, "finite")
     # TriangularPiFluxGutzwiller(6, "YC", Lx=6, chi_max=600, flux=0)
-    TriangularPiFluxGutzwiller(4, "XC", Lx=12, chi_max=600, flux=0.0)
+    # TriangularPiFluxGutzwiller(4, "XC", Lx=12, chi_max=600, flux=0.0)
     # TriangularPiFluxGutzwiller(2, "XC", Lx=4, chi_max=600, flux=0.0)
     # TriangularPiFluxGutzwiller(6, Lx=3, chi_max=6000, flux=pi)
 

@@ -1,11 +1,6 @@
 from pathlib import Path
 import sys
-
-def CreateGutzwillerCaseDir(main_results_dir, Lx, Ly, chi, flux, geometry):
-    Path(main_results_dir).mkdir(parents=True, exist_ok=True)
-    gutz_dir = main_results_dir + f"Lx_{Lx}_Ly_{Ly}_chi_{chi}_flux_{flux}_{geometry}"
-    Path(gutz_dir).mkdir(parents=True, exist_ok=True)
-    return gutz_dir
+from Trying2D import CreateGutzwillerCaseDir
 
 
 def CreateGutzwillerCaseDirFromInputFile(main_results_dir, input_file):
@@ -21,6 +16,7 @@ def CreateGutzwillerCaseDirFromInputFile(main_results_dir, input_file):
         case_folder = CreateGutzwillerCaseDir(main_results_dir, params[0], params[1], params[2],
                                               params[3], params[4].split("\n")[0])
         input_for_condor.write(line[:-1] + " " + case_folder + "\n")
+
 
 if __name__ == "__main__":
     assert(sys.argv[1][-1] == "/")

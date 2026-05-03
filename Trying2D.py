@@ -731,6 +731,7 @@ def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, conserve=True, initial_state="Random"
     dmrg_params = default_dmrg_params
     if chi_max is not None:
         dmrg_params = ChangeChiInDMRGParams(chi_max)
+    chi_max = dmrg_params['trunc_params']['chi_max']
     if local:
         main_results_dir = "LocalJ1J2TriangularDMRGResults/"
         results_dir = CreateTriangularCaseDir(main_results_dir, Lx, Ly, bc, bc_MPS, initial_state, conserve, J2,
@@ -769,7 +770,9 @@ def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, conserve=True, initial_state="Random"
     psi = GetTriangularLatticeInitialState(initial_state, triangular_lat, initial_psi_dir)
 
     if initial_state == "from_file":
-        chi_max = int(max(np.max(psi.chi), chi_max))
+        chi_max_psi = np.max(psi.chi)
+        chi_max = int(max(chi_max_psi, chi_max))
+
         dmrg_params = ChangeChiInDMRGParams(chi_max)
         dmrg_params['chi_list'] = {0:chi_max}
         dmrg_params['min_sweeps'] = 3

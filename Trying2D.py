@@ -700,13 +700,11 @@ def GenerateJ1J2SpinTriangularModel(J2, triangular_lat):
 
 def calculateGutzwillerEnergyTriangularJ1J2(gutz_results_dir, Lx, Ly, chi, flux, J2=0.125, bc_MPS="finite", bc=("open", "periodic"),
                                             reorder_lattice=False, geometry="YC"):
-    Lx_gutz = int(Lx // 2)
     psi_path = CreateGutzwillerCaseDir(gutz_results_dir, Lx, Ly, chi, flux, geometry) + "/psi_gutzwiller.pkl"
     site = SpinHalfSite(conserve="Sz")
 
     with open(psi_path, 'rb') as f:
         psi = pickle.load(f)
-        psi.unit_cell_width = 1
 
     triangular_lat = BuildTriangularLattice(Lx, Ly, site, bc_MPS, bc, geometry=geometry)
     J1J2_model, _ = GenerateJ1J2SpinTriangularModel(J2, triangular_lat)
@@ -1350,28 +1348,30 @@ def PlotRealSpaceCorrelations(results_dir):
 
 
 def GutzwillerDMRGOverlaps(J2s, gutz_dir, Lx, Ly, chi_gutz, flux_gutz,
-                           output_dir, dmrg_initial_state, dmrg_dir, geometry):
+                           output_dir, dmrg_initial_state, dmrg_parent_dir, geometry):
     overlaps = []
     dmrg_energies = []
     gutz_energies = []
     gutz_case_dir = CreateGutzwillerCaseDir(gutz_dir, Lx, Ly, chi_gutz, flux_gutz, geometry) + "/"
-
+    bc_MPS = "finite"
+    bc = ("open", "periodic")
     for J2 in J2s:
         dmrg_geom_dir, dmrg_params_dir = (
-            TriangularJ1J2CaseDirName(Lx, Ly, ("open", "periodic"), "finite",
-                                      dmrg_initial_state, 1, J2, geometry))
-        dmrg_dir = dmrg_dir + dmrg_geom_dir + dmrg_params_dir
-
+            TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, dmrg_initial_state, 1, J2, geometry))
+        dmrg_dir = dmrg_parent_dir + dmrg_geom_dir + dmrg_params_dir
+        
+        unitcell_width = 2 if geometry == "XC" else 1
+        
         sweep_energies = np.loadtxt(dmrg_dir + "Energies.txt", dtype=np.float64)
-        dmrg_energy = sweep_energies[-1] / (Lx * Ly)
+        dmrg_energy = sweep_energies[-1] / (Lx * Ly * unitcell_width)
         dmrg_energies.append(dmrg_energy)
 
         gutz_energy = calculateGutzwillerEnergyTriangularJ1J2(gutz_dir, Lx, Ly, chi_gutz, flux_gutz, geometry=geometry,
                                                               J2=J2)
         gutz_energies.append(gutz_energy)
 
-        #PlotCorrelationsFromFiles(dmrg_dir, show_energies=False, output_dir=output_dir,
-        #                          fig_title=f"dmrg_J2_{J2}")
+        PlotCorrelationsFromFiles(dmrg_dir, show_energies=False, output_dir=output_dir,
+                                  fig_title=f"dmrg_J2_{J2}")
 
         overlap_J2 = calculateOverlapBetweenGutzwillerAndDMRG(dmrg_dir, gutz_case_dir, old_tenpy_version=False)
         overlaps.append(overlap_J2)

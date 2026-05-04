@@ -27,6 +27,8 @@ from tenpy.networks.site import FermionSite, SpinHalfSite
 from tenpy.models.spins import SpinModel
 from pathlib import Path
 import json
+from tenpy import networks
+
 
 setup_logging(to_stdout="INFO")
 print(f"num threads: {tenpy.tools.process.mkl_get_nthreads()}")
@@ -36,6 +38,96 @@ default_dmrg_params = {'mixer': True, 'max_E_err': 1.0e-10, 'trunc_params': {'ch
                    'combine': True, 'chi_list': {0: 50, 3: 100, 7: default_chi_max}, 'min_sweeps': 10, 'max_sweeps': 30,
                    'N_sweeps_check': 1}
 code_dir = "C:/Users/yonli/Desktop/Thesis/Triangular J1J2/Code/"
+
+
+def parity_mask(leg, parity=0):
+    mask = (leg.to_qflat() % 2 == parity % 2).ravel()
+    return mask
+
+
+def iMPSAbrikosov(mps, return_canonical: bool = True, cutoff: float = 1e-12):
+    conserved_fermion = mps.sites[0].conserve
+    assert(conserved_fermion == "N")
+    conserved_spin = "Sz"
+
+    spin_site = networks.SpinHalfSite(conserved_spin)
+
+    # need to change charges to keep original virtual legs charges, otherwise for infinite mps the charges on the leftmost
+    # and rightmost legs don't agree, breaking unitcell periodicity
+    chinfo = npc.ChargeInfo([1])
+    modified_spin_leg = npc.LegCharge.from_qflat(chinfo, [[0], [2]])
+    spin_site.change_charge(modified_spin_leg)
+
+    spin_leg = spin_site.leg
+    chinfo_s = spin_leg.chinfo
+    mps = mps.copy()
+    mps.group_sites(2)
+
+    # can take _B[0] because the physical charge is the same on every tensor
+    mask_p = parity_mask(mps._B[0].get_leg("p"))
+
+    for idx, B in enumerate(mps._B):
+        B.legs[B.get_leg_index("p")] = B.get_leg("p").to_LegCharge()
+
+        # mask_vL = parity_mask(B.get_leg("vL"))
+        # passing B.total to parity max for iMPS
+        # mask_vR = parity_mask(B.get_leg("vR"), B.qtotal)
+
+        # B.iproject([mask_vL, mask_p, mask_vR], ["vL", "p", "vR"])
+        B.iproject([mask_p], ["p"])
+
+        if conserved_spin == "Sz":
+            B.chinfo = chinfo_s
+
+            leg_vL, leg_p, leg_vR = [B.get_leg(label) for label in ["vL", "p", "vR"]]
+
+            leg_p.chinfo = chinfo_s
+            leg_p.charges = spin_leg.charges
+
+            leg_vL.chinfo = chinfo_s
+            #leg_vL.charges -= idx
+
+            leg_vR.chinfo = chinfo_s
+            # leg_vR.charges -= idx + 1
+
+        else:  # None
+            B = B.drop_charge(charge="parity_N", chinfo=chinfo_s)
+
+    mps.chinfo = chinfo_s
+    mps.grouped = 1
+    mps.sites = [spin_site] * mps.L
+
+    mps.form = [None] * mps.L
+
+    # need to define mps._S for canonical form, taking a vector of ones since canonical form shouldn't use the values anyway,
+    # just the shapes (?)
+    # mps._S = [None] * (mps.L + 1)
+    mps.unit_cell_width = mps.unit_cell_width // 2
+    S = []
+    for i in range(mps.unit_cell_width):
+        B = mps._B[i]
+        S += [np.ones(B.to_ndarray().shape[0])]
+    mps._S = S
+
+    debug = False
+    if debug:
+        for i in range(len(mps._B)):
+            B0_array = mps._B[i].to_ndarray()
+            mps_vL_qflat = mps._B[i].get_leg("vL").to_qflat()
+            mps_p_qflat = mps._B[i].get_leg("p").to_qflat()
+            mps_vR_qflat = mps._B[i].get_leg("vR").to_qflat()
+            B0_charge = mps._B[i].qtotal[i]
+            for i, ch_i in enumerate(mps_vL_qflat):
+                for j, ch_j in enumerate(mps_p_qflat):
+                    for k, ch_k in enumerate(mps_vR_qflat):
+                        if abs(B0_array[i, j, k]) > 1e-15:
+                            assert (B0_charge == (ch_i[0] + ch_j[0] - ch_k[0]))
+
+    if return_canonical:
+        # Transform into right canoncial form
+        mps.canonical_form()
+
+    return mps
 
 
 def ChangeChiInDMRGParams(chi_max):
@@ -211,21 +303,37 @@ def ImshowMatrix(ax, fig, X, Y, spin_corr_k, xlabel = r"$k_x$",
     ax.axhline(0.0, color='white', linewidth=0.6, alpha=0.5)
     ax.axvline(0.0, color='white', linewidth=0.6, alpha=0.5)
 
-def ComputeMomentumSpaceStructureFactorSymmetrized(corr_x, lat, assert_realness=True):
+
+def getShortestDistanceOnLatticeAxis(ax_coor_site1, ax_coor_site2, ax_bc, ax_L, finite_axis):
+    coor_diff = ax_coor_site1 - ax_coor_site2
+    coor_dist = abs(coor_diff)
+    if ax_bc == "periodic" and finite_axis:
+        assert(coor_dist < ax_L)
+        coor_diff = np.sign(coor_diff) * min(coor_dist, ax_L - coor_dist)
+    return coor_diff
+
+
+def ComputeMomentumSpaceStructure(corr_x, lat, assert_realness=True):
     corr_x_shape = corr_x.shape
     kx = ky = np.linspace(-2 * np.pi, 2 * np.pi, 100)
     Kx, Ky = np.meshgrid(kx, ky)
+    bcs = lat.boundary_conditions
+    Ls = lat.Ls
     corr_k = np.zeros(Kx.shape, dtype=complex)
-
-    unit_cell_positions = lat.unit_cell_positions
+    bc_MPS = lat.bc_MPS
+    unit_cell_pos = lat.unit_cell_positions
     basis_vectors = np.asarray(lat.basis, dtype=float)
     for i in range(corr_x_shape[0]):
         coor_i = lat.mps2lat_idx(i)
-        pos_i = (np.dot(coor_i[:2], basis_vectors) + unit_cell_positions[coor_i[-1],:])
         for j in range(corr_x_shape[1]):
             coor_j = lat.mps2lat_idx(j)
-            pos_j = (np.dot(coor_j[:2], basis_vectors) + unit_cell_positions[coor_j[-1], :])
-            r_ij = pos_i - pos_j
+            finite = (bc_MPS != "infinite")
+            coor_diff_x =  getShortestDistanceOnLatticeAxis(coor_i[0], coor_j[0], bcs[0], Ls[0], finite)
+            coor_diff_y = getShortestDistanceOnLatticeAxis(coor_i[1], coor_j[1], bcs[1], Ls[1], True)
+
+            coor_diff = np.array([coor_diff_x, coor_diff_y])
+            r_ij = np.dot(coor_diff, basis_vectors) + (unit_cell_pos[coor_i[-1],:] - unit_cell_pos[coor_j[-1],:])
+
             phases = np.exp(-1j*(Kx * r_ij[0] + Ky * r_ij[1]))
             corr_k += corr_x[i, j] * phases
     corr_k = corr_k / lat.N_sites
@@ -233,38 +341,6 @@ def ComputeMomentumSpaceStructureFactorSymmetrized(corr_x, lat, assert_realness=
         assert(np.max(np.abs(np.imag(corr_k))) < 1e-13)
 
     return Kx, Ky, corr_k
-
-
-def ComputeMomentumSpaceStructureFactor(corr_x, lat, assert_realness=True):
-    Lx, Ly = lat.Ls[0], lat.Ls[1]
-    kx = ky = np.linspace(-2*np.pi, 2*np.pi, 100)
-    Kx, Ky = np.meshgrid(kx, ky)
-    lat_basis = lat.basis
-    unit_cell_positions = lat.unit_cell_positions
-    center_site_coordinates = [Lx // 2, Ly // 2, len(unit_cell_positions) // 2]
-    center_site_mps_index = lat.lat2mps_idx(center_site_coordinates)
-    print("center site index for calculating correlations: ", center_site_mps_index)
-
-    basis_vectors = np.asarray(lat_basis, dtype=float)
-    center_site_loc = (np.dot(center_site_coordinates[:2], basis_vectors) +
-                       unit_cell_positions[center_site_coordinates[-1],:])
-    print("center site index for calculating correlations: ", center_site_mps_index)
-    spin_corr_with_center = corr_x[center_site_mps_index, :]
-    site_coordinates = np.asarray(lat.order[:, :2], dtype=float)
-    site_locations = site_coordinates @ basis_vectors
-
-    for i in range(site_locations.shape[0]):
-        unitcell_index = lat.mps2lat_idx(i)[-1]
-        site_locations[i,:] += unit_cell_positions[unitcell_index, :]
-
-    r_from_center = site_locations - center_site_loc
-    phases = np.exp(-1j * (Kx[..., np.newaxis] * r_from_center[:, 0] +
-                          Ky[..., np.newaxis] * r_from_center[:, 1]))
-    spin_corr_k = np.sum(spin_corr_with_center[np.newaxis, np.newaxis, :] * phases, axis=2) / lat.N_sites
-
-    if assert_realness:
-        assert(np.max(np.abs(np.imag(spin_corr_k))) < 1e-13)
-    return Kx, Ky, spin_corr_k
 
 
 def PlotSquareLatticeStructureFactor(Lx=6, Ly=6):
@@ -293,7 +369,7 @@ def PlotSquareLatticeStructureFactor(Lx=6, Ly=6):
     psi.canonical_form()
 
     spin_corr_x = CalculateSpinSpinCorrelations(psi)
-    Kx, Ky, spin_corr_k = ComputeMomentumSpaceStructureFactorSymmetrized(spin_corr_x, square_lat)
+    Kx, Ky, spin_corr_k = ComputeMomentumSpaceStructure(spin_corr_x, square_lat)
 
     fig, ax = plt.subplots(figsize=(6, 5))
     title = f"Spin structure factor on a {Lx}x{Ly} square lattice"
@@ -357,7 +433,7 @@ def Generate120DegOrderedState(lat=None, Lx=None, Ly=None, plot=False):
         lat.plot_coupling(ax_lat)
         lat.plot_sites(ax_lat)
         spin_corr_x = CalculateSpinSpinCorrelations(psi)
-        Kx, Ky, spin_corr_k = ComputeMomentumSpaceStructureFactorSymmetrized(spin_corr_x, lat)
+        Kx, Ky, spin_corr_k = ComputeMomentumSpaceStructure(spin_corr_x, lat)
         fig_corr, ax_corr = plt.subplots(figsize=(6, 5))
         ImshowMatrix(ax_corr, fig_corr, Kx, Ky, spin_corr_k)
         lat.plot_brillouin_zone(ax_corr)
@@ -368,7 +444,6 @@ def Generate120DegOrderedState(lat=None, Lx=None, Ly=None, plot=False):
 
 
 def GenerateStripeOrderedState(lat, plot=False):
-    site = lat.mps_sites()[0]
     basis = lat.basis
     aligned_with_x = (basis[0][1] == 0.0 or basis[1][1] == 0.0)
     aligned_with_y = (basis[0][0] == 0.0 or basis[1][0] == 0.0)
@@ -430,7 +505,7 @@ def TestCorrelationsWithNontrivialUnitCell(Lx, Ly, state="120", geometry="YC"):
             plt.show()
 
     spin_corr_x = CalculateSpinSpinCorrelations(spin_state)
-    Kx, Ky, spin_corr_k = ComputeMomentumSpaceStructureFactorSymmetrized(spin_corr_x, triangular_lat)
+    Kx, Ky, spin_corr_k = ComputeMomentumSpaceStructure(spin_corr_x, triangular_lat)
     fig, ax = plt.subplots(figsize=(6, 5))
     ImshowMatrix(ax, fig, Kx, Ky, np.abs(spin_corr_k))
     triangular_lat = BuildTriangularLattice(Lx, Ly, site, "finite")
@@ -530,8 +605,8 @@ def TestSquareLattice(Lx=5, Ly=5, bc=('open', 'open'), J2s=[0.0],
             pickle.dump(psi, f)
 
         spin_corr = CalculateSpinSpinCorrelations(psi)
-        Kx, Ky, spin_corr_k = ComputeMomentumSpaceStructureFactorSymmetrized(spin_corr, square_lat,
-                                                                  assert_realness=False)
+        Kx, Ky, spin_corr_k = ComputeMomentumSpaceStructure(spin_corr, square_lat,
+                                                            assert_realness=False)
 
         fig_corr, ax_corr = plt.subplots(figsize=(6, 5))
         title = f"Spin structure factor"
@@ -703,6 +778,11 @@ def calculateGutzwillerEnergyTriangularJ1J2(gutz_results_dir, Lx, Ly, chi, flux,
     psi_path = CreateGutzwillerCaseDir(gutz_results_dir, Lx, Ly, chi, flux, geometry) + "/psi_gutzwiller.pkl"
     site = SpinHalfSite(conserve="Sz")
 
+    if bc_MPS == "infinite":
+        chinfo = npc.ChargeInfo([1])
+        modified_spin_leg = npc.LegCharge.from_qflat(chinfo, [[0], [2]])
+        site.change_charge(modified_spin_leg)
+
     with open(psi_path, 'rb') as f:
         psi = pickle.load(f)
 
@@ -806,8 +886,8 @@ def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, conserve=True, initial_state="Random"
 
     spin_corr_x = CalculateSpinSpinCorrelations(psi, sites1, sites2)
 
-    Kx, Ky, spin_corr_k = ComputeMomentumSpaceStructureFactorSymmetrized(spin_corr_x, lat_for_corr,
-                                                                         assert_realness=False)
+    Kx, Ky, spin_corr_k = ComputeMomentumSpaceStructure(spin_corr_x, lat_for_corr,
+                                                        assert_realness=False)
 
     fig_corr, ax_corr = plt.subplots(figsize=(6, 5))
     title = f"Spin structure factor on a {Lx}x{Ly} square lattice"
@@ -1194,9 +1274,14 @@ def TriangularPiFluxGutzwiller(Ly, geometry, finite=True, Lx=6, chi_max=3000, fl
     RescaleMPSForGutzwiller(psi_from_slater)
 
     if particle_hole:
-        psi_gutzwiller = gutz.abrikosov_ph(psi_from_slater, return_canonical=True)
+        if finite:
+            psi_gutzwiller = gutz.abrikosov_ph(psi_from_slater)
+        else:
+            psi_gutzwiller = iMPSAbrikosov(psi_from_slater)
+
     else:
-        psi_gutzwiller = gutz.abrikosov(psi_from_slater, return_canonical=True)
+        assert(finite)
+        psi_gutzwiller = gutz.abrikosov(psi_from_slater)
 
     if debug:
         psi_slater_grouped_pairs = psi_from_slater.copy()
@@ -1219,8 +1304,7 @@ def TriangularPiFluxGutzwiller(Ly, geometry, finite=True, Lx=6, chi_max=3000, fl
         print(f"norm of psi_gutzwiller is {norm}")
 
     if local:
-        results_dir = gutzwiller_results_dir + f"Lx_{Lx}_Ly_{Ly}_chi_{chi_max}_flux_{flux / pi}/"
-        Path(results_dir).mkdir(parents=True, exist_ok=True)
+        results_dir = CreateGutzwillerCaseDir(gutzwiller_results_dir, Lx, Ly, chi_max, flux/pi, geometry)
     else:
         results_dir = "./"
 
@@ -1240,18 +1324,19 @@ def TriangularPiFluxGutzwiller(Ly, geometry, finite=True, Lx=6, chi_max=3000, fl
     if finite:
         spin_corr_x = CalculateSpinSpinCorrelations(psi_gutzwiller)
     else:
-        spin_corr_x = CalculateSpinSpinCorrelations(psi_gutzwiller, np.arange(0, Lx),
-                                                    np.arange(0, Lx))
+        spin_corr_x = CalculateSpinSpinCorrelations(psi_gutzwiller, np.arange(0, 50),
+                                                    np.arange(0, 50))
 
-    spin_lat = BuildTriangularLattice(2 * Lx, Ly, spin_site, "finite", geometry="YC")
+    bc_MPS = "finite" if finite else "infinite"
+    spin_lat = BuildTriangularLattice(2 * Lx, Ly, spin_site, bc_MPS, geometry=geometry)
     fig_lat, ax_lat = plt.subplots(figsize=(6, 5))
     PlotLattice(spin_lat, ax_lat)
 
-    Kx, Ky, spin_corr_k = ComputeMomentumSpaceStructureFactorSymmetrized(spin_corr_x, spin_lat)
+    Kx, Ky, spin_corr_k = ComputeMomentumSpaceStructure(spin_corr_x, spin_lat)
 
     fig_corr_k,ax_corr_k = plt.subplots(figsize=(6, 5))
     ImshowMatrix(ax_corr_k, fig_corr_k, Kx, Ky, spin_corr_k)
-    spin_lat_singlesite_unitcell = BuildTriangularLattice(Lx, Ly, spin_site, "finite", geometry="YC")
+    spin_lat_singlesite_unitcell = BuildTriangularLattice(Lx, Ly, spin_site, "finite", geometry=geometry)
     spin_lat_singlesite_unitcell.plot_brillouin_zone(ax_corr_k)
     ax_corr_k.set_title("Spin Correlations")
 
@@ -1280,7 +1365,7 @@ def ComputeCorrelationsFromMPSFile(parent_results_path, Lx, Ly, bc, bc_MPS, init
         assert(Lx_for_infinite_bc_MPS is not None)
         Lx_correlations = Lx_for_infinite_bc_MPS
 
-    triangular_lattice = BuildTriangularLattice(Lx_correlations, Ly, site, "finite", bc=bc,
+    triangular_lattice = BuildTriangularLattice(Lx_correlations, Ly, site, bc_MPS, bc=bc,
                                                 geometry=geometry)
 
     if from_corr_file:
@@ -1288,8 +1373,8 @@ def ComputeCorrelationsFromMPSFile(parent_results_path, Lx, Ly, bc, bc_MPS, init
     else:
         spin_corr_x = CalculateSpinSpinCorrelations(psi, sites1 = np.arange(0, triangular_lattice.N_sites),
                                                     sites2 = np.arange(0,triangular_lattice.N_sites))
-    Kx, Ky, spin_corr_k = ComputeMomentumSpaceStructureFactorSymmetrized(spin_corr_x, triangular_lattice,
-                                                                         assert_realness=True)
+    Kx, Ky, spin_corr_k = ComputeMomentumSpaceStructure(spin_corr_x, triangular_lattice,
+                                                        assert_realness=True)
 
     spin_corr_k_from_file = np.loadtxt(psi_dir + "spin_corr_k.csv", dtype=complex)
     print("largest diff: ", np.max(np.abs(spin_corr_k - spin_corr_k_from_file)))
@@ -1367,7 +1452,7 @@ def GutzwillerDMRGOverlaps(J2s, gutz_dir, Lx, Ly, chi_gutz, flux_gutz,
         dmrg_energies.append(dmrg_energy)
 
         gutz_energy = calculateGutzwillerEnergyTriangularJ1J2(gutz_dir, Lx, Ly, chi_gutz, flux_gutz, geometry=geometry,
-                                                              J2=J2)
+                                                               J2=J2)
         gutz_energies.append(gutz_energy)
 
         PlotCorrelationsFromFiles(dmrg_dir, show_energies=False, output_dir=output_dir,
@@ -1571,7 +1656,8 @@ def DetermineSpinsOccupation(N_spins, H, e):
 def TryPiFluxMonopoleState(Lx, Ly, chi_max=1000, monopole_Q=1, magnetization=0.0, geometry="YC"):
     fermion_site = FermionSite(conserve='N')
     bc = ('open', 'periodic')
-    lat = BuildTriangularLattice(Lx, Ly, fermion_site, "finite", bc = bc, geometry=geometry,
+    bc_MPS = "finite"
+    lat = BuildTriangularLattice(Lx, Ly, fermion_site, bc_MPS, bc = bc, geometry=geometry,
                                  unit_cell= [[-0.1, 0.0], [0.1, 0.0]])
     monopole_model = MonopoleCondensatePiFluxModel({"init_H_MPO": True, "lattice": lat,
                                                     "monopole_Q": monopole_Q, "flux":0.0})
@@ -1629,9 +1715,8 @@ def TryPiFluxMonopoleState(Lx, Ly, chi_max=1000, monopole_Q=1, magnetization=0.0
     print(f"input required magz = {0.5 * magnetization * N_filling}, gutz magz = {gutz_magz}")
     spin_corr_x = CalculateSpinSpinCorrelations(psi_gutz)
 
-    spin_lat = BuildTriangularLattice(Lx, Ly, fermion_site, "finite", bc=('open', 'periodic'),
-                                      geometry=geometry)
-    Kx, Ky, spin_corr_k = ComputeMomentumSpaceStructureFactorSymmetrized(spin_corr_x, spin_lat)
+    spin_lat = BuildTriangularLattice(Lx, Ly, fermion_site, bc_MPS, bc=bc, geometry=geometry)
+    Kx, Ky, spin_corr_k = ComputeMomentumSpaceStructure(spin_corr_x, spin_lat)
 
     fig_corr, ax_corr = plt.subplots(figsize=(6, 5))
     ImshowMatrix(ax_corr, fig_corr, Kx, Ky, spin_corr_k)
@@ -1681,6 +1766,11 @@ if __name__ == "__main__":
     #                           output_dir=output_dir, fig_title=f"realspace_dmrg_J2_{J2}_initialstate_{dmrg_initial_state}",
     #                           k_space=False)
 
+    #J2 = 0.2
+    #ComputeCorrelationsFromMPSFile(code_dir, 6, 6, ("open", "periodic"), "finite", "Random",
+    #                      True, J2, "YC",
+    #                               psi_dir=f"NewTenpyTriangularLatticeResults/Lx_6_Ly_6_bc_op_YC/finite_init_Random_conserve_1_J2_{J2}/", from_corr_file=True)
+
     # fig, ax = plt.subplots(figsize=(6, 5))
     # magz = 1. / 3.
     # Lx = 18
@@ -1710,7 +1800,18 @@ if __name__ == "__main__":
     # TriangularPiFluxAnsatz(20, 3, spinfull=False, geometry="XC", particle_hole=False)
 
     # TriangularPiFluxAnsatz(4, 4, True, "finite")
-    # TriangularPiFluxGutzwiller(6, "YC", Lx=6, chi_max=600, flux=0)
+
+    #TriangularPiFluxGutzwiller(6, "YC", chi_max=2000, flux=0, Lx=2, finite=False)
+
+    #gutz_dir = code_dir + "LocalGutzwillerResults/"
+    #Lx, Ly = 2, 6
+    #chi_gutz = 2000
+    #flux_gutz = 0.0
+    #geometry = "YC"
+    #J2 = 0.125
+    #calculateGutzwillerEnergyTriangularJ1J2(gutz_dir, Lx, Ly, chi_gutz, flux_gutz, geometry=geometry,
+    #                                        J2=J2, bc_MPS="infinite", bc=("periodic", "periodic"))
+
     # TriangularPiFluxGutzwiller(4, "XC", Lx=12, chi_max=600, flux=0.0)
     # TriangularPiFluxGutzwiller(2, "XC", Lx=4, chi_max=600, flux=0.0)
     # TriangularPiFluxGutzwiller(6, Lx=3, chi_max=6000, flux=pi)
@@ -1755,11 +1856,15 @@ if __name__ == "__main__":
     #TriangularJ1J2DMRG(Lx, Ly, ("open", "periodic"), "finite",
     #                   J2=0.0, conserve=conserve, initial_state="Random", geometry="XC", chi_max=600)
 
-    #initial_psi_dir = "LocalJ1J2TriangularDMRGResults/" + \
-    #    f"Lx_{Lx}_Ly_{Ly}_bc_op_XC/finite_init_Random_conserve_{conserve}_J2_0.0_chi_600/"
+    #Lx, Ly = 12, 3
+    #initial_psi_dir = "GutzwillerResults/Lx_12_Ly_3_chi_10000_flux_0.0_XC/"
     #TriangularJ1J2DMRG(Lx, Ly, ("open", "periodic"), "finite",
-    #                   J2=0.0, conserve=conserve, initial_state="from_file",
-    #                   initial_psi_dir=code_dir + initial_psi_dir, geometry="XC", chi_max=1200)
+    #                   J2=0.125, conserve=True, initial_state="from_file",
+    #                   initial_psi_dir=code_dir + initial_psi_dir, geometry="XC", chi_max=3000)
+
+    #ComputeCorrelationsFromMPSFile("", 12, 3, ("open", "periodic"), "finite",
+    #                               geometry="XC", psi_dir=code_dir + "GutzwillerResults/Lx_12_Ly_3_chi_10000_flux_0.0_XC/",
+    #                               from_corr_file=True)
 
     #TriangularJ1J2DMRG(Lx, Ly, ("open", "periodic"), "finite",
     #                   J2=0.0, conserve=conserve, initial_state="from_file",
@@ -1780,18 +1885,14 @@ if __name__ == "__main__":
     #GutzwillerBondDimensionScaling(gutz_dir, 6, 6, [4000, 5000, 6000],
     #                               output_dir)
 
-    J2s = [0.125]
-    chi_gutz = 600
-    flux_gutz = 1.0
-    gutz_dir = code_dir + f"LocalGutzwillerResults/"
-    Lx, Ly = 12, 4
-    #Lx, Ly = 12, 4
-    # gutz_dir = code_dir + "GutzwillerResults/"
-    dmrg_dir = code_dir + "NewTenpyTriangularLatticeResults/"
-    #chi_gutz = 6000
-    #flux_gutz = 0.0
-    GutzwillerDMRGOverlaps(J2s, gutz_dir, Lx, Ly, chi_gutz, flux_gutz,
-                           output_dir, dmrg_initial_state="Random", dmrg_dir = dmrg_dir, geometry="YC")
+    #J2s = [0.125]
+    #Lx, Ly = 12, 3
+    #gutz_dir = code_dir + "GutzwillerResults/"
+    #dmrg_dir = code_dir + "TriangularJ1J2DMRG_79c67f5c16524/"
+    #chi_gutz = 10000
+    #flux_gutz = 1.0
+    #GutzwillerDMRGOverlaps(J2s, gutz_dir, Lx, Ly, chi_gutz, flux_gutz,
+    #                       output_dir, dmrg_initial_state="Random", dmrg_dir = dmrg_dir, geometry="XC")
 
     #dmrg_dir = code_dir + "NewTenpyTriangularLatticeResults/Lx_12_Ly_5_bc_op/finite_init_Random_conserve_1_J2_0.125/"
     #PlotCorrelationsFromFiles(dmrg_dir, show_energies=False, initial_state="Random", output_dir=output_dir)

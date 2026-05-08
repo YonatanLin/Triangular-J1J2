@@ -138,9 +138,9 @@ def ChangeChiInDMRGParams(chi_max):
     return dmrg_params_copy
 
 
-def CreateGutzwillerCaseDir(main_results_dir, Lx, Ly, chi, flux, geometry):
+def CreateGutzwillerCaseDir(main_results_dir, Lx, Ly, chi, flux, geometry, bc_MPS):
     Path(main_results_dir).mkdir(parents=True, exist_ok=True)
-    gutz_dir = main_results_dir + f"Lx_{Lx}_Ly_{Ly}_chi_{chi}_flux_{flux}_{geometry}"
+    gutz_dir = main_results_dir + f"{bc_MPS}_Lx_{Lx}_Ly_{Ly}_chi_{chi}_flux_{flux}_{geometry}"
     Path(gutz_dir).mkdir(parents=True, exist_ok=True)
     return gutz_dir
 
@@ -1249,6 +1249,8 @@ def TriangularPiFluxGutzwiller(Ly, geometry, bc_MPS, Lx=6, chi_max=3000, flux=0.
     debug = False
     assert((bc_MPS == "finite") or (bc_MPS == "infinite"))
     finite = (bc_MPS == "finite")
+    if not finite:
+        assert(flux == 0.0)
     #fig_lat, ax_lat = plt.subplots()
     #lat = GetPiFluxTriangularLattice(site, Lx, Ly, True, bc_MPS, geometry)
     #PlotLattice(lat, ax_lat)

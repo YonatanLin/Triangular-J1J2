@@ -106,8 +106,8 @@ def PiFluxBandStructure(Ly=4, plot=False, tet=0., geometry="YC"):
         print("E_sq minimum: ", np.min(E_sq))
         im = ax.imshow((-1)*sqrt(E_sq), origin="lower", extent = (-pi_factor, pi_factor, -pi_factor, pi_factor),
                        cmap='RdBu')
-        ax.set_xlabel("$k_x[\pi]$")
-        ax.set_ylabel("$k_y[\pi]$")
+        ax.set_xlabel(r"$k_x[\pi]$")
+        ax.set_ylabel(r"$k_y[\pi]$")
         cbar = fig.colorbar(im)
         cbar.ax.tick_params(labelsize=16)
         ax.legend()

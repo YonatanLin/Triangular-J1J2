@@ -55,7 +55,7 @@ def PiFluxSquaredEnergy(kx, ky):
     return E_sq
 
 def PiFluxBandStructure(Ly=4, plot=False, tet=0., geometry="YC"):
-    pi_factor = 1.5
+    pi_factor = 2.0
     Kx, Ky = np.meshgrid(np.linspace(-pi_factor*pi, pi_factor*pi, 1000),
                          np.linspace(-pi_factor*pi, pi_factor*pi, 1000))
 
@@ -92,8 +92,6 @@ def PiFluxBandStructure(Ly=4, plot=False, tet=0., geometry="YC"):
     E_per_mode = E_tot / N_states
 
     E_sq = PiFluxSquaredEnergy(Kx, Ky)
-    print("energy at +Q: ", PiFluxSquaredEnergy(pi/2, pi/(2*sqrt(3))))
-    print("energy at -Q: ", PiFluxSquaredEnergy(-pi / 2, -pi / (2 * sqrt(3))))
 
     E_sq_theory = 2 * (3 + cos(2*Kx) - cos(Kx - sqrt(3)*Ky) + cos(Kx + sqrt(3)*Ky))
 
@@ -101,9 +99,17 @@ def PiFluxBandStructure(Ly=4, plot=False, tet=0., geometry="YC"):
         plot_bz1(ax, k1_bz/ pi, k2_bz / pi)
 
     if plot:
+        Qx = pi / 2
+        Qy = pi / (2 * sqrt(3))
         print(f"energy per site: {E_per_mode}")
         print("diff from theory: ", np.max(np.abs(E_sq - E_sq_theory)))
         print("E_sq minimum: ", np.min(E_sq))
+        print("energy at +Q: ", PiFluxSquaredEnergy(Qx, Qy))
+        print("energy at -Q: ", PiFluxSquaredEnergy((-1) * Qx, (-1) * Qy))
+        print("energy at Q+M1: ", PiFluxSquaredEnergy(Qx, Qy + 2 * pi / sqrt(3)))
+        print("energy at Q-M1: ", PiFluxSquaredEnergy(Qx, Qy - 2 * pi / sqrt(3)))
+        print("energy at Q+M2: ", PiFluxSquaredEnergy(Qx + pi, Qy - pi / sqrt(3)))
+        print("energy at Q-M2: ", PiFluxSquaredEnergy(Qx - pi, Qy + pi / sqrt(3)))
         im = ax.imshow((-1)*sqrt(E_sq), origin="lower", extent = (-pi_factor, pi_factor, -pi_factor, pi_factor),
                        cmap='RdBu')
         ax.set_xlabel("$k_x[\pi]$")

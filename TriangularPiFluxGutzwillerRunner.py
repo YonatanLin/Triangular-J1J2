@@ -14,13 +14,14 @@ def build_parser():
     parser.add_argument("--chi_max", type=int, required=True, help="Max bond dimension.")
     parser.add_argument("--flux", type=float, required=True, help="Net flux threaded through the cylinder")
     parser.add_argument("--geometry", type=str, required=True, help="YC or XC geometry")
+    parser.add_argument("--bc_MPS", type=str, required=True, help="finite or infinite MPS")
     return parser
 
 
 def main():
     args = build_parser().parse_args()
-    TriangularPiFluxGutzwiller(Ly=args.Ly, geometry=args.geometry, Lx=args.Lx, chi_max=args.chi_max,
-                               flux=args.flux)
+    TriangularPiFluxGutzwiller(Ly=args.Ly, geometry=args.geometry, bc_MPS=args.bc_MPS,
+                               Lx=args.Lx, chi_max=args.chi_max, flux=args.flux)
 
 
 if __name__ == "__main__":

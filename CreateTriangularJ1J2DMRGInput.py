@@ -2,6 +2,8 @@ from Trying2D import CreateTriangularCaseDir
 import sys
 from pathlib import Path
 import re
+import os 
+
 
 def CreateTriangularCaseDirFromInputFile(main_results_dir, input_file):
     with open(input_file, "r") as file:
@@ -49,8 +51,9 @@ def AddTriangularCaseDirsToCondorCases(main_results_dir, condor_cases_file="cond
                 case_folder = str(params_dir).replace("\\", "/") + "/"
                 cont_folder = str(case_folder).replace(_initial_state, f"cont_{_initial_state}")
                 Path(cont_folder).mkdir(parents=True, exist_ok=True)
+                case_folder_absolute = os.getcwd() + "/" + case_folder
                 input_for_condor.write(
-                    f"{Lx} {Ly} {bc} {bc_MPS} 0.0 from_file {conserve} {J2} {geometry} {case_folder} {cont_folder}\n"
+                    f"{Lx} {Ly} {bc} {bc_MPS} 0.0 from_file {conserve} {J2} {geometry} {case_folder_absolute} {cont_folder}\n"
                 )
 
 

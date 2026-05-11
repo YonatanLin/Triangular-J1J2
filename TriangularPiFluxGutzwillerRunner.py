@@ -15,14 +15,16 @@ def build_parser():
     parser.add_argument("--flux", type=float, required=True, help="Net flux threaded through the cylinder")
     parser.add_argument("--geometry", type=str, required=True, help="YC or XC geometry")
     parser.add_argument("--bc_MPS", type=str, required=True, help="finite or infinite MPS")
+    parser.add_argument("--gs_manifold_index", type=int, required=True,
+                        help="Ground state index within degenerate space")
+
     return parser
 
 
 def main():
     args = build_parser().parse_args()
-    TriangularPiFluxGutzwiller(Ly=args.Ly, geometry=args.geometry, bc_MPS=args.bc_MPS,
+    TriangularPiFluxGutzwiller(Ly=args.Ly, geometry=args.geometry, bc_MPS=args.bc_MPS, gs_manifold_index=args.gs_manifold_index,
                                Lx=args.Lx, chi_max=args.chi_max, flux=args.flux)
-
 
 if __name__ == "__main__":
     main()

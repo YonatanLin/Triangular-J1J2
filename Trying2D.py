@@ -28,7 +28,8 @@ from temfpy.utils import HT
 
 
 setup_logging(to_stdout="INFO")
-print(f"num threads: {tenpy.tools.process.mkl_get_nthreads()}")
+if not local:
+    print(f"num threads: {tenpy.tools.process.mkl_get_nthreads()}")
 
 default_chi_max = 3000
 default_dmrg_params = {'mixer': True, 'max_E_err': 1.0e-10, 'trunc_params': {'chi_max': default_chi_max, 'svd_min': 1.0e-7},
@@ -77,9 +78,9 @@ def iMPSAbrikosov(mps, return_canonical: bool = True, cutoff: float = 1e-12):
 
     # need to change charges to keep original virtual legs charges, otherwise for infinite mps the charges on the leftmost
     # and rightmost legs don't agree, breaking unitcell periodicity
-    chinfo = npc.ChargeInfo([1])
-    modified_spin_leg = npc.LegCharge.from_qflat(chinfo, [[0], [2]])
-    spin_site.change_charge(modified_spin_leg)
+    #chinfo = npc.ChargeInfo([1])
+    #modified_spin_leg = npc.LegCharge.from_qflat(chinfo, [[0], [2]])
+    #spin_site.change_charge(modified_spin_leg)
 
     spin_leg = spin_site.leg
     chinfo_s = spin_leg.chinfo
@@ -116,6 +117,8 @@ def iMPSAbrikosov(mps, return_canonical: bool = True, cutoff: float = 1e-12):
         else:  # None
             B = B.drop_charge(charge="parity_N", chinfo=chinfo_s)
 
+    SetZeroTensorChargesInGutzwillerWavefunction(mps)
+
     mps.chinfo = chinfo_s
     mps.grouped = 1
     mps.sites = [spin_site] * mps.L
@@ -150,19 +153,89 @@ def iMPSAbrikosov(mps, return_canonical: bool = True, cutoff: float = 1e-12):
         # Transform into right canoncial form
         mps.canonical_form()
 
-    SetZeroTensorChargesInGutzwillerWavefunction(mps)
     return mps
 
 
-def CorrelationMatrixArbitraryOccupation(H, orb_to_remove, N=None):
-    e, v = eigh(H)
-    if N is None:
-        occupied = e < 0
-        v = v[:, occupied]  # filter out occupied orbitals
-        N = int(occupied.sum())
+def getZeroModeSupportSide(zm):
+    site_with_max_norm = np.argmax(np.abs(zm))
+    side = "L" if site_with_max_norm < zm.shape[0]//2 else "R"
+    abs_zm = np.abs(zm)
+    zm_sum = np.sum(abs_zm)
+    if side == "L":
+        assert(np.sum(abs_zm[(zm.shape[0]//2):]) < 0.01 * zm_sum)  # localized on the left
     else:
-        v = v[:, :N]  # fill lowest N orbitals
-    v = np.delete(v, orb_to_remove, axis=1)
+        assert (np.sum(abs_zm[0:(zm.shape[0] // 2)]) < 0.01 * zm_sum)  # localized on the left
+
+    return side
+
+
+def GetEigenvectorsForCorrelationMatrixArbitraryOccupation(H, N, psi_support_per_spin, zero_energy_tol,
+                                                           indices_to_remove = None):
+    H_up = H[0::2, 0::2]
+    H_down = H[1::2, 1::2]
+    e_up, v_up = eigh(H_up)
+    e_down, v_down = eigh(H_down)
+    v_up, e_up = v_up[:, 0:N//2], e_up[0:N//2]
+    v_down, e_down = v_down[:, 0:N//2], e_down[0:N//2]
+    v_dict = {"up": v_up, "down": v_down}
+    if indices_to_remove is None:
+        indices_to_remove = {}
+        assert(np.all(np.abs(e_up[-2:]) < zero_energy_tol) and np.all(np.abs(e_down[-2:]) < zero_energy_tol))
+        for spin in ["up", "down"]:
+            for i in [-1, -2]:
+                zm_i = v_dict[spin][:, i]
+                support_side = getZeroModeSupportSide(zm_i)
+                if support_side == psi_support_per_spin[spin]:
+                    indices_to_remove[spin] = i
+    else:
+        assert psi_support_per_spin is None, "over specification of orbitals to remove"
+
+    v_up = np.delete(v_up, [indices_to_remove["up"]], axis=1)
+    e_up = np.delete(e_up, [indices_to_remove["up"]])
+    v_down = np.delete(v_down, [indices_to_remove["down"]], axis=1)
+    e_down = np.delete(e_down, [indices_to_remove["down"]])
+    v = np.zeros((H.shape[0], v_up.shape[1] + v_down.shape[1]), dtype=v_up.dtype)
+    e = np.zeros(v.shape[1])
+    v[0::2, 0::2] = v_up
+    v[1::2, 1::2] = v_down
+    e[0::2] = e_up
+    e[1::2] = e_down
+    return v, e
+
+
+def TestGetEigenvectorsForCorrelationMatrixArbitraryOccupation(load=False):
+    if not load:
+        random_mat = np.random.rand(10, 10)
+        H_up = random_mat + np.transpose(random_mat)
+        H_down = (-1) * H_up
+        H = np.zeros((20, 20))
+        H[0::2, 0::2] = H_up
+        H[1::2, 1::2] = H_down
+    else:
+        H = np.loadtxt("test_mat.csv", dtype=np.float64)
+
+    filling = 12
+    v_block_diag, e_block_diag = GetEigenvectorsForCorrelationMatrixArbitraryOccupation(H, filling, None, 0,
+                                                                          indices_to_remove={"up":-1, "down":-2})
+    assert(v_block_diag.shape[1] == filling - 2)
+    e_full_diag, v_full_diag = eigh(H)
+    for i, ei in enumerate(e_block_diag):
+        vi = v_block_diag[:,i]
+        Hvi = H @ vi
+        eigenvalue_condition = np.min(np.abs(e_full_diag - e_block_diag[i])) < 5e-14 # ei is an eigenvalue
+        eigenvector_condition = np.max(np.abs(Hvi - ei * vi)) < 5e-14 # vi is an eigenvector with eigenvalue ei
+        if not eigenvalue_condition or not eigenvector_condition: # failed
+            np.savetxt('test_mat.csv', H)
+        assert(eigenvector_condition), "bad eigenvectors from block diagonalization"
+        assert(eigenvalue_condition), "bad eigenstates from block diagonalization"
+    print("success")
+    return
+
+
+def CorrelationMatrixArbitraryOccupation(H, N, psi_support_per_spin, zero_energy_tol):
+    assert(N % 2 == 0)
+    v, e = GetEigenvectorsForCorrelationMatrixArbitraryOccupation(H, N, psi_support_per_spin, zero_energy_tol)
+    assert(np.sum(np.abs(e) < zero_energy_tol) == 2)
     C = v @ HT(v)
     if np.iscomplexobj(C) and np.allclose(C.imag, 0.0, rtol=0, atol=1e-14):
         C = C.real  # eliminate zero imaginary parts
@@ -1112,10 +1185,17 @@ def CalculateExactCMatrixForPiFlux(Lx, Ly, spinfull, site, geometry, gs_manifold
         N_filling = 2*N_up
 
     print("pi-flux energy from exact diagonalization: ", np.sum(e[0:N_filling])/N_filling)
-    list_orbs_to_remove = [[-1, -2], [-1, -4] , [-3, -2], [-3, -4]]
+    if gs_manifold_index == 0:
+        psi_support_per_spin = {"up": "L", "down": "L"}
+    elif gs_manifold_index == 1:
+        psi_support_per_spin = {"up": "R", "down": "L"}
+    elif gs_manifold_index == 2:
+        psi_support_per_spin = {"up": "L", "down": "R"}
+    else:
+        psi_support_per_spin = {"up": "R", "down": "R"}
+
     if zero_modes:
-        orbs_to_remove = list_orbs_to_remove[gs_manifold_index]
-        C, _ = CorrelationMatrixArbitraryOccupation(H, orbs_to_remove, N_filling)
+        C, _ = CorrelationMatrixArbitraryOccupation(H, N_filling, psi_support_per_spin, zero_energy_tol)
     else:
         C, _ = slater.correlation_matrix(H, N_filling)
 
@@ -1308,6 +1388,11 @@ def TriangularPiFluxGutzwiller(Ly, geometry, bc_MPS, gs_manifold_index, Lx=6, ch
     spinfull = True
     particle_hole = spinfull
     debug = False
+    if local:
+        results_dir = CreateGutzwillerCaseDir(gutzwiller_results_dir, Lx, Ly, chi_max, flux/pi, geometry, bc_MPS,
+                                              gs_manifold_index)
+    else:
+        results_dir = "./"
     assert((bc_MPS == "finite") or (bc_MPS == "infinite"))
     finite = (bc_MPS == "finite")
     if not finite:
@@ -1340,7 +1425,9 @@ def TriangularPiFluxGutzwiller(Ly, geometry, bc_MPS, gs_manifold_index, Lx=6, ch
               f"{pi_flux_model.H_MPO.expectation_value(psi_from_slater) / (0.5 * _triangular_lat.N_sites)}")
 
     psi_from_slater.canonical_form()
-
+    with open(results_dir + "psi_slater.pkl", 'wb') as f:
+        pickle.dump(psi_from_slater, f)
+        
     RescaleMPSForGutzwiller(psi_from_slater)
 
     if particle_hole:
@@ -1352,12 +1439,6 @@ def TriangularPiFluxGutzwiller(Ly, geometry, bc_MPS, gs_manifold_index, Lx=6, ch
     else:
         assert(finite)
         psi_gutzwiller = gutz.abrikosov(psi_from_slater)
-
-    if local:
-        results_dir = CreateGutzwillerCaseDir(gutzwiller_results_dir, Lx, Ly, chi_max, flux/pi, geometry, bc_MPS,
-                                              gs_manifold_index)
-    else:
-        results_dir = "./"
 
     with open(results_dir + 'psi_gutzwiller' + ".pkl", 'wb') as f:
         pickle.dump(psi_gutzwiller, f)
@@ -1776,6 +1857,7 @@ def TryPiFluxMonopoleState(Lx, Ly, bc_MPS, chi_max=1000, monopole_Q=1, magnetiza
     ImshowMatrix(ax_corr, fig_corr, Kx, Ky, spin_corr_k)
     spin_lat.plot_brillouin_zone(ax_corr)
 
+
     fig_lat, ax_lat = plt.subplots(figsize=(6, 5))
     PlotLattice(spin_lat, ax_lat)
 
@@ -1869,13 +1951,22 @@ if __name__ == "__main__":
     # TriangularPiFluxGutzwiller(4, "XC", Lx=12, chi_max=600, flux=0.0)
 
     #####################
-    #for i in range(4):
-    #    TriangularPiFluxGutzwiller(3, "XC", "infinite", i,
-    #                               Lx=300, chi_max=2500, flux=0.0)
+    i = 1
+    # for i in range(4):
+    TriangularPiFluxGutzwiller(2, "XC", "infinite", i, Lx=2, chi_max=1000, flux=0.0)
 
-    # psi1_dir = code_dir + "LocalGutzwillerResults/infinite_Lx_50_Ly_2_chi_1500_flux_0.0_XC_gsindex_0/"
-    # psi2_dir = code_dir + "LocalGutzwillerResults/infinite_Lx_50_Ly_2_chi_1500_flux_0.0_XC_gsindex_3/"
-    #
+    # gutz_dir = code_dir + "LocalGutzwillerResults/infinite_Lx_2_Ly_2_chi_1000_flux_0.0_XC_gsindex_"
+    # for i in range(4):
+    #     for j in range(i+1,4):
+    #         psi1_path = gutz_dir + f"{i}/" + "psi_slater.pkl"
+    #         psi2_path = gutz_dir + f"{j}/" + "psi_slater.pkl"
+    #         with open(psi1_path, 'rb') as psi_load:
+    #             psi1 = pickle.load(psi_load)
+    #         with open(psi2_path, 'rb') as psi_load:
+    #             psi2 = pickle.load(psi_load)
+    #         print(f"overlap {i},{j}: ", psi1.overlap(psi2))
+
+
     # spin_corr_x1 = np.loadtxt(psi1_dir + "spin_corr_x.csv")
     # spin_corr_x2 = np.loadtxt(psi2_dir + "spin_corr_x.csv")
     # plt.imshow(spin_corr_x1 - spin_corr_x2)
@@ -1942,14 +2033,14 @@ if __name__ == "__main__":
     #J2s = [0.0, 0.02, 0.04, 0.06, 0.08, 0.1, 0.12, 0.125, 0.13, 0.14, 0.15,
     #       0.16, 0.17, 0.18, 0.19, 0.2]
     # J2s = [0.0, 0.02, 0.04, 0.06, 0.08, 0.12, 0.125, 0.13, 0.14, 0.15]
-    J2s = [0.125]
-    dmrg_parent_dir = "TriangularJ1J2DMRG_5_4__5135aa/"
-    gutz_dir = code_dir + "PiFluxGutzwiller_5_8_b9e663/"
-    Lx_dmrg, Ly = 2, 6
-    Lx_gutz = 80
-    chi_gutz = 25000
-    GutzwillerDMRGOverlaps(J2s, gutz_dir, Lx_dmrg, Lx_gutz, Ly, chi_gutz, 0.0, output_dir, "cont_Random",
-                           dmrg_parent_dir, "YC", "infinite", 0)
+    #J2s = [0.125]
+    #dmrg_parent_dir = "TriangularJ1J2DMRG_5_4__5135aa/"
+    #gutz_dir = code_dir + "PiFluxGutzwiller_5_8_b9e663/"
+    #Lx_dmrg, Ly = 2, 6
+    #Lx_gutz = 80
+    #chi_gutz = 25000
+    #GutzwillerDMRGOverlaps(J2s, gutz_dir, Lx_dmrg, Lx_gutz, Ly, chi_gutz, 0.0, output_dir, "cont_Random",
+    #                       dmrg_parent_dir, "YC", "infinite", 0)
 
     #gutz_dir = code_dir + "GutzwillerResults/"
     #GutzwillerBondDimensionScaling(gutz_dir, 6, 6, [4000, 5000, 6000],

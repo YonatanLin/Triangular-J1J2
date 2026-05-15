@@ -14,3 +14,5 @@ triangular_dmrg_memory_report.json
 NewTenpyTriangularLatticeResults
 GutzwillerResults
 LocalGutzwillerResults
+PiFluxGutzwiller_*
+TriangularJ1J2DMRG_*

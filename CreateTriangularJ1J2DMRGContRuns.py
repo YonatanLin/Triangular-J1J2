@@ -7,7 +7,7 @@ import os
 
 def AddTriangularCaseDirsToCondorCases(main_results_dir, condor_cases_file="condor_cases.txt", chi_input=None):
     geometry_re = re.compile(r"^Lx_(.+)_Ly_(.+)_bc_([op]{2})_(.+)$")
-    params_re = re.compile(r"^(.+)_init_(.+)_conserve_(.+)_J2_(.+)_chi_(.+)$")
+    params_re = re.compile(r"^(.+)_init_(.+)_conserve_(.+)_J2_(.+)_chi_(.+)_maxsweeps_(.+)$")
 
     with open(condor_cases_file, "w") as input_for_condor:
         for geometry_dir in sorted(Path(main_results_dir).iterdir()):
@@ -28,7 +28,7 @@ def AddTriangularCaseDirsToCondorCases(main_results_dir, condor_cases_file="cond
                 if params_match is None:
                     continue
 
-                bc_MPS, _initial_state, conserve, J2, chi = params_match.groups()
+                bc_MPS, _initial_state, conserve, J2, chi, max_sweeps = params_match.groups()
                 if "cont" in _initial_state:
                     continue
 
@@ -41,12 +41,9 @@ def AddTriangularCaseDirsToCondorCases(main_results_dir, condor_cases_file="cond
                 Path(cont_folder).mkdir(parents=True, exist_ok=True)
                 case_folder_absolute = os.getcwd() + "/" + case_folder
                 input_for_condor.write(
-                    f"{Lx} {Ly} {bc} {bc_MPS} 0.0 from_file {conserve} {J2} {geometry} {chi} {case_folder_absolute} {cont_folder}\n"
+                    f"{Lx} {Ly} {bc} {bc_MPS} 0.0 from_file {conserve} {J2} {geometry} {chi} {max_sweeps} {case_folder_absolute} {cont_folder}\n"
                 )
 
 if __name__ == "__main__":
-    if len(sys.argv) == 3:
-        AddTriangularCaseDirsToCondorCases(sys.argv[1], chi_input=sys.argv[2])
-    else:
-        AddTriangularCaseDirsToCondorCases(sys.argv[1])
+    AddTriangularCaseDirsToCondorCases(sys.argv[1])
 

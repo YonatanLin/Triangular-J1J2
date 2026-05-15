@@ -848,7 +848,7 @@ def GetTriangularLatticeInitialState(initial_state, triangular_lat, initial_psi_
     return psi
 
 
-def TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, geometry, chi):
+def TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, geometry, chi, max_sweeps):
     bc_string = ""
     for bc_ax in bc:
         if bc_ax == "periodic":
@@ -861,12 +861,15 @@ def TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, g
     params_dir = f"{bc_MPS}_init_{initial_state}_conserve_{conserve}_J2_{J2}"
     if chi is not None:
         params_dir += f"_chi_{chi}"
+    if max_sweeps is not None:
+        params_dir += f"_maxsweeps_{max_sweeps}"
     return geometry_dir, params_dir + "/"
 
 
-def CreateTriangularCaseDir(main_results_dir, Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, geometry, chi=None):
+def CreateTriangularCaseDir(main_results_dir, Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, geometry, chi=None,
+        max_sweeps=None):
     Path(main_results_dir).mkdir(parents=True, exist_ok=True)
-    geometry_dir, params_dir = TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, geometry, chi)
+    geometry_dir, params_dir = TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, geometry, chi, max_sweeps)
     results_dir = main_results_dir + geometry_dir
     Path(results_dir).mkdir(parents=True, exist_ok=True)
     results_dir += params_dir
@@ -928,15 +931,28 @@ def SaveSimulationOutput(results_dir, spin_corr_x, Kx, Ky, spin_corr_k, fig_corr
 
 
 def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, conserve=True, initial_state="Random", J2=0.0, geometry="YC",
-                       chi_max=None, initial_psi_dir=None):
+                       chi_max=None, initial_psi_dir=None, max_sweeps=None):
     if isinstance(bc, str):
         bc_parsed = bc.split("-")
         bc = (bc_parsed[0], bc_parsed[1])
 
     dmrg_params = default_dmrg_params
+    
     if chi_max is not None:
         dmrg_params = ChangeChiInDMRGParams(chi_max)
     chi_max = dmrg_params['trunc_params']['chi_max']
+
+    if max_sweeps is not None:
+        dmrg_params['max_sweeps'] = max_sweeps
+
+    if initialStateFromFile(initial_state):
+        chi_max_psi = np.max(psi.chi)
+        chi_max = int(max(chi_max_psi, chi_max))
+
+        dmrg_params = ChangeChiInDMRGParams(chi_max)
+        dmrg_params['chi_list'] = {0:chi_max}
+        dmrg_params['min_sweeps'] = 3
+
     if local:
         main_results_dir = "LocalJ1J2TriangularDMRGResults/"
         results_dir = CreateTriangularCaseDir(main_results_dir, Lx, Ly, bc, bc_MPS, initial_state, conserve, J2,
@@ -971,13 +987,6 @@ def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, conserve=True, initial_state="Random"
 
     psi = GetTriangularLatticeInitialState(initial_state, triangular_lat, initial_psi_dir)
 
-    if initialStateFromFile(initial_state):
-        chi_max_psi = np.max(psi.chi)
-        chi_max = int(max(chi_max_psi, chi_max))
-
-        dmrg_params = ChangeChiInDMRGParams(chi_max)
-        dmrg_params['chi_list'] = {0:chi_max}
-        dmrg_params['min_sweeps'] = 3
     with open(results_dir + "dmrg_params.json", "w") as f:
         json.dump(dmrg_params, f, indent=4)
     with open(results_dir + 'psi_initial' + ".pkl", 'wb') as f:

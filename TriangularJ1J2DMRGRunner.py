@@ -57,6 +57,8 @@ def build_parser():
                         required=True, help="Geometry type - either XC or YC")
 
     parser.add_argument("--chi", type=int, required=True, help="Maximum bond dimension in DMRG")
+    
+    parser.add_argument("--max_sweeps", type=int, required=True, help="max sweeps in DMRG")
 
     parser.add_argument("--initial_psi_dir", type=str, default=None, required=True,
                         help="directory containing initial state for dmrg")
@@ -68,7 +70,7 @@ def main():
     TriangularJ1J2DMRG(Lx=args.Lx, Ly=args.Ly, bc=args.bc, bc_MPS=args.bc_MPS,
                        conserve=args.conserve, initial_state=args.initial_state,
                        J2=args.J2, geometry=args.geometry, initial_psi_dir=args.initial_psi_dir,
-                       chi_max=args.chi)
+                       chi_max=args.chi, max_sweeps=args.max_sweeps)
 
 
 if __name__ == "__main__":

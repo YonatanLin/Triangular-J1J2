@@ -880,10 +880,11 @@ def TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, g
     return geometry_dir, params_dir + "/"
 
 
-def CreateTriangularCaseDir(main_results_dir, Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, geometry, chi=None,
-        max_sweeps=None):
+def CreateTriangularCaseDir(main_results_dir, Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, geometry,
+                            chi_max=None, max_sweeps=None):
     Path(main_results_dir).mkdir(parents=True, exist_ok=True)
-    geometry_dir, params_dir = TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, geometry, chi, max_sweeps)
+    geometry_dir, params_dir = TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, geometry,
+                                                         chi_max, max_sweeps)
     results_dir = main_results_dir + geometry_dir
     Path(results_dir).mkdir(parents=True, exist_ok=True)
     results_dir += params_dir

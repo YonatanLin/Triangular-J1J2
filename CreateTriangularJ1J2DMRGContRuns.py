@@ -1,4 +1,5 @@
 from Trying2D import CreateTriangularCaseDir
+from TriangularJ1J2DMRGConfig import dmrg_input_params
 import sys
 from pathlib import Path
 import re
@@ -40,9 +41,21 @@ def AddTriangularCaseDirsToCondorCases(main_results_dir, condor_cases_file="cond
                     chi = chi_input
                 Path(cont_folder).mkdir(parents=True, exist_ok=True)
                 case_folder_absolute = os.getcwd() + "/" + case_folder
-                input_for_condor.write(
-                    f"{Lx} {Ly} {bc} {bc_MPS} 0.0 from_file {conserve} {J2} {geometry} {chi} {max_sweeps} {case_folder_absolute} {cont_folder}\n"
-                )
+                row = {
+                    "Lx": Lx,
+                    "Ly": Ly,
+                    "bc": bc,
+                    "bc_MPS": bc_MPS,
+                    "flux": "0.0",
+                    "initial_state": "from_file",
+                    "conserve": conserve,
+                    "J2": J2,
+                    "geometry": geometry,
+                    "chi": chi,
+                    "max_sweeps": max_sweeps,
+                    "initial_psi_dir": case_folder_absolute,
+                }
+                input_for_condor.write(" ".join(str(row[field]) for field in dmrg_input_params) + f" {cont_folder}\n")
 
 if __name__ == "__main__":
     AddTriangularCaseDirsToCondorCases(sys.argv[1])

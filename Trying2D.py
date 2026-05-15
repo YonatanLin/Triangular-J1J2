@@ -33,7 +33,7 @@ if not local:
 
 default_chi_max = 3000
 default_dmrg_params = {'mixer': True, 'max_E_err': 1.0e-10, 'trunc_params': {'chi_max': default_chi_max, 'svd_min': 1.0e-7},
-                   'combine': True, 'chi_list': {0: 50, 3: 100, 7: default_chi_max}, 'min_sweeps': 10, 'max_sweeps': 20,
+                   'combine': True, 'chi_list': {0: 50, 3: 100, 7: default_chi_max}, 'min_sweeps': 7, 'max_sweeps': 8,
                    'N_sweeps_check': 1}
 code_dir = "C:/Users/yonli/Desktop/Thesis/Triangular J1J2/Code/"
 
@@ -46,6 +46,8 @@ def parity_mask(leg, parity=0):
 
 def SetZeroTensorChargesInGutzwillerWavefunction(psi):
     charges = np.array([psi.get_B(i).qtotal[0] for i in range(psi.L)])
+    print("charges: ", charges)
+    print("last tensor charges: ", psi.get_B(psi.L-1).qtotal)
     assert (np.all(charges[:-1] == 0) and charges[-1] == psi.L)
     spin_site = networks.SpinHalfSite("Sz")
     spin_leg = spin_site.leg
@@ -810,6 +812,9 @@ def BuildTriangularLattice(Lx, Ly, site, bc_MPS, bc = ('periodic', 'periodic'), 
         raise ValueError("unrecognized geometry")
 
 
+def initialStateFromFile(initial_state):
+    return "from_file" in initial_state
+
 def GetTriangularLatticeInitialState(initial_state, triangular_lat, initial_psi_dir, magz=0):
     Lx = triangular_lat.Ls[0]
     Ly = triangular_lat.Ls[1]
@@ -831,7 +836,7 @@ def GetTriangularLatticeInitialState(initial_state, triangular_lat, initial_psi_
     elif initial_state == "stripe":
         psi = GenerateStripeOrderedState(lat=triangular_lat)
 
-    elif initial_state == "from_file":
+    elif initialStateFromFile(initial_state):
         initial_psi_path = initial_psi_dir + 'psi_gs.pkl'
         print(f"loading initial state: {initial_psi_path}")
         with open(initial_psi_path, 'rb') as psi_load:
@@ -895,11 +900,6 @@ def calculateGutzwillerEnergyTriangularJ1J2(gutz_results_dir, Lx, Ly, chi, flux,
                                        bc_MPS, gs_manifold_index) + "/psi_gutzwiller.pkl"
     site = SpinHalfSite(conserve="Sz")
 
-    if bc_MPS == "infinite":
-        chinfo = npc.ChargeInfo([1])
-        modified_spin_leg = npc.LegCharge.from_qflat(chinfo, [[0], [2]])
-        site.change_charge(modified_spin_leg)
-
     with open(psi_path, 'rb') as f:
         psi = pickle.load(f)
 
@@ -944,9 +944,6 @@ def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, conserve=True, initial_state="Random"
     else:
         results_dir = "./"
 
-    with open(results_dir + "dmrg_params.json", "w") as f:
-        json.dump(dmrg_params, f, indent=4)
-
     if conserve:
         site = SpinHalfSite(conserve='Sz')
     else:
@@ -974,14 +971,15 @@ def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, conserve=True, initial_state="Random"
 
     psi = GetTriangularLatticeInitialState(initial_state, triangular_lat, initial_psi_dir)
 
-    if initial_state == "from_file":
+    if initialStateFromFile(initial_state):
         chi_max_psi = np.max(psi.chi)
         chi_max = int(max(chi_max_psi, chi_max))
 
         dmrg_params = ChangeChiInDMRGParams(chi_max)
         dmrg_params['chi_list'] = {0:chi_max}
         dmrg_params['min_sweeps'] = 3
-
+    with open(results_dir + "dmrg_params.json", "w") as f:
+        json.dump(dmrg_params, f, indent=4)
     with open(results_dir + 'psi_initial' + ".pkl", 'wb') as f:
         pickle.dump(psi, f)
 
@@ -1148,8 +1146,9 @@ def CalculateExactCMatrixForPiFlux(Lx, Ly, spinfull, site, geometry, gs_manifold
                                    particle_hole=True):
     finite_bc_MPS = "finite"
     triangular_lat = GetPiFluxTriangularLattice(site, Lx, Ly, spinfull, finite_bc_MPS, geometry)
-
+    
     if pi_flux_model is None:
+        print(f"generating model, triangular lattice boundary conditions are {triangular_lat.boundary_conditions}")
         pi_flux_model = MonopoleCondensatePiFluxModel({"lattice" : triangular_lat, "init_H_MPO" : False,
                                                       "monopole_Q" : 0, "flux" : flux, "particle_hole" : particle_hole})
 
@@ -1173,7 +1172,7 @@ def CalculateExactCMatrixForPiFlux(Lx, Ly, spinfull, site, geometry, gs_manifold
     zero_modes_indices = np.where(np.abs(e) < zero_energy_tol)
     num_zero_modes = zero_modes_indices[0].shape[0]
     if num_zero_modes not in [0, 4]:
-        print("error: should have either 0 or 4 zero-modes in pi flux spectrum")
+        print(f"error: should have either 0 or 4 zero-modes in pi flux spectrum, found {num_zero_modes}")
         exit(1)
     zero_modes = num_zero_modes > 0
     N_filling = (np.max(zero_modes_indices)+1) if zero_modes else (triangular_lat.N_sites // 2)
@@ -1362,9 +1361,6 @@ def calculateOverlapBetweenGutzwillerAndDMRG(dmrg_dir, gutzwiller_dir,
     with open(gutzwiller_dir + psi_gutz_fname, 'rb') as f_gutz:
         psi_gutz = pickle.load(f_gutz)
 
-    if psi_gutz.bc == "infinite":
-        SetZeroTensorChargesInGutzwillerWavefunction(psi_gutz)
-
     overlap = abs(psi_dmrg.overlap(psi_gutz))
     print("overlap between wavefunctions: ", overlap)
     return overlap
@@ -1395,8 +1391,6 @@ def TriangularPiFluxGutzwiller(Ly, geometry, bc_MPS, gs_manifold_index, Lx=6, ch
         results_dir = "./"
     assert((bc_MPS == "finite") or (bc_MPS == "infinite"))
     finite = (bc_MPS == "finite")
-    if not finite:
-        assert(flux == 0.0)
     #fig_lat, ax_lat = plt.subplots()
     #lat = GetPiFluxTriangularLattice(site, Lx, Ly, True, bc_MPS, geometry)
     #PlotLattice(lat, ax_lat)

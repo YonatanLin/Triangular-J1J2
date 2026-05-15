@@ -161,45 +161,55 @@ def getZeroModeSupportSide(zm):
     side = "L" if site_with_max_norm < zm.shape[0]//2 else "R"
     abs_zm = np.abs(zm)
     zm_sum = np.sum(abs_zm)
+    n_sites = zm.shape[0]
     if side == "L":
-        assert(np.sum(abs_zm[(zm.shape[0]//2):]) < 0.01 * zm_sum)  # localized on the left
+        abs_zm_right_half = abs_zm[(n_sites // 2):]
+        assert(np.sum(abs_zm_right_half) < 0.01 * zm_sum)  # localized on the left
     else:
-        assert (np.sum(abs_zm[0:(zm.shape[0] // 2)]) < 0.01 * zm_sum)  # localized on the left
+        abs_zm_left_half = abs_zm[0:(n_sites // 2)]
+        assert (np.sum(abs_zm_left_half) < 0.01 * zm_sum)  # localized on the right
 
     return side
 
 
-def GetEigenvectorsForCorrelationMatrixArbitraryOccupation(H, N, psi_support_per_spin, zero_energy_tol,
+def GetEigenvectorsForCorrelationMatrixArbitraryOccupation(H, N, psi_support_per_spin, zero_energy_tol, num_zero_modes,
                                                            indices_to_remove = None):
     H_up = H[0::2, 0::2]
     H_down = H[1::2, 1::2]
     e_up, v_up = eigh(H_up)
     e_down, v_down = eigh(H_down)
-    v_up, e_up = v_up[:, 0:N//2], e_up[0:N//2]
-    v_down, e_down = v_down[:, 0:N//2], e_down[0:N//2]
-    v_dict = {"up": v_up, "down": v_down}
+    v_up, e_up = v_up[:, 0:N // 2], e_up[0:N // 2]
+    v_down, e_down = v_down[:, 0:N // 2], e_down[0:N // 2]
+    eigendata_per_spin = {"up": (v_up, e_up), "down": (v_down, e_down)}
     if indices_to_remove is None:
         indices_to_remove = {}
-        assert(np.all(np.abs(e_up[-2:]) < zero_energy_tol) and np.all(np.abs(e_down[-2:]) < zero_energy_tol))
+        # assert (np.all(np.abs(e_up[-2:]) < zero_energy_tol) and np.all(np.abs(e_down[-2:]) < zero_energy_tol))
         for spin in ["up", "down"]:
-            for i in [-1, -2]:
-                zm_i = v_dict[spin][:, i]
+            indices_to_remove_spin = []
+            for i in range(-1, -1 - num_zero_modes//2, -1):
+                v_spin_i, e_spin_i = eigendata_per_spin[spin][0][:, i], eigendata_per_spin[spin][1][i]
+                assert(np.abs(e_spin_i) < zero_energy_tol)
+                zm_i = v_spin_i
                 support_side = getZeroModeSupportSide(zm_i)
                 if support_side == psi_support_per_spin[spin]:
-                    indices_to_remove[spin] = i
+                    # indices_to_remove[spin] = i
+                    indices_to_remove_spin.append(i)
+            indices_to_remove[spin] = indices_to_remove_spin
     else:
         assert psi_support_per_spin is None, "over specification of orbitals to remove"
 
-    v_up = np.delete(v_up, [indices_to_remove["up"]], axis=1)
-    e_up = np.delete(e_up, [indices_to_remove["up"]])
-    v_down = np.delete(v_down, [indices_to_remove["down"]], axis=1)
-    e_down = np.delete(e_down, [indices_to_remove["down"]])
-    v = np.zeros((H.shape[0], v_up.shape[1] + v_down.shape[1]), dtype=v_up.dtype)
+    for spin in ["up", "down"]:
+        v_spin, e_spin = eigendata_per_spin[spin]
+        v_spin = np.delete(v_spin, indices_to_remove[spin], axis=1)
+        e_spin = np.delete(e_spin, indices_to_remove[spin])
+        eigendata_per_spin[spin] = (v_spin, e_spin)
+
+    v = np.zeros((H.shape[0], eigendata_per_spin[spin][1].shape[0] + eigendata_per_spin[spin][1].shape[0]),
+                 dtype=v_up.dtype)
     e = np.zeros(v.shape[1])
-    v[0::2, 0::2] = v_up
-    v[1::2, 1::2] = v_down
-    e[0::2] = e_up
-    e[1::2] = e_down
+    for parity, spin in [(0, "up"), (1, "down")]:
+        v[parity::2, parity::2] = eigendata_per_spin[spin][0]
+        e[parity::2] = eigendata_per_spin[spin][1]
     return v, e
 
 
@@ -215,8 +225,9 @@ def TestGetEigenvectorsForCorrelationMatrixArbitraryOccupation(load=False):
         H = np.loadtxt("test_mat.csv", dtype=np.float64)
 
     filling = 12
-    v_block_diag, e_block_diag = GetEigenvectorsForCorrelationMatrixArbitraryOccupation(H, filling, None, 0,
-                                                                          indices_to_remove={"up":-1, "down":-2})
+    v_block_diag, e_block_diag = (
+        GetEigenvectorsForCorrelationMatrixArbitraryOccupation(H, filling, None, 0,
+                                                 0, indices_to_remove={"up":-1, "down":-2}))
     assert(v_block_diag.shape[1] == filling - 2)
     e_full_diag, v_full_diag = eigh(H)
     for i, ei in enumerate(e_block_diag):
@@ -232,11 +243,14 @@ def TestGetEigenvectorsForCorrelationMatrixArbitraryOccupation(load=False):
     return
 
 
-def CorrelationMatrixArbitraryOccupation(H, N, psi_support_per_spin, zero_energy_tol):
+def CorrelationMatrixArbitraryOccupation(H, N, psi_support_per_spin, zero_energy_tol, num_zero_modes):
     assert(N % 2 == 0)
-    v, e = GetEigenvectorsForCorrelationMatrixArbitraryOccupation(H, N, psi_support_per_spin, zero_energy_tol)
-    assert(np.sum(np.abs(e) < zero_energy_tol) == 2)
+    v, e = GetEigenvectorsForCorrelationMatrixArbitraryOccupation(H, N, psi_support_per_spin, zero_energy_tol,
+                                                                  num_zero_modes)
+    assert(v.shape[1] == N - num_zero_modes // 2 and e.shape[0] == N - num_zero_modes // 2), "wrong occupation"
+    assert(np.sum(np.abs(e) < zero_energy_tol) == num_zero_modes // 2)
     C = v @ HT(v)
+
     if np.iscomplexobj(C) and np.allclose(C.imag, 0.0, rtol=0, atol=1e-14):
         C = C.real  # eliminate zero imaginary parts
     return C, N
@@ -1141,6 +1155,19 @@ def GetPiFluxTriangularLattice(site, Lx, Ly, spinfull, bc_MPS, geometry):
                                   spinfull_fermions=spinfull)
 
 
+def getZeroModesDict(gs_manifold_index):
+    if gs_manifold_index == 0:
+        psi_support_per_spin = {"up": "L", "down": "L"}
+    elif gs_manifold_index == 1:
+        psi_support_per_spin = {"up": "R", "down": "L"}
+    elif gs_manifold_index == 2:
+        psi_support_per_spin = {"up": "L", "down": "R"}
+    else:
+        psi_support_per_spin = {"up": "R", "down": "R"}
+
+    return psi_support_per_spin
+
+
 def CalculateExactCMatrixForPiFlux(Lx, Ly, spinfull, site, geometry, gs_manifold_index,
                                    zero_energy_tol=1e-9, plot_lattice=False, pi_flux_model=None, flux=0.0,
                                    particle_hole=True):
@@ -1170,9 +1197,10 @@ def CalculateExactCMatrixForPiFlux(Lx, Ly, spinfull, site, geometry, gs_manifold
 
     zero_modes_indices = np.where(np.abs(e) < zero_energy_tol)
     num_zero_modes = zero_modes_indices[0].shape[0]
+    assert (num_zero_modes % 4 == 0), "number of zero modes should be a multiple of 4"
     if num_zero_modes not in [0, 4]:
-        print("error: should have either 0 or 4 zero-modes in pi flux spectrum")
-        exit(1)
+        assert (gs_manifold_index == 0), "don't support gs_manifold_index for more than 4 zero modes"
+    print(f"number of zero modes in pi flux model: {num_zero_modes}")
     zero_modes = num_zero_modes > 0
     N_filling = (np.max(zero_modes_indices)+1) if zero_modes else (triangular_lat.N_sites // 2)
     if particle_hole and not zero_modes:
@@ -1183,17 +1211,11 @@ def CalculateExactCMatrixForPiFlux(Lx, Ly, spinfull, site, geometry, gs_manifold
         N_filling = 2*N_up
 
     print("pi-flux energy from exact diagonalization: ", np.sum(e[0:N_filling])/N_filling)
-    if gs_manifold_index == 0:
-        psi_support_per_spin = {"up": "L", "down": "L"}
-    elif gs_manifold_index == 1:
-        psi_support_per_spin = {"up": "R", "down": "L"}
-    elif gs_manifold_index == 2:
-        psi_support_per_spin = {"up": "L", "down": "R"}
-    else:
-        psi_support_per_spin = {"up": "R", "down": "R"}
+    psi_support_per_spin = getZeroModesDict(gs_manifold_index)
 
     if zero_modes:
-        C, _ = CorrelationMatrixArbitraryOccupation(H, N_filling, psi_support_per_spin, zero_energy_tol)
+        C, _ = CorrelationMatrixArbitraryOccupation(H, N_filling, psi_support_per_spin, zero_energy_tol,
+                                                    num_zero_modes)
     else:
         C, _ = slater.correlation_matrix(H, N_filling)
 
@@ -1387,14 +1409,12 @@ def TriangularPiFluxGutzwiller(Ly, geometry, bc_MPS, gs_manifold_index, Lx=6, ch
     particle_hole = spinfull
     debug = False
     if local:
-        results_dir = CreateGutzwillerCaseDir(gutzwiller_results_dir, Lx, Ly, chi_max, flux/pi, geometry, bc_MPS,
+        results_dir = CreateGutzwillerCaseDir(gutzwiller_results_dir, Lx, Ly, chi_max, flux, geometry, bc_MPS,
                                               gs_manifold_index)
     else:
         results_dir = "./"
     assert((bc_MPS == "finite") or (bc_MPS == "infinite"))
     finite = (bc_MPS == "finite")
-    if not finite:
-        assert(flux == 0.0)
     #fig_lat, ax_lat = plt.subplots()
     #lat = GetPiFluxTriangularLattice(site, Lx, Ly, True, bc_MPS, geometry)
     #PlotLattice(lat, ax_lat)
@@ -1869,11 +1889,6 @@ def TryPiFluxMonopoleState(Lx, Ly, bc_MPS, chi_max=1000, monopole_Q=1, magnetiza
 if __name__ == "__main__":
     output_dir = "C:/Users/yonli/Desktop/Thesis/Triangular J1J2/Meetings/4_5_2026/"
     # PlotSquareLatticeStructureFactor(Lx=3, Ly=3)
-    # TestTriangularLattice()
-    # TestSquareLattice(6, 6, J2s=[0.0, 0.9])
-
-    # TriangularPiFluxAnsatz(spinfull=True, Lx=4, Ly=4,
-    #                       chi_max_temfpy=100, bc_MPS="finite")
 
     #Lx = 6
     #Ly = 6
@@ -1882,28 +1897,6 @@ if __name__ == "__main__":
     #monopole_Q = round(magz * (Lx * Ly / 2))
     #TryPiFluxMonopoleState(Lx, Ly, monopole_Q=1, magnetization = 0.0)
     # TryMonopoleModelHofstadter(output_dir, 18, 18, bc=("periodic", "periodic"))
-
-    #Lx = 6
-    #Ly = 6
-    #gutz_dir = code_dir + "GutzwillerResults/" + f"Lx_{Lx//2}_Ly_{Ly}_chi_7000/"
-    #PlotCorrelationsFromFiles(gutz_dir, show_energies=False, psi_fname="psi_gutzwiller.pkl",
-    #                          output_dir=output_dir, fig_title=f"realspace_gutzwiller_Lx_{Lx}_Ly_{Ly}",
-    #                          k_space=False)
-
-    # J2 = 0.0
-    # dmrg_initial_state = "Random"
-    # dmrg_geom_dir, dmrg_params_dir = (
-    #     TriangularJ1J2CaseDirName(Lx, Ly, ("open", "periodic"), "finite", dmrg_initial_state, 1, J2, "YC"))
-    # dmrg_dir = code_dir + "NewTenpyTriangularLatticeResults/" + dmrg_geom_dir + dmrg_params_dir
-    #
-    # PlotCorrelationsFromFiles(dmrg_dir, show_energies=False, psi_fname="psi_gs.pkl",
-    #                           output_dir=output_dir, fig_title=f"realspace_dmrg_J2_{J2}_initialstate_{dmrg_initial_state}",
-    #                           k_space=False)
-
-    #J2 = 0.2
-    #ComputeCorrelationsFromMPSFile(code_dir, 6, 6, ("open", "periodic"), "finite", "Random",
-    #                      True, J2, "YC",
-    #                               psi_dir=f"NewTenpyTriangularLatticeResults/Lx_6_Ly_6_bc_op_YC/finite_init_Random_conserve_1_J2_{J2}/", from_corr_file=True)
 
     # fig, ax = plt.subplots(figsize=(6, 5))
     # magz = 1. / 3.
@@ -1918,25 +1911,6 @@ if __name__ == "__main__":
 
     # CheckOptimalMonopoleStateEnergyVsMagnetization(12, 12)
 
-
-    # TriangularPiFluxAnsatz(2, 4, False, "infinite")
-    # TriangularPiFluxAnsatz(2, 5, False, "infinite")
-    # TriangularPiFluxAnsatz(10, 5, False, "finite")
-
-    #i = 0
-    #for i in range(4):
-    #TriangularPiFluxAnsatz(600, 2, True, "infinite", geometry="XC",
-    #                        chi_max_temfpy=1500, gs_manifold_index=i)
-
-    # TriangularPiFluxAnsatz(500, 4, False, "finite", geometry="XC")
-    # TriangularPiFluxAnsatz(1, 3, False, "finite", flux=pi)
-    # TriangularPiFluxAnsatz(20, 3, spinfull=False, geometry="XC", particle_hole=False)
-
-    # TriangularPiFluxAnsatz(4, 4, True, "finite")
-
-    # TriangularPiFluxGutzwiller(4, "YC", chi_max=3000, Lx=6, bc_MPS="finite")
-    # TriangularPiFluxGutzwiller(4, "YC", chi_max=3000, Lx=50, bc_MPS="infinite")
-
     #gutz_dir = code_dir + "LocalGutzwillerResults/"
     #Lx, Ly = 2, 6
     #chi_gutz = 2000
@@ -1946,12 +1920,26 @@ if __name__ == "__main__":
     #calculateGutzwillerEnergyTriangularJ1J2(gutz_dir, Lx, Ly, chi_gutz, flux_gutz, geometry=geometry,
     #                                        J2=J2, bc_MPS="infinite", bc=("periodic", "periodic"))
 
-    # TriangularPiFluxGutzwiller(4, "XC", Lx=12, chi_max=600, flux=0.0)
-
     #####################
-    i = 1
+    # i = 1
     # for i in range(4):
-    TriangularPiFluxGutzwiller(2, "XC", "infinite", i, Lx=2, chi_max=1000, flux=0.0)
+    # TriangularPiFluxGutzwiller(2, "XC", "infinite", 0, Lx=2, chi_max=1000, flux=0.0)
+    # TriangularPiFluxGutzwiller(3, "XC", "infinite", 0, Lx=2, chi_max=1000, flux=1.0)
+
+    # TriangularPiFluxGutzwiller(3, "XC", "finite", 0, Lx=200, chi_max=1000, flux=1.0)
+    TriangularPiFluxGutzwiller(3, "XC", "infinite", 0, Lx=2, chi_max=1000, flux=1.0)
+
+    #dir1 = code_dir + "/LocalGutzwillerResults/finite_Lx_40_Ly_3_chi_1000_flux_0.0_XC_gsindex_0/"
+    #dir2 = code_dir + "/LocalGutzwillerResults/finite_Lx_40_Ly_3_chi_1000_flux_0.0_XC_gsindex_1/"
+    #dir1 = code_dir + "LocalGutzwillerResults/infinite_Lx_2_Ly_2_chi_1000_flux_0.0_XC_gsindex_0/"
+    #dir2 = code_dir + "LocalGutzwillerResults/infinite_Lx_2_Ly_2_chi_1000_flux_0.0_XC_gsindex_0/oldver/"
+    #with open(dir1 + "psi_slater.pkl", 'rb') as f:
+    #    psi1 = pickle.load(f)
+    #with open(dir2 + "psi_slater.pkl", 'rb') as f:
+    #    psi2 = pickle.load(f)
+    #print(f"overlap: {psi1.overlap(psi2)}")
+    #for i in range(-1, -5, -1):
+    #    print(i)
 
     # gutz_dir = code_dir + "LocalGutzwillerResults/infinite_Lx_2_Ly_2_chi_1000_flux_0.0_XC_gsindex_"
     # for i in range(4):
@@ -1978,36 +1966,6 @@ if __name__ == "__main__":
     # print(psi1.overlap(psi2))
     #########################
 
-    # TriangularPiFluxGutzwiller(2, "XC", Lx=4, chi_max=600, flux=0.0)
-    # TriangularPiFluxGutzwiller(6, Lx=3, chi_max=6000, flux=pi)
-
-    # lat = GetPiFluxTriangularLattice(FermionSite, 3, 3, True, "finite", geometry)
-
-    # TestCorrelationsWithNontrivialUnitCell("120", "XC")
-
-    # TriangularPiFluxGutzwiller(4)
-    #PlotRealSpaceCorrelations(code_dir + "TriangularPiFluxGutzwiller/Lx_3_Ly_6_chi_6000/")
-    #PlotRealSpaceCorrelations(code_dir +
-    #                          "NewTenpyTriangularLatticeResults/Lx_6_Ly_6_bc_op/finite_init_Random_conserve_1_J2_0.125/")
-
-    # plt.show()
-    # ComputeCorrelationsFromMPSFile(code_dir + "TriangularLatticeResults/FromCluster/", 12, 5, ("open", "periodic"),
-    #                              "finite", 0.0, "Random", 1, 0.125)
-
-    #ComputeCorrelationsFromMPSFile(code_dir + "TriangularLatticeResults/FromCluster/", 1, 6, ("periodic", "periodic"),
-    #                               "infinite", 0.0, "Random", 1, 0.125, Lx_for_infinite_bc_MPS=12)
-
-    #Lx = 6
-    #Ly = 6
-    #ComputeCorrelationsFromMPSFile(code_dir + "TriangularPiFluxGutzwiller/", 2*Lx, Ly, ("open", "periodic"),
-    #                               "finite", psi_fname="psi_gutzwiller.pkl", sort_charge=True,
-    #                               psi_dir=f"Lx_{Lx}_Ly_{Ly}_chi_6000/", from_dmrg=False, from_corr_file=True)
-
-    #conserve = True
-    #Lx = 10
-    #Ly = 3
-    #for Ly in [3,6]:
-
     #TriangularJ1J2DMRG(Lx, Ly, ("open", "periodic"), "finite",
     #                   J2=0.0, conserve=conserve, initial_state="Random", geometry="XC", chi_max=600)
 
@@ -2016,17 +1974,6 @@ if __name__ == "__main__":
     #TriangularJ1J2DMRG(Lx, Ly, ("open", "periodic"), "finite",
     #                   J2=0.125, conserve=True, initial_state="from_file",
     #                   initial_psi_dir=code_dir + initial_psi_dir, geometry="XC", chi_max=3000)
-
-    #ComputeCorrelationsFromMPSFile("", 12, 3, ("open", "periodic"), "finite",
-    #                               geometry="XC", psi_dir=code_dir + "GutzwillerResults/Lx_12_Ly_3_chi_10000_flux_0.0_XC/",
-    #                               from_corr_file=True)
-
-    #TriangularJ1J2DMRG(Lx, Ly, ("open", "periodic"), "finite",
-    #                   J2=0.0, conserve=conserve, initial_state="from_file",
-    #                   initial_psi_dir=code_dir + f"LocalJ1J2TriangularDMRGResults/Lx_{Lx}_Ly_{Ly}_bc_op_YC/finite_init_Random_conserve_True_J2_0.0/",
-    #                   geometry="YC", chi_max=600)
-
-    # DMRGCorrelations()
 
     #J2s = [0.0, 0.02, 0.04, 0.06, 0.08, 0.1, 0.12, 0.125, 0.13, 0.14, 0.15,
     #       0.16, 0.17, 0.18, 0.19, 0.2]
@@ -2043,25 +1990,3 @@ if __name__ == "__main__":
     #gutz_dir = code_dir + "GutzwillerResults/"
     #GutzwillerBondDimensionScaling(gutz_dir, 6, 6, [4000, 5000, 6000],
     #                               output_dir)
-
-    #J2s = [0.125]
-    #Lx, Ly = 12, 3
-    #gutz_dir = code_dir + "GutzwillerResults/"
-    #dmrg_dir = code_dir + "TriangularJ1J2DMRG_79c67f5c16524/"
-    #chi_gutz = 10000
-    #flux_gutz = 1.0
-
-    #dmrg_dir = code_dir + "NewTenpyTriangularLatticeResults/Lx_12_Ly_5_bc_op/finite_init_Random_conserve_1_J2_0.125/"
-    #PlotCorrelationsFromFiles(dmrg_dir, show_energies=False, initial_state="Random", output_dir=output_dir)
-    #gutz_dir = code_dir + "GutzwillerResults/Lx_6_Ly_5_chi_6000_flux_0.0/"
-    #PlotCorrelationsFromFiles(gutz_dir, show_energies=False, initial_state="Random", output_dir=output_dir,
-    #                          psi_fname="psi_gutzwiller.pkl")
-
-    #PlotCorrelationsFromFiles(code_dir + "/LocalJ1J2TriangularDMRGResults/Lx_10_Ly_2_bc_oo_XC/finite_init_Random_conserve_True_J2_0.0/",
-    #                          show_energies=False)
-    #PlotCorrelationsFromFiles(code_dir + "/LocalJ1J2TriangularDMRGResults/Lx_10_Ly_3_bc_op_XC/finite_init_Random_conserve_True_J2_0.0/",
-    #                         show_energies=False)
-    #ComputeCorrelationsFromMPSFile(code_dir + "/LocalJ1J2TriangularDMRGResults/",
-    #                               10, 2, ("open", "open"), "finite", "Random", True,
-    #                               0.0, "XC")
-    #plt.show()

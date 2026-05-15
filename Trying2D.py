@@ -33,7 +33,7 @@ if not local:
 
 default_chi_max = 3000
 default_dmrg_params = {'mixer': True, 'max_E_err': 1.0e-10, 'trunc_params': {'chi_max': default_chi_max, 'svd_min': 1.0e-7},
-                   'combine': True, 'chi_list': {0: 50, 3: 100, 7: default_chi_max}, 'min_sweeps': 10, 'max_sweeps': 30,
+                   'combine': True, 'chi_list': {0: 50, 3: 100, 7: default_chi_max}, 'min_sweeps': 10, 'max_sweeps': 20,
                    'N_sweeps_check': 1}
 code_dir = "C:/Users/yonli/Desktop/Thesis/Triangular J1J2/Code/"
 
@@ -857,7 +857,7 @@ def GetTriangularLatticeInitialState(initial_state, triangular_lat, initial_psi_
     return psi
 
 
-def TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, geometry):
+def TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, geometry, chi):
     bc_string = ""
     for bc_ax in bc:
         if bc_ax == "periodic":
@@ -867,13 +867,15 @@ def TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, g
             bc_string += "o"
 
     geometry_dir = f"Lx_{Lx}_Ly_{Ly}_bc_{bc_string}_{geometry}/"
-    params_dir = f"{bc_MPS}_init_{initial_state}_conserve_{conserve}_J2_{J2}/"
-    return geometry_dir, params_dir
+    params_dir = f"{bc_MPS}_init_{initial_state}_conserve_{conserve}_J2_{J2}"
+    if chi is not None:
+        params_dir += f"_chi_{chi}"
+    return geometry_dir, params_dir + "/"
 
 
-def CreateTriangularCaseDir(main_results_dir, Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, geometry):
+def CreateTriangularCaseDir(main_results_dir, Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, geometry, chi=None):
     Path(main_results_dir).mkdir(parents=True, exist_ok=True)
-    geometry_dir, params_dir = TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, geometry)
+    geometry_dir, params_dir = TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, geometry, chi)
     results_dir = main_results_dir + geometry_dir
     Path(results_dir).mkdir(parents=True, exist_ok=True)
     results_dir += params_dir
@@ -1588,7 +1590,7 @@ def GutzwillerDMRGOverlaps(J2s, gutz_dir, Lx_dmrg, Lx_gutz, Ly, chi_gutz, flux_g
     bc = ("open", "periodic") if finite else ("periodic", "periodic")
     for J2 in J2s:
         dmrg_geom_dir, dmrg_params_dir = (
-            TriangularJ1J2CaseDirName(Lx_dmrg, Ly, bc, bc_MPS, dmrg_initial_state, 1, J2, geometry))
+            TriangularJ1J2CaseDirName(Lx_dmrg, Ly, bc, bc_MPS, dmrg_initial_state, 1, J2, geometry, None))
         dmrg_dir = dmrg_parent_dir + dmrg_geom_dir + dmrg_params_dir
         
         unitcell_width = 2 if geometry == "XC" else 1

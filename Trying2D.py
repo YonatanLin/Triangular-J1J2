@@ -1053,48 +1053,51 @@ def DeterminePiFluxCoupling(x, y, dx, dy, basis_vectors):
         return -1.0
 
 
-class MonopoleCondensatePiFluxModel(CouplingMPOModel):
+class MeanFieldSpinonModel(CouplingMPOModel):
+    def init_H_from_terms(self):
+        if(self.init_MPO):
+            super().init_H_from_terms()
+
+
+class MonopoleCondensatePiFluxModel(MeanFieldSpinonModel):
     def init_terms(self, model_params):
         plus_hc = True
         init_MPO = model_params["init_H_MPO"]
         monopole_Q = model_params["monopole_Q"]
         flux = model_params["flux"] * pi
-        particle_hole = True
-        if "particle_hole" in model_params.keys():
-            particle_hole = model_params["particle_hole"]
+        particle_hole = True if ("particle_hole" not in model_params.keys()) else model_params["particle_hole"]
         self.init_MPO = init_MPO
-        assert(monopole_Q == round(monopole_Q))
         lat = self.lat
-
         bc = lat.boundary_conditions
+        geometry = "YC"
+        dphi = monopole_Q * 2 * pi / (lat.N_sites / len(lat.unit_cell_positions))
+        if isinstance(lat, TriangularXC):
+            geometry = "XC"
+            assert (abs(dphi) < 1e-15)
+        YC = (geometry == "YC")
+
+        assert(monopole_Q == round(monopole_Q))
         assert(bc[1] == "periodic")
 
         Lx, Ly = lat.Ls[0], lat.Ls[1]
-        dphi = monopole_Q * 2 * pi / (lat.N_sites / len(lat.unit_cell_positions))
+        bc_x, bc_y = bc[0], bc[1]
+        n_bonds_x = (Lx - 1 if bc_x == "open" else Lx)
+        n_bonds_y = (Ly - 1 if bc_y == "open" else Ly)
 
-        geometry = "YC"
-        if isinstance(lat, TriangularXC):
-            geometry = "XC"
-            assert(abs(dphi) < 1e-15)
-
-        Nx, Ny = Lx, Ly
-        nys, nxs = np.arange(0, Ny), np.arange(0, Nx)
-        ys_ybonds, xs_ybonds = np.meshgrid(nys, nxs) #first coordinate (row) is the x coordinate
-        ys_diagbonds, xs_diagbonds = np.meshgrid(nys, (nxs[:-1] if bc[0] == "open" else nxs))
-        strength_x = np.ones(xs_diagbonds.shape, dtype=np.complex128)
-        if geometry == "YC":
+        nys, nxs = np.arange(0, Ly), np.arange(0, Lx)
+        ys_ybonds, xs_ybonds = np.meshgrid(nys, nxs) # first coordinate of the matrix (row) is the x coordinate
+        strength_x = np.ones((n_bonds_x, n_bonds_y), dtype=np.complex128)
+        if YC:
             strength_y = np.exp(-1j * dphi * xs_ybonds) * (1 - 2 * ((xs_ybonds + 1) % 2))
-            strength_diag = np.exp(-1j * dphi * (xs_diagbonds + 0.5)) * (1 - 2 * ((xs_diagbonds + 1) % 2))
+            strength_diag = strength_y
         else:
             strength_y = 1 - 2 * ((xs_ybonds + ys_ybonds) % 2)
-            strength_y_short = 1 - 2 * ((xs_diagbonds + ys_diagbonds) % 2)
             strength_diag = (-1) * strength_y
-            strength_diag_short = (-1) * strength_y_short
 
-        if bc[0] == "periodic":
-            if geometry == "YC":
-                strength_x[-1, :] *= np.exp(1j * dphi * ys_ybonds[-1, :] * Nx) # x bonds on last column
-                strength_diag[-1, :] *= np.exp(-1j * dphi * ys_ybonds[-1, :] * Nx) # diag bonds on last column
+        if bc_x == "periodic":
+            if YC:
+                strength_x[-1, :] *= np.exp(1j * dphi * ys_ybonds[-1, :] * Lx) # x bonds on last column
+                strength_diag[-1, :] *= np.exp(-1j * dphi * ys_ybonds[-1, :] * Lx) # diag bonds on last column
             else:
                 assert(abs(dphi) < 1e-15)
 
@@ -1111,20 +1114,15 @@ class MonopoleCondensatePiFluxModel(CouplingMPOModel):
                 strength = strength_x
             elif np.sign(dx) == np.sign(dy):
                 strength = strength_y
-                if geometry == "XC" and dr[0] >= 1:
-                        strength = strength_y_short
             else:
-                strength = strength_diag
-                if geometry == "XC" and dr[0] >= 1:
-                    strength = (-1) * strength_diag_short
+                XC_sgn = -1 if (geometry == "XC" and dr[0] >= 1) else 1
+                strength = XC_sgn * strength_diag
 
-
+            couplings_shape = self.lat.coupling_shape(dr)[0]
+            strength = strength[0:couplings_shape[0], 0:couplings_shape[1]]
             strength_with_flux = self.coupling_strength_add_ext_flux(strength, dr, [0, flux])
             self.add_coupling(sgn * strength_with_flux, u1, "Cd", u2, "C", dr, plus_hc=plus_hc)
 
-    def init_H_from_terms(self):
-        if(self.init_MPO):
-            super().init_H_from_terms()
 
 
 def getPiFluxLatticeOrdering(Lx, Ly, unit_cell_size):
@@ -1348,7 +1346,8 @@ def TriangularPiFluxAnsatz(Lx=2, Ly=3, spinfull=True, bc_MPS="finite",
     else:
         E_slater_mps_per_site /= avg_occupation
     print("Energy per mode for mps-slater:", E_slater_mps_per_site)
-    print("Energy per mode exact: ", PiFluxBandStructure((unitcell_width // flavors) * Ly, geometry=geometry))
+    print("Energy per mode exact: ", PiFluxBandStructure((unitcell_width // flavors) * Ly, geometry=geometry,
+                                                         tet=pi*flux))
     mps_slater_corr = psi_from_slater.correlation_function("Cd", "C", sites1=sites1, sites2=sites2)
 
     np.savetxt(results_dir + "correlations.csv", mps_slater_corr)
@@ -1906,6 +1905,11 @@ if __name__ == "__main__":
     #TryPiFluxMonopoleState(Lx, Ly, monopole_Q=1, magnetization = 0.0)
     # TryMonopoleModelHofstadter(output_dir, 18, 18, bc=("periodic", "periodic"))
 
+    # TriangularPiFluxAnsatz(2, 2, True, "infinite", 1500, 0.0, "XC")
+    # TriangularPiFluxAnsatz(2, 2, True, "infinite", 4000, 1.0, "XC")
+    # TriangularPiFluxAnsatz(2, 4, False, "infinite", 1500, 0.0, "YC")
+    # TriangularPiFluxAnsatz(2, 4, False, "infinite", 1500, 1.0, "YC")
+
     # fig, ax = plt.subplots(figsize=(6, 5))
     # magz = 1. / 3.
     # Lx = 18
@@ -1935,8 +1939,7 @@ if __name__ == "__main__":
     # TriangularPiFluxGutzwiller(3, "XC", "infinite", 0, Lx=2, chi_max=1000, flux=1.0)
 
     # TriangularPiFluxGutzwiller(3, "XC", "finite", 0, Lx=200, chi_max=1000, flux=1.0)
-    TriangularPiFluxGutzwiller(3, "XC", "infinite", 0, Lx=2, chi_max=1000, flux=1.0)
-
+    # TriangularPiFluxGutzwiller(3, "XC", "infinite", 0, Lx=2, chi_max=1000, flux=1.0)
     #dir1 = code_dir + "/LocalGutzwillerResults/finite_Lx_40_Ly_3_chi_1000_flux_0.0_XC_gsindex_0/"
     #dir2 = code_dir + "/LocalGutzwillerResults/finite_Lx_40_Ly_3_chi_1000_flux_0.0_XC_gsindex_1/"
     #dir1 = code_dir + "LocalGutzwillerResults/infinite_Lx_2_Ly_2_chi_1000_flux_0.0_XC_gsindex_0/"

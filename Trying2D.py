@@ -286,16 +286,29 @@ def AddAndTrackCoupling(model, strength, u1, op1, u2, op2, dx, couplings_list, p
     couplings_list.append((u1, u2, dx))
 
 
-def PrintCouplings(model, fancy_print=False):
-    print("couplings: ")
+def PrintCouplings(model, include_sites=None):
     couplings_list = model.all_coupling_terms().to_TermList()
-    if fancy_print:
-        for coupling in couplings_list:
-            print(f"i={coupling[0][0][1]}, j={coupling[0][1][1]}: tet={np.angle(coupling[1]) / pi}, {coupling[0][0][0]}, {coupling[0][1][0]}")
-    else:
-        print(couplings_list)
+    couplings_dict = {}
+    for coupling in couplings_list:
+        site_i = coupling[0][0][1]
+        site_j = coupling[0][1][1]
+        coupling_strength = coupling[1]
+        operators = (coupling[0][0][0], coupling[0][1][0])
 
-def CreateHamiltonianMatrixFromCouplingsList(couplings_list, N_sites, dtype=np.float64):
+        if include_sites is None:
+            print(f"i={site_i}, j={site_j}: tet={np.angle(coupling_strength) / pi}, {operators[0][0]}, {operators[1]}")
+        else:
+            if(site_i in include_sites or site_j in include_sites):
+                dict_key = (site_i, site_j, operators[0], operators[1])
+                assert (dict_key not in couplings_dict.keys())
+                couplings_dict[dict_key] = coupling_strength
+                # print(f"i={site_i}, j={site_j}: {coupling_strength}, {operators[0]}, {operators[1]}")
+    return couplings_dict
+
+
+def CreateHamiltonianMatrixFromCouplingsList(model, N_sites, dtype=np.float64):
+    couplings_list = model.all_coupling_terms().to_TermList()
+    onsite_list = model.all_onsite_terms().to_TermList()
     H = np.zeros((N_sites, N_sites), dtype=dtype)
     for coupling in couplings_list:
         strength = coupling[1]
@@ -305,8 +318,15 @@ def CreateHamiltonianMatrixFromCouplingsList(couplings_list, N_sites, dtype=np.f
             H[site1, site2] = strength
         else:
             H[site2, site1] = strength
+    for onsite_term in onsite_list:
+        site = onsite_term[0][0][1]
+        op = onsite_term[0][0][0]
+        assert(op == 'N')
+        strength = onsite_term[1]
+        H[site, site] = strength
     assert (np.abs(H - np.conj(np.transpose(H))) < 1e-15).all()
     return H
+
 
 def CalculateSpinSpinCorrelations(psi, sites1=None, sites2=None, inf_mps_unitcell_fac=3):
     if psi.bc == "infinite" and sites1 is None and sites2 is None:
@@ -810,7 +830,7 @@ def BuildTriangularLattice(Lx, Ly, site, bc_MPS, bc = ('periodic', 'periodic'), 
         for i in range(num_flavors):
             nearest_neighbors += [[i, i, [1, 0]], [i, i, [0, 1]],
                                  [i, i, [-1, 1]]]
-            next_nearest_neighbors = [[i, i, [1, 1]], [i, i, [-1, 2]],
+            next_nearest_neighbors += [[i, i, [1, 1]], [i, i, [-1, 2]],
                                        [i, i, [-2, 1]]]
 
         triangular_lat = lattice.Lattice([Lx, Ly], [site]*len(unit_cell), basis=basis,
@@ -1053,6 +1073,17 @@ def DeterminePiFluxCoupling(x, y, dx, dy, basis_vectors):
         return -1.0
 
 
+def getPhysicalVectorFromLatticeVector(lat, u1, u2, dr):
+    basis_vectors = np.asarray(lat.basis, dtype=float)
+    dy = (lat.unit_cell_positions[u2][1] - lat.unit_cell_positions[u1][1]) + (np.dot(dr, basis_vectors))[1]
+    dx = (lat.unit_cell_positions[u2][0] - lat.unit_cell_positions[u1][0]) + (np.dot(dr, basis_vectors))[0]
+    return dx, dy
+
+
+def getParticleHoleHoppingSign(ind):
+    return 1 - 2*(ind % 2)
+
+
 class MeanFieldSpinonModel(CouplingMPOModel):
     def init_H_from_terms(self):
         if(self.init_MPO):
@@ -1069,35 +1100,32 @@ class MonopoleCondensatePiFluxModel(MeanFieldSpinonModel):
         self.init_MPO = init_MPO
         lat = self.lat
         bc = lat.boundary_conditions
-        geometry = "YC"
         dphi = monopole_Q * 2 * pi / (lat.N_sites / len(lat.unit_cell_positions))
-        if isinstance(lat, TriangularXC):
-            geometry = "XC"
-            assert (abs(dphi) < 1e-15)
+        geometry = "XC" if isinstance(lat, TriangularXC) else "YC"
         YC = (geometry == "YC")
 
         assert(monopole_Q == round(monopole_Q))
         assert(bc[1] == "periodic")
+        if not YC:
+            assert (abs(dphi) < 1e-15)
 
         Lx, Ly = lat.Ls[0], lat.Ls[1]
         bc_x, bc_y = bc[0], bc[1]
-        n_bonds_x = (Lx - 1 if bc_x == "open" else Lx)
-        n_bonds_y = (Ly - 1 if bc_y == "open" else Ly)
 
         nys, nxs = np.arange(0, Ly), np.arange(0, Lx)
-        ys_ybonds, xs_ybonds = np.meshgrid(nys, nxs) # first coordinate of the matrix (row) is the x coordinate
-        strength_x = np.ones((n_bonds_x, n_bonds_y), dtype=np.complex128)
+        y_coors, x_coors = np.meshgrid(nys, nxs) # first coordinate of the matrix (row) is the x coordinate
+        strength_x = np.ones((Lx, Ly), dtype=np.complex128)
         if YC:
-            strength_y = np.exp(-1j * dphi * xs_ybonds) * (1 - 2 * ((xs_ybonds + 1) % 2))
+            strength_y = np.exp(-1j * dphi * x_coors) * (1 - 2 * ((x_coors + 1) % 2))
             strength_diag = strength_y
         else:
-            strength_y = 1 - 2 * ((xs_ybonds + ys_ybonds) % 2)
+            strength_y = 1 - 2 * ((x_coors + y_coors) % 2)
             strength_diag = (-1) * strength_y
 
         if bc_x == "periodic":
             if YC:
-                strength_x[-1, :] *= np.exp(1j * dphi * ys_ybonds[-1, :] * Lx) # x bonds on last column
-                strength_diag[-1, :] *= np.exp(-1j * dphi * ys_ybonds[-1, :] * Lx) # diag bonds on last column
+                strength_x[-1, :] *= np.exp(1j * dphi * y_coors[-1, :] * Lx) # x bonds on last column
+                strength_diag[-1, :] *= np.exp(-1j * dphi * y_coors[-1, :] * Lx) # diag bonds on last column
             else:
                 assert(abs(dphi) < 1e-15)
 
@@ -1105,11 +1133,9 @@ class MonopoleCondensatePiFluxModel(MeanFieldSpinonModel):
             sgn = 1
             if particle_hole:
                 assert (u1 % 2 == u2 % 2)
-                sgn = (-1) ** u1  # particle hole transformation on the down spins
+                sgn = getParticleHoleHoppingSign(u1)  # particle hole transformation on the down spins
 
-            basis_vectors = np.asarray(lat.basis, dtype=float)
-            dy = (lat.unit_cell_positions[u2][1] - lat.unit_cell_positions[u1][1]) + (np.dot(dr, basis_vectors))[1]
-            dx = (lat.unit_cell_positions[u2][0] - lat.unit_cell_positions[u1][0]) + (np.dot(dr, basis_vectors))[0]
+            dx, dy = getPhysicalVectorFromLatticeVector(lat, u1, u2, dr)
             if abs(dy) < 1e-15:
                 strength = strength_x
             elif np.sign(dx) == np.sign(dy):
@@ -1123,6 +1149,145 @@ class MonopoleCondensatePiFluxModel(MeanFieldSpinonModel):
             strength_with_flux = self.coupling_strength_add_ext_flux(strength, dr, [0, flux])
             self.add_coupling(sgn * strength_with_flux, u1, "Cd", u2, "C", dr, plus_hc=plus_hc)
 
+
+
+class Z2MeanFieldModel(MeanFieldSpinonModel):
+    def init_terms(self, model_params):
+        mu = model_params["mu"] # chemical potential
+        xi = model_params["xi"] # onsite pairing
+        hoppings = model_params["hoppings"] # dict with hopping per direction
+        pairings = model_params["pairings"] # dict with pairing per direction
+        init_MPO = model_params["init_H_MPO"]
+        self.init_MPO = init_MPO
+        lat = self.lat
+        bc = lat.boundary_conditions
+        geometry = "XC" if isinstance(lat, TriangularXC) else "YC"
+        YC = (geometry == "YC")
+        assert(YC)
+        Lx, Ly = lat.Ls[0], lat.Ls[1]
+        nys, nxs = np.arange(0, Ly), np.arange(0, Lx)
+        y_coors, x_coors = np.meshgrid(nys, nxs) # first coordinate of the matrix (row) is the x coordinate
+
+        y_parity_signs = 1 - 2 * (y_coors % 2)
+        constant_signs = np.ones(x_coors.shape)
+
+        unitcell_length = len(lat.unit_cell_positions)
+        # on site terms - chemical potential and pairing
+        for i in range(unitcell_length // 2):
+            ind1 = 2 * i
+            ind2 = 2 * i + 1
+            ph_sgn_1 = getParticleHoleHoppingSign(ind1)
+            ph_sgn_2 = getParticleHoleHoppingSign(ind2)
+            self.add_onsite(ph_sgn_1 * mu, ind1, "N")
+            self.add_onsite(ph_sgn_2 * mu, ind2, "N")
+            self.add_coupling(xi, 2*i, "Cd", 2*i + 1, "C", [0, 0], plus_hc=True)
+
+        neighbor_ranges = ["nearest_neighbors", "next_nearest_neighbors"]
+        for neighbor_range in neighbor_ranges:
+            for u1, u2, dr in (lat.pairs[neighbor_range]):
+                assert(u1 % 2 == u2 % 2)
+                ph_sgn = getParticleHoleHoppingSign(u1)
+                dr_tuple = (int(dr[0]), int(dr[1]))
+                dx, dy = getPhysicalVectorFromLatticeVector(lat, u1, u2, dr)
+
+                if neighbor_range == "nearest_neighbors":
+                    if (abs(dy) > 1e-15) and (np.sign(dx) == np.sign(dy)):
+                        signs = y_parity_signs
+                    else:
+                        signs = (-1) * constant_signs
+                else:
+                    if abs(dx) < 1e-15:
+                        signs = y_parity_signs
+                    else:
+                        signs = (-1) * constant_signs
+
+                couplings_shape = self.lat.coupling_shape(dr)[0]
+                signs = signs[0:couplings_shape[0], 0:couplings_shape[1]]
+
+                if dr_tuple in hoppings:
+                    hopping = hoppings[dr_tuple]
+                    self.add_coupling(ph_sgn * signs * hopping, u1, "Cd", u2, "C", dr, plus_hc=True)
+                if dr_tuple in pairings:
+                    pairing = pairings[dr_tuple]
+                    self.add_coupling(signs * pairing, u1, "Cd", (u2 + 1)%2, "C", dr, plus_hc=True)
+
+
+def AddTermToFermionCouplingsDict(couplings_dict, i, j, strength):
+    assert(i < j)
+    couplings_dict[(i, j, 'Cd JW', 'C')] = strength
+    couplings_dict[(i, j, 'JW C', 'Cd')] = strength
+
+
+def AddCouplingsToZ2ModelDict(test_sites, coupled_sites, xi):
+    couplings = {}
+    assert(len(test_sites) == 2 and test_sites[0] % 2 != test_sites[1] % 1)
+    ph_signs = [getParticleHoleHoppingSign(site % 2) for site in test_sites]
+    for ind, center_site in enumerate(test_sites):
+        ph_sign = ph_signs[ind]
+        for site, strength in coupled_sites:
+            coupling_sign_1 = ph_sign if (site % 2 == center_site % 2) else 1
+            coupling_sign_2 = ph_sign if (site % 2 != center_site % 2) else 1
+            if site < center_site:
+                AddTermToFermionCouplingsDict(couplings, site, center_site,
+                                              coupling_sign_1 * strength)
+                AddTermToFermionCouplingsDict(couplings, site - 1, center_site,
+                                              coupling_sign_2 * strength)
+            else:
+                AddTermToFermionCouplingsDict(couplings, center_site, site,
+                                              coupling_sign_1 * strength)
+                AddTermToFermionCouplingsDict(couplings, center_site, site - 1,
+                                              coupling_sign_2 * strength)
+    AddTermToFermionCouplingsDict(couplings, test_sites[0], test_sites[1], xi)
+    return couplings
+
+
+
+def TestDictsAreCompatible(couplings_dict, expected_couplings_dict):
+    assert (len(couplings_dict.keys()) == len(expected_couplings_dict.keys()))
+    for key in couplings_dict.keys():
+        if (couplings_dict[key] != expected_couplings_dict[key]):
+            print(
+                f"test failed - unexpected coupling for {key}: expected {expected_couplings_dict[key]}, got {couplings_dict[key]}")
+            exit(1)
+
+
+def TestZ2MeanFieldModel():
+    triangular_lat = BuildTriangularLattice(3, 5, FermionSite(conserve="N"), "finite",
+                                            bc=("open", "open"), spinfull_fermions=True)
+    xi = 5.0
+    x_nn_hopping = 1.0
+    y_nn_hopping = 2.0
+    nnn_hopping = 3.0
+    model_params = {"mu": 1.0, "xi": 5.0, "init_H_MPO": False, "lattice": triangular_lat}
+    model_params["hoppings"] = {(1, 0) : x_nn_hopping, (0, 1) : y_nn_hopping, (-1, 1) : x_nn_hopping,
+                                (-1, 2): nnn_hopping, (1, 1): nnn_hopping}
+    model_params["pairings"] = model_params["hoppings"]
+    z2_model = Z2MeanFieldModel(model_params)
+
+    center_sites = [14, 15]
+    couplings_dict = PrintCouplings(z2_model, include_sites=center_sites)
+    spindown_sites_coupled_to_spindown_center = [(13, (-1)*y_nn_hopping), (17, y_nn_hopping),
+                                                 (5, -1.0*x_nn_hopping), (25, -1.0*x_nn_hopping), (7, -1.0*x_nn_hopping),
+                                                 (23, -1.0*x_nn_hopping), (9, nnn_hopping), (21, nnn_hopping),
+                                                 (3, (-1) * nnn_hopping), (27, (-1)*nnn_hopping)]
+
+    expected_couplings_dict = AddCouplingsToZ2ModelDict(center_sites, spindown_sites_coupled_to_spindown_center, xi)
+    TestDictsAreCompatible(couplings_dict, expected_couplings_dict)
+
+    tests_sites = [22, 23]
+    couplings_dict = PrintCouplings(z2_model, include_sites=tests_sites)
+    couplings_to_tests_sites = [(13, (-1) * x_nn_hopping), (15, (-1) * x_nn_hopping),
+                                (25, (-1)*y_nn_hopping), (21, y_nn_hopping), (11, (-1)*nnn_hopping),
+                                (17, (-1)*nnn_hopping)]
+    expected_couplings_dict = AddCouplingsToZ2ModelDict(tests_sites, couplings_to_tests_sites, xi)
+    TestDictsAreCompatible(couplings_dict, expected_couplings_dict)
+
+    print(z2_model.all_onsite_terms().to_TermList())
+    CreateHamiltonianMatrixFromCouplingsList(z2_model, 30)
+    fig, ax = plt.subplots()
+    # PlotModelHoppingsByPhase(z2_model, ax)
+    PlotLattice(triangular_lat, ax)
+    plt.show()
 
 
 def getPiFluxLatticeOrdering(Lx, Ly, unit_cell_size):
@@ -1199,8 +1364,7 @@ def CalculateExactCMatrixForPiFlux(Lx, Ly, spinfull, site, geometry, gs_manifold
         if local:
             plt.show()
 
-    couplings_list = pi_flux_model.all_coupling_terms().to_TermList()
-    H = CreateHamiltonianMatrixFromCouplingsList(couplings_list, triangular_lat.N_sites,
+    H = CreateHamiltonianMatrixFromCouplingsList(pi_flux_model, triangular_lat.N_sites,
                                                  dtype=np.complex128)
     e, v = eigh(H)
 
@@ -1738,7 +1902,7 @@ def TryMonopoleModelHofstadter(output_dir, Lx, Ly, plot=True,
                                                         "monopole_Q": monopole_Q})
         couplings_list = monopole_model.all_coupling_terms().to_TermList()
 
-        H = CreateHamiltonianMatrixFromCouplingsList(couplings_list, lat.N_sites, dtype=np.complex128)
+        H = CreateHamiltonianMatrixFromCouplingsList(monopole_model, lat.N_sites, dtype=np.complex128)
         if(len(lat.unit_cell_positions) == 2):
             H_up = H[0::2, 0::2]
             H_down = H[1::2, 1::2]
@@ -1833,7 +1997,7 @@ def TryPiFluxMonopoleState(Lx, Ly, bc_MPS, chi_max=1000, monopole_Q=1, magnetiza
         PrintCouplings(monopole_model, True)
 
     couplings_list = monopole_model.all_coupling_terms().to_TermList()
-    H = CreateHamiltonianMatrixFromCouplingsList(couplings_list, lat.N_sites, dtype=np.complex128)
+    H = CreateHamiltonianMatrixFromCouplingsList(monopole_model, lat.N_sites, dtype=np.complex128)
 
     e, v = eigh(H)
     zero_energy_tol = 1e-9
@@ -1907,8 +2071,8 @@ if __name__ == "__main__":
 
     # TriangularPiFluxAnsatz(2, 2, True, "infinite", 1500, 0.0, "XC")
     # TriangularPiFluxAnsatz(2, 2, True, "infinite", 4000, 1.0, "XC")
-    # TriangularPiFluxAnsatz(2, 4, False, "infinite", 1500, 0.0, "YC")
-    # TriangularPiFluxAnsatz(2, 4, False, "infinite", 1500, 1.0, "YC")
+    TriangularPiFluxAnsatz(2, 4, False, "infinite", 1500, 0.0, "YC")
+    TriangularPiFluxAnsatz(2, 4, False, "infinite", 1500, 1.0, "YC")
 
     # fig, ax = plt.subplots(figsize=(6, 5))
     # magz = 1. / 3.
@@ -2001,3 +2165,5 @@ if __name__ == "__main__":
     #gutz_dir = code_dir + "GutzwillerResults/"
     #GutzwillerBondDimensionScaling(gutz_dir, 6, 6, [4000, 5000, 6000],
     #                               output_dir)
+
+    # TestZ2MeanFieldModel()

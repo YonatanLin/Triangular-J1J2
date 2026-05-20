@@ -13,6 +13,9 @@ def CreateTriangularCaseDirFromInputFile(main_results_dir, input_file):
     input_for_condor = open("condor_cases.txt", 'w')
     for line in input_file_lines[1:]:
         params = line.strip().split(" ")
+        n_tokens = len(line.split(" "))
+        expected_n_tokens = len(expected_params)
+        assert(n_tokens == expected_n_tokens), f"line has {n_tokens} tokens, expected {expected_n_tokens} tokens"
         kwargs = {param[0]: params[i_param] for i_param, param in enumerate(dmrg_input_params)
                   if (param[0] not in params_excluded_from_dirname)}
         kwargs["bc"] = kwargs["bc"].split("-")

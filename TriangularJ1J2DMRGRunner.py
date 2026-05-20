@@ -19,7 +19,7 @@ def build_parser():
 def main():
     args = build_parser().parse_args()
     args_dict = vars(args)
-    kwargs = {param: args_dict[param] for param, param_type in dmrg_input_params.keys()}
+    kwargs = {param: args_dict[param] for param, param_type in dmrg_input_params}
     TriangularJ1J2DMRG(**kwargs)
 
 

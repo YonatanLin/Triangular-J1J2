@@ -17,6 +17,8 @@ def build_parser():
     parser.add_argument("--geometry", type=str, required=True)
     parser.add_argument("--bc_MPS", type=str, required=True)
     parser.add_argument("--gs_manifold_index", type=int, required=True)
+    parser.add_argument("--chi_dmrg", type=int, required=True)
+    parser.add_argument("--max_sweeps_dmrg", type=int, required=True)
     return parser
 
 
@@ -49,4 +51,5 @@ if __name__ == "__main__":
     GutzwillerDMRGOverlaps([args.J2], args.gutz_dir, args.Lx_dmrg, args.Lx_gutz, args.Ly, args.chi_gutz, 
                            args.flux_gutz,
                            output_dir, args.dmrg_initial_state, 
-                           args.dmrg_parent_dir, args.geometry, args.bc_MPS, args.gs_manifold_index)
+                           args.dmrg_parent_dir, args.geometry, args.bc_MPS, args.gs_manifold_index,
+                           args.chi_dmrg, args.max_sweeps_dmrg)

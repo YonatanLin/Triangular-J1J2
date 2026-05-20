@@ -51,12 +51,16 @@ def AddTriangularCaseDirsToCondorCases(main_results_dir, condor_cases_file="cond
                     "conserve": conserve,
                     "J2": J2,
                     "geometry": geometry,
-                    "chi": chi,
+                    "chi_max": chi,
                     "max_sweeps": max_sweeps,
                     "initial_psi_dir": case_folder_absolute,
                 }
-                input_for_condor.write(" ".join(str(row[field]) for field in dmrg_input_params) + f" {cont_folder}\n")
+                input_for_condor.write(" ".join(str(row[field[0]]) for field in dmrg_input_params) + f" {cont_folder}\n")
 
 if __name__ == "__main__":
-    AddTriangularCaseDirsToCondorCases(sys.argv[1])
+    if len(sys.argv) == 3:
+        AddTriangularCaseDirsToCondorCases(sys.argv[1], chi_input=sys.argv[2])
+    else:
+        AddTriangularCaseDirsToCondorCases(sys.argv[1])
+
 

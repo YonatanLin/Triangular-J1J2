@@ -258,11 +258,9 @@ def CorrelationMatrixArbitraryOccupation(H, N, psi_support_per_spin, zero_energy
     return C, N
 
 
-def ChangeChiInDMRGParams(chi_max):
-    dmrg_params_copy = {key: default_dmrg_params[key] for key in default_dmrg_params.keys()}
-    dmrg_params_copy["trunc_params"]["chi_max"] = chi_max
-    dmrg_params_copy["chi_list"] = {0: 50, 3: 100, 7: chi_max}
-    return dmrg_params_copy
+def ChangeChiInDMRGParams(dmrg_params, chi_max):
+    dmrg_params["trunc_params"]["chi_max"] = chi_max
+    dmrg_params["chi_list"] = {0: 50, 3: 100, 7: chi_max}
 
 
 def CreateGutzwillerCaseDir(main_results_dir, Lx, Ly, chi, flux, geometry, bc_MPS,
@@ -920,7 +918,7 @@ def calculateGutzwillerEnergyTriangularJ1J2(gutz_results_dir, Lx, Ly, chi, flux,
 
     with open(psi_path, 'rb') as f:
         psi = pickle.load(f)
-
+    
     finite = (bc_MPS == "finite")
     Lx_energy_calculation = Lx if finite else 2
     triangular_lat = BuildTriangularLattice(Lx_energy_calculation, Ly, site, bc_MPS, bc, geometry=geometry)
@@ -950,23 +948,6 @@ def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, conserve=True, initial_state="Random"
     if isinstance(bc, str):
         bc_parsed = bc.split("-")
         bc = (bc_parsed[0], bc_parsed[1])
-
-    dmrg_params = default_dmrg_params
-    
-    if chi_max is not None:
-        dmrg_params = ChangeChiInDMRGParams(chi_max)
-    chi_max = dmrg_params['trunc_params']['chi_max']
-
-    if max_sweeps is not None:
-        dmrg_params['max_sweeps'] = max_sweeps
-
-    if initialStateFromFile(initial_state):
-        chi_max_psi = np.max(psi.chi)
-        chi_max = int(max(chi_max_psi, chi_max))
-
-        dmrg_params = ChangeChiInDMRGParams(chi_max)
-        dmrg_params['chi_list'] = {0:chi_max}
-        dmrg_params['min_sweeps'] = 3
 
     if local:
         main_results_dir = "LocalJ1J2TriangularDMRGResults/"
@@ -1001,6 +982,23 @@ def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, conserve=True, initial_state="Random"
             plt.show()
 
     psi = GetTriangularLatticeInitialState(initial_state, triangular_lat, initial_psi_dir)
+   
+    dmrg_params = default_dmrg_params
+
+    if chi_max is not None:
+        ChangeChiInDMRGParams(dmrg_params, chi_max)
+    chi_max = dmrg_params['trunc_params']['chi_max']
+
+    if max_sweeps is not None:
+        dmrg_params['max_sweeps'] = max_sweeps
+
+    if initialStateFromFile(initial_state):
+        chi_max_psi = np.max(psi.chi)
+        chi_max = int(max(chi_max_psi, chi_max))
+
+        ChangeChiInDMRGParams(dmrg_params, chi_max)
+        dmrg_params['chi_list'] = {0:chi_max}
+        dmrg_params['min_sweeps'] = 3
 
     with open(results_dir + "dmrg_params.json", "w") as f:
         json.dump(dmrg_params, f, indent=4)
@@ -1388,11 +1386,11 @@ def ExplicitMPSNorm(mps):
 
 def calculateOverlapBetweenGutzwillerAndDMRG(dmrg_dir, gutzwiller_dir,
                                              psi_gutz_fname='psi_gutzwiller.pkl'):
+
     with open(dmrg_dir + 'psi_gs.pkl', 'rb') as f_dmrg:
         psi_dmrg = pickle.load(f_dmrg)
     with open(gutzwiller_dir + psi_gutz_fname, 'rb') as f_gutz:
         psi_gutz = pickle.load(f_gutz)
-
     overlap = abs(psi_dmrg.overlap(psi_gutz))
     print("overlap between wavefunctions: ", overlap)
     return overlap
@@ -1586,7 +1584,8 @@ def PlotRealSpaceCorrelations(results_dir):
 
 
 def GutzwillerDMRGOverlaps(J2s, gutz_dir, Lx_dmrg, Lx_gutz, Ly, chi_gutz, flux_gutz,
-                           output_dir, dmrg_initial_state, dmrg_parent_dir, geometry, bc_MPS, gs_manifold_index):
+                           output_dir, dmrg_initial_state, dmrg_parent_dir, geometry, bc_MPS, gs_manifold_index,
+                           chi_dmrg, max_sweeps_dmrg):
     overlaps = []
     dmrg_energies = []
     gutz_energies = []
@@ -1596,7 +1595,7 @@ def GutzwillerDMRGOverlaps(J2s, gutz_dir, Lx_dmrg, Lx_gutz, Ly, chi_gutz, flux_g
     bc = ("open", "periodic") if finite else ("periodic", "periodic")
     for J2 in J2s:
         dmrg_geom_dir, dmrg_params_dir = (
-            TriangularJ1J2CaseDirName(Lx_dmrg, Ly, bc, bc_MPS, dmrg_initial_state, 1, J2, geometry, None))
+            TriangularJ1J2CaseDirName(Lx_dmrg, Ly, bc, bc_MPS, dmrg_initial_state, 1, J2, geometry, chi_dmrg, max_sweeps_dmrg))
         dmrg_dir = dmrg_parent_dir + dmrg_geom_dir + dmrg_params_dir
         
         unitcell_width = 2 if geometry == "XC" else 1

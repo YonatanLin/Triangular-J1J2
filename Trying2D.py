@@ -1746,19 +1746,19 @@ def PlotRealSpaceCorrelations(results_dir):
     ax.legend()
 
 
-def GutzwillerDMRGOverlaps(J2s, gutz_dir, Lx_dmrg, Lx_gutz, Ly, chi_gutz, flux_gutz,
-                           output_dir, dmrg_initial_state, dmrg_parent_dir, geometry, bc_MPS, gs_manifold_index,
-                           chi_dmrg, max_sweeps_dmrg):
+def GutzwillerDMRGOverlaps(J2s, gutz_dir, Lx, Ly, gutz_chi_max, flux_gutz,
+                           output_dir, dmrg_initial_state, dmrg_parent_dir, geometry, bc_MPS, gutz_gs_manifold_index,
+                           dmrg_chi_max, dmrg_max_sweeps):
     overlaps = []
     dmrg_energies = []
     gutz_energies = []
-    gutz_case_dir = CreateGutzwillerCaseDir(gutz_dir, Lx_gutz, Ly, chi_gutz, flux_gutz, geometry,
-                                            bc_MPS, gs_manifold_index)
+    gutz_case_dir = CreateGutzwillerCaseDir(gutz_dir, Lx, Ly, gutz_chi_max, flux_gutz, geometry,
+                                            bc_MPS, gutz_gs_manifold_index)
     finite = (bc_MPS == "finite")
     bc = ("open", "periodic") if finite else ("periodic", "periodic")
     for J2 in J2s:
         dmrg_geom_dir, dmrg_params_dir = (
-            TriangularJ1J2CaseDirName(Lx_dmrg, Ly, bc, bc_MPS, dmrg_initial_state, 1, J2, geometry, chi_dmrg, max_sweeps_dmrg))
+            TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, dmrg_initial_state, 1, J2, geometry, dmrg_chi_max, dmrg_max_sweeps))
         dmrg_dir = dmrg_parent_dir + dmrg_geom_dir + dmrg_params_dir
         
         unitcell_width = 2 if geometry == "XC" else 1
@@ -1766,11 +1766,11 @@ def GutzwillerDMRGOverlaps(J2s, gutz_dir, Lx_dmrg, Lx_gutz, Ly, chi_gutz, flux_g
         sweep_energies = np.loadtxt(dmrg_dir + "Energies.txt", dtype=np.float64)
         dmrg_energy = sweep_energies[-1]
         if finite:
-            dmrg_energy /= (Lx_dmrg * Ly * unitcell_width)
+            dmrg_energy /= (Lx * Ly * unitcell_width)
         dmrg_energies.append(dmrg_energy)
 
-        gutz_energy = calculateGutzwillerEnergyTriangularJ1J2(gutz_dir, Lx_gutz, Ly, chi_gutz, flux_gutz, bc_MPS, J2, bc,
-                                                              geometry, gs_manifold_index)
+        gutz_energy = calculateGutzwillerEnergyTriangularJ1J2(gutz_dir, Lx, Ly, gutz_chi_max, flux_gutz, bc_MPS, J2, bc,
+                                                              geometry, gutz_gs_manifold_index)
         gutz_energies.append(gutz_energy)
 
         PlotCorrelationsFromFiles(dmrg_dir, show_energies=False, output_dir=output_dir,

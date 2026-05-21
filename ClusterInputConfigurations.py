@@ -36,6 +36,13 @@ gutzwiller_input_params = [
     ("gs_manifold_index", int)
 ]
 
+
+dmrg_gutz_comp_input_params = [("Lx", int), ("Ly", int), ("geometry", str), ("bc_MPS", str),
+                               ("bc", str), ("dmrg_initial_state", str), ("dmrg_conserve", parse_bool),
+                               ("dmrg_chi_max", int), ("dmrg_max_sweeps", int), ("dmrg_parent_dir", str),
+                               ("gutz_chi_max", int), ("gutz_flux", float), ("gutz_gs_manifold_index", int),
+                               ("gutz_parent_dir", str), ("J2_file", str)]
+
 def build_parser(input_params):
     parser = argparse.ArgumentParser(
         description="Run TestTriangularLattice with command line parameters."

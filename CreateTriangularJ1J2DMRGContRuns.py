@@ -1,5 +1,5 @@
 from Trying2D import CreateTriangularCaseDir
-from TriangularJ1J2DMRGConfig import dmrg_input_params
+from ClusterInputConfigurations import dmrg_input_params
 import sys
 from pathlib import Path
 import re

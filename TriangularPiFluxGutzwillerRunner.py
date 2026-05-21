@@ -1,30 +1,12 @@
-import argparse
-
-from numpy import float128
-
 from Trying2D import TriangularPiFluxGutzwiller
-
-
-def build_parser():
-    parser = argparse.ArgumentParser(
-        description="Run TriangularPiFluxGutzwiller with command line parameters."
-    )
-    parser.add_argument("--Lx", type=int, required=True, help="Number of unit cells along x.")
-    parser.add_argument("--Ly", type=int, required=True, help="Number of unit cells along y.")
-    parser.add_argument("--chi_max", type=int, required=True, help="Max bond dimension.")
-    parser.add_argument("--flux", type=float, required=True, help="Net flux threaded through the cylinder")
-    parser.add_argument("--geometry", type=str, required=True, help="YC or XC geometry")
-    parser.add_argument("--bc_MPS", type=str, required=True, help="finite or infinite MPS")
-    parser.add_argument("--gs_manifold_index", type=int, required=True,
-                        help="Ground state index within degenerate space")
-
-    return parser
+from ClusterInputConfigurations import build_parser, gutzwiller_input_params
 
 
 def main():
-    args = build_parser().parse_args()
-    TriangularPiFluxGutzwiller(Ly=args.Ly, geometry=args.geometry, bc_MPS=args.bc_MPS, gs_manifold_index=args.gs_manifold_index,
-                               Lx=args.Lx, chi_max=args.chi_max, flux=args.flux)
+    args = build_parser(gutzwiller_input_params).parse_args()
+    args_dict = vars(args)
+    kwargs = {param: args_dict[param] for param, param_type in gutzwiller_input_params}
+    TriangularPiFluxGutzwiller(**kwargs)
 
 if __name__ == "__main__":
     main()

@@ -1899,8 +1899,6 @@ def TryMonopoleModelHofstadter(output_dir, Lx, Ly, plot=True,
     # for monopole_Q in range(2):
         monopole_model = MonopoleCondensatePiFluxModel({"init_H_MPO": False, "lattice": lat,
                                                         "monopole_Q": monopole_Q})
-        couplings_list = monopole_model.all_coupling_terms().to_TermList()
-
         H = CreateHamiltonianMatrixFromCouplingsList(monopole_model, lat.N_sites, dtype=np.complex128)
         if(len(lat.unit_cell_positions) == 2):
             H_up = H[0::2, 0::2]
@@ -1995,7 +1993,6 @@ def TryPiFluxMonopoleState(Lx, Ly, bc_MPS, chi_max=1000, monopole_Q=1, magnetiza
     if print_couplings:
         PrintCouplings(monopole_model, True)
 
-    couplings_list = monopole_model.all_coupling_terms().to_TermList()
     H = CreateHamiltonianMatrixFromCouplingsList(monopole_model, lat.N_sites, dtype=np.complex128)
 
     e, v = eigh(H)
@@ -2070,8 +2067,8 @@ if __name__ == "__main__":
 
     # TriangularPiFluxAnsatz(2, 2, True, "infinite", 1500, 0.0, "XC")
     # TriangularPiFluxAnsatz(2, 2, True, "infinite", 4000, 1.0, "XC")
-    TriangularPiFluxAnsatz(2, 4, False, "infinite", 1500, 0.0, "YC")
-    TriangularPiFluxAnsatz(2, 4, False, "infinite", 1500, 1.0, "YC")
+    # TriangularPiFluxAnsatz(2, 4, False, "infinite", 1500, 0.0, "YC")
+    # TriangularPiFluxAnsatz(2, 4, False, "infinite", 1500, 1.0, "YC")
 
     # fig, ax = plt.subplots(figsize=(6, 5))
     # magz = 1. / 3.

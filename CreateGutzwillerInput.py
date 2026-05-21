@@ -6,4 +6,4 @@ from ClusterInputConfigurations import CreateTriangularCaseDirFromInputFile, gut
 if __name__ == "__main__":
     assert(sys.argv[1][-1] == "/")
     CreateTriangularCaseDirFromInputFile(sys.argv[1], sys.argv[2], gutzwiller_input_params, [],
-                                         CreateGutzwillerCaseDir)
+                                         CreateGutzwillerCaseDir, "gutz_condor_cases.txt")

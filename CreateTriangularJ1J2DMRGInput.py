@@ -6,4 +6,4 @@ import sys
 
 if __name__ == "__main__":
     CreateTriangularCaseDirFromInputFile(sys.argv[1], sys.argv[2], dmrg_input_params, dmrg_params_excluded_from_dirname,
-                                         CreateTriangularCaseDir)
+                                         CreateTriangularCaseDir, "condor_cases.txt")

@@ -263,10 +263,10 @@ def ChangeChiInDMRGParams(dmrg_params, chi_max):
     dmrg_params["chi_list"] = {0: 50, 3: 100, 7: chi_max}
 
 
-def CreateGutzwillerCaseDir(main_results_dir, Lx, Ly, chi, flux, geometry, bc_MPS,
+def CreateGutzwillerCaseDir(main_results_dir, Lx, Ly, chi_max, flux, geometry, bc_MPS,
                             gs_manifold_index):
     Path(main_results_dir).mkdir(parents=True, exist_ok=True)
-    gutz_dir = main_results_dir + f"{bc_MPS}_Lx_{Lx}_Ly_{Ly}_chi_{chi}_flux_{flux}_{geometry}_gsindex_{gs_manifold_index}/"
+    gutz_dir = main_results_dir + f"{bc_MPS}_Lx_{Lx}_Ly_{Ly}_chi_{chi_max}_flux_{flux}_{geometry}_gsindex_{gs_manifold_index}/"
     Path(gutz_dir).mkdir(parents=True, exist_ok=True)
     return gutz_dir
 

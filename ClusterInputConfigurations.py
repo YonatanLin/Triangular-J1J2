@@ -47,21 +47,24 @@ def build_parser(input_params):
 
 
 def CreateTriangularCaseDirFromInputFile(main_results_dir, input_file, input_params, excluded_params,
-                                         dir_name_generator):
+                                         dir_name_generator, condor_cases_filename):
     with open(input_file, "r") as file:
         input_file_lines = file.readlines()
     params_names = input_file_lines[0].strip().split(" ")
     expected_params = [param_data[0] for param_data in input_params]
     assert params_names == expected_params, f"Bad input header: got {params_names}, expected {expected_params}"
 
-    input_for_condor = open("condor_cases.txt", 'w')
+    input_for_condor = open(condor_cases_filename, 'w')
     for line in input_file_lines[1:]:
         params = line.strip().split(" ")
         n_tokens = len(line.split(" "))
         expected_n_tokens = len(expected_params)
         assert(n_tokens == expected_n_tokens), f"line has {n_tokens} tokens, expected {expected_n_tokens} tokens"
+        
         kwargs = {param[0]: params[i_param] for i_param, param in enumerate(input_params)
                   if (param[0] not in excluded_params)}
-        kwargs["bc"] = kwargs["bc"].split("-")
+        if "bc" in kwargs:
+            kwargs["bc"] = kwargs["bc"].split("-")
+        
         case_folder = dir_name_generator(main_results_dir, **kwargs)
         input_for_condor.write(line[:-1] + " " + case_folder + "\n")

@@ -1621,8 +1621,8 @@ def RescaleMPSForGutzwiller(psi):
         psi._B[i] = Bi.scale_axis(1.5 * np.ones(physical_axis_shape), axis=1)
 
 
-def TriangularPiFluxGutzwiller(Ly, geometry, bc_MPS, gs_manifold_index, model_type,
-                               Lx=6, chi_max=3000, flux=0.0):
+def SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, geometry, bc_MPS, gs_manifold_index, model_type,
+                                                         Lx=6, chi_max=3000, flux=0.0):
     site = FermionSite(conserve='N')
     spin_site = SpinHalfSite(conserve='Sz')
     gutzwiller_results_dir = "LocalGutzwillerResults/"

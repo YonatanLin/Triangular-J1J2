@@ -41,7 +41,8 @@ gutzwiller_input_params = [
     ("flux", float),
     ("geometry", str),
     ("bc_MPS", str),
-    ("gs_manifold_index", int)
+    ("gs_manifold_index", int),
+    ("model_type", parse_optional)
 ]
 
 

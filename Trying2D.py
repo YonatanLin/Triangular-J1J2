@@ -39,6 +39,10 @@ code_dir = "C:/Users/yonli/Desktop/Thesis/Triangular J1J2/Code/"
 
 Lx_short_pi_flux_iMPS = 200
 
+model_type_dirac = "Dirac"
+model_type_Z2 = "Z2"
+
+
 def parity_mask(leg, parity=0):
     mask = (leg.to_qflat() % 2 == parity % 2).ravel()
     return mask
@@ -264,9 +268,14 @@ def ChangeChiInDMRGParams(dmrg_params, chi_max):
 
 
 def CreateGutzwillerCaseDir(main_results_dir, Lx, Ly, chi_max, flux, geometry, bc_MPS,
-                            gs_manifold_index):
+                            gs_manifold_index, model_type):
     Path(main_results_dir).mkdir(parents=True, exist_ok=True)
-    gutz_dir = main_results_dir + f"{bc_MPS}_Lx_{Lx}_Ly_{Ly}_chi_{chi_max}_flux_{flux}_{geometry}_gsindex_{gs_manifold_index}/"
+    case_name = f"{bc_MPS}_Lx_{Lx}_Ly_{Ly}_chi_{chi_max}_flux_{flux}_{geometry}_gsindex_{gs_manifold_index}/"
+
+    if model_type is not None:
+        case_name = f"{model_type}_" + case_name
+
+    gutz_dir = main_results_dir + case_name
     Path(gutz_dir).mkdir(parents=True, exist_ok=True)
     return gutz_dir
 
@@ -931,9 +940,9 @@ def GenerateJ1J2SpinTriangularModel(J2, triangular_lat):
 
 
 def calculateGutzwillerEnergyTriangularJ1J2(gutz_results_dir, Lx, Ly, chi, flux, bc_MPS, J2, bc, geometry,
-                                            gs_manifold_index, reorder_lattice=False):
+                                            gs_manifold_index, reorder_lattice=False, model_type=None):
     psi_path = CreateGutzwillerCaseDir(gutz_results_dir, Lx, Ly, chi, flux, geometry,
-                                       bc_MPS, gs_manifold_index) + "/psi_gutzwiller.pkl"
+                                       bc_MPS, gs_manifold_index, model_type) + "/psi_gutzwiller.pkl"
     site = SpinHalfSite(conserve="Sz")
 
     with open(psi_path, 'rb') as f:
@@ -1152,7 +1161,7 @@ class MonopoleCondensatePiFluxModel(MeanFieldSpinonModel):
 class Z2MeanFieldModel(MeanFieldSpinonModel):
     def init_terms(self, model_params):
         mu = model_params["mu"] # chemical potential
-        xi = model_params["xi"] # onsite pairing
+        zeta = model_params["zeta"] # onsite pairing
         hoppings = model_params["hoppings"] # dict with hopping per direction
         pairings = model_params["pairings"] # dict with pairing per direction
         init_MPO = model_params["init_H_MPO"]
@@ -1178,7 +1187,7 @@ class Z2MeanFieldModel(MeanFieldSpinonModel):
             ph_sgn_2 = getParticleHoleHoppingSign(ind2)
             self.add_onsite(ph_sgn_1 * mu, ind1, "N")
             self.add_onsite(ph_sgn_2 * mu, ind2, "N")
-            self.add_coupling(xi, 2*i, "Cd", 2*i + 1, "C", [0, 0], plus_hc=True)
+            self.add_coupling(zeta, 2*i, "Cd", 2*i + 1, "C", [0, 0], plus_hc=True)
 
         neighbor_ranges = ["nearest_neighbors", "next_nearest_neighbors"]
         for neighbor_range in neighbor_ranges:
@@ -1216,9 +1225,9 @@ def AddTermToFermionCouplingsDict(couplings_dict, i, j, strength):
     couplings_dict[(i, j, 'JW C', 'Cd')] = strength
 
 
-def AddCouplingsToZ2ModelDict(test_sites, coupled_sites, xi):
+def AddCouplingsToZ2ModelDict(test_sites, coupled_sites, zeta):
     couplings = {}
-    assert(len(test_sites) == 2 and test_sites[0] % 2 != test_sites[1] % 1)
+    assert(len(test_sites) == 2 and test_sites[0] % 2 != test_sites[1] % 2)
     ph_signs = [getParticleHoleHoppingSign(site % 2) for site in test_sites]
     for ind, center_site in enumerate(test_sites):
         ph_sign = ph_signs[ind]
@@ -1235,7 +1244,7 @@ def AddCouplingsToZ2ModelDict(test_sites, coupled_sites, xi):
                                               coupling_sign_1 * strength)
                 AddTermToFermionCouplingsDict(couplings, center_site, site - 1,
                                               coupling_sign_2 * strength)
-    AddTermToFermionCouplingsDict(couplings, test_sites[0], test_sites[1], xi)
+    AddTermToFermionCouplingsDict(couplings, test_sites[0], test_sites[1], zeta)
     return couplings
 
 
@@ -1249,14 +1258,20 @@ def TestDictsAreCompatible(couplings_dict, expected_couplings_dict):
             exit(1)
 
 
+def GetZ2CouplingDictFromStrengths(x_nn_strength, y_nn_strength, nnn_strength_y,
+                                   nnn_strength_diag):
+    return {(1, 0): x_nn_strength, (0, 1): y_nn_strength, (-1, 1): x_nn_strength,
+     (-1, 2): nnn_strength_y, (1, 1): nnn_strength_diag}
+
+
 def TestZ2MeanFieldModel():
     triangular_lat = BuildTriangularLattice(3, 5, FermionSite(conserve="N"), "finite",
                                             bc=("open", "open"), spinfull_fermions=True)
-    xi = 5.0
+    zeta = 5.0
     x_nn_hopping = 1.0
     y_nn_hopping = 2.0
     nnn_hopping = 3.0
-    model_params = {"mu": 1.0, "xi": 5.0, "init_H_MPO": False, "lattice": triangular_lat}
+    model_params = {"mu": 1.0, "zeta": 5.0, "init_H_MPO": False, "lattice": triangular_lat}
     model_params["hoppings"] = {(1, 0) : x_nn_hopping, (0, 1) : y_nn_hopping, (-1, 1) : x_nn_hopping,
                                 (-1, 2): nnn_hopping, (1, 1): nnn_hopping}
     model_params["pairings"] = model_params["hoppings"]
@@ -1269,7 +1284,7 @@ def TestZ2MeanFieldModel():
                                                  (23, -1.0*x_nn_hopping), (9, nnn_hopping), (21, nnn_hopping),
                                                  (3, (-1) * nnn_hopping), (27, (-1)*nnn_hopping)]
 
-    expected_couplings_dict = AddCouplingsToZ2ModelDict(center_sites, spindown_sites_coupled_to_spindown_center, xi)
+    expected_couplings_dict = AddCouplingsToZ2ModelDict(center_sites, spindown_sites_coupled_to_spindown_center, zeta)
     TestDictsAreCompatible(couplings_dict, expected_couplings_dict)
 
     tests_sites = [22, 23]
@@ -1277,7 +1292,7 @@ def TestZ2MeanFieldModel():
     couplings_to_tests_sites = [(13, (-1) * x_nn_hopping), (15, (-1) * x_nn_hopping),
                                 (25, (-1)*y_nn_hopping), (21, y_nn_hopping), (11, (-1)*nnn_hopping),
                                 (17, (-1)*nnn_hopping)]
-    expected_couplings_dict = AddCouplingsToZ2ModelDict(tests_sites, couplings_to_tests_sites, xi)
+    expected_couplings_dict = AddCouplingsToZ2ModelDict(tests_sites, couplings_to_tests_sites, zeta)
     TestDictsAreCompatible(couplings_dict, expected_couplings_dict)
 
     print(z2_model.all_onsite_terms().to_TermList())
@@ -1286,6 +1301,28 @@ def TestZ2MeanFieldModel():
     # PlotModelHoppingsByPhase(z2_model, ax)
     PlotLattice(triangular_lat, ax)
     plt.show()
+
+
+def Z2MeanFieldModelOptimalQSL():
+    zeta = -0.8
+    mu = 0.8
+
+    x_nn_hopping = 1.0
+    y_nn_hopping = -2.6
+    nnn_hopping_y = 0.25
+    nnn_hopping_diag = -0.1
+
+    x_nn_pairing = 1.25
+    y_nn_pairing = 1.5
+    nnn_pairing_y = 0.0
+    nnn_pairing_diag = 0.0
+
+    model_params = {"mu": mu, "zeta": zeta, "init_H_MPO": False}
+    model_params["hoppings"] = GetZ2CouplingDictFromStrengths(x_nn_hopping, y_nn_hopping, nnn_hopping_y,
+                                                              nnn_hopping_diag)
+    model_params["pairings"] = GetZ2CouplingDictFromStrengths(x_nn_pairing, y_nn_pairing, nnn_pairing_y,
+                                                              nnn_pairing_diag)
+    return model_params
 
 
 def getPiFluxLatticeOrdering(Lx, Ly, unit_cell_size):
@@ -1339,30 +1376,26 @@ def getZeroModesDict(gs_manifold_index):
     return psi_support_per_spin
 
 
-def CalculateExactCMatrixForPiFlux(Lx, Ly, spinfull, site, geometry, gs_manifold_index,
-                                   zero_energy_tol=1e-9, plot_lattice=False, pi_flux_model=None, flux=0.0,
-                                   particle_hole=True):
-    finite_bc_MPS = "finite"
-    triangular_lat = GetPiFluxTriangularLattice(site, Lx, Ly, spinfull, finite_bc_MPS, geometry)
-    
-    if pi_flux_model is None:
-        print(f"generating model, triangular lattice boundary conditions are {triangular_lat.boundary_conditions}")
-        pi_flux_model = MonopoleCondensatePiFluxModel({"lattice" : triangular_lat, "init_H_MPO" : False,
-                                                      "monopole_Q" : 0, "flux" : flux, "particle_hole" : particle_hole})
+def CalculateExactCMatrixForPiFlux(gs_manifold_index, model_params, model_type,
+                                   zero_energy_tol=1e-9, plot_lattice=False, particle_hole=True):
+    triangular_lat = model_params["lattice"]
+    if model_type == model_type_dirac:
+        model = MonopoleCondensatePiFluxModel(model_params)
+    elif model_type == model_type_Z2:
+        model = Z2MeanFieldModel(model_params)
+    else:
+        raise ValueError("unrecognized model type")
 
-        #fig, ax = plt.subplots()
-        #PlotModelHoppingsByPhase(pi_flux_model, ax, plot_order=True)
-        #plt.show()
 
     if plot_lattice:
         fig, ax = plt.subplots(figsize=(6, 5))
-        PlotLattice(triangular_lat, ax, additional_couplings_to_plot=pi_flux_model.pos_hoppings_list)
-        PlotLattice(triangular_lat, ax, additional_couplings_to_plot=pi_flux_model.neg_hoppings_list,
+        PlotLattice(triangular_lat, ax, additional_couplings_to_plot=model.pos_hoppings_list)
+        PlotLattice(triangular_lat, ax, additional_couplings_to_plot=model.neg_hoppings_list,
                     nnn_line_style="--", )
         if local:
             plt.show()
 
-    H = CreateHamiltonianMatrixFromCouplingsList(pi_flux_model, triangular_lat.N_sites,
+    H = CreateHamiltonianMatrixFromCouplingsList(model, triangular_lat.N_sites,
                                                  dtype=np.complex128)
     e, v = eigh(H)
 
@@ -1373,13 +1406,18 @@ def CalculateExactCMatrixForPiFlux(Lx, Ly, spinfull, site, geometry, gs_manifold
         assert (gs_manifold_index == 0), "don't support gs_manifold_index for more than 4 zero modes"
     print(f"number of zero modes in pi flux model: {num_zero_modes}")
     zero_modes = num_zero_modes > 0
-    N_filling = (np.max(zero_modes_indices)+1) if zero_modes else (triangular_lat.N_sites // 2)
-    if particle_hole and not zero_modes:
-        #TODO: is it okay that we don't enter here if there are zero modes?
-        N_filling_no_ph = triangular_lat.N_sites // 2
-        N_up, N_down_holes = DetermineSpinsOccupation(N_filling_no_ph, H, e)
-        print(f"N_up={N_up}, N_down_holes={N_down_holes}")
-        N_filling = 2*N_up
+    if model_type == model_type_dirac:
+        if particle_hole and not zero_modes:
+            #TODO: is it okay that we don't enter here if there are zero modes?
+            N_filling_no_ph = triangular_lat.N_sites // 2
+            N_up, N_down_holes = DetermineSpinsOccupation(N_filling_no_ph, H, e)
+            print(f"N_up={N_up}, N_down_holes={N_down_holes}")
+            N_filling = 2*N_up
+        else:
+            N_filling = (np.max(zero_modes_indices) + 1) if zero_modes else (triangular_lat.N_sites // 2)
+    else:
+        assert(num_zero_modes == 0), "shouldn't have zero modes in the Z2 gapped ansatz"
+        N_filling = triangular_lat.N_sites // 2
 
     print("pi-flux energy from exact diagonalization: ", np.sum(e[0:N_filling])/N_filling)
     psi_support_per_spin = getZeroModesDict(gs_manifold_index)
@@ -1394,7 +1432,7 @@ def CalculateExactCMatrixForPiFlux(Lx, Ly, spinfull, site, geometry, gs_manifold
 
 
 def GetTriangularFluxSlaterMPS(Lx, Ly, spinfull, site, geometry, slater_trunc_par, unitcell_width,
-                               bc_MPS, gs_manifold_index, pi_flux_model=None, flux=0.0, particle_hole=True,
+                               bc_MPS, gs_manifold_index, model_type, flux=0.0, particle_hole=True,
                                Lx_short_iMPS=Lx_short_pi_flux_iMPS):
     zero_energy_tol = 1e3 * slater_trunc_par["degeneracy_tol"]
 
@@ -1403,24 +1441,39 @@ def GetTriangularFluxSlaterMPS(Lx, Ly, spinfull, site, geometry, slater_trunc_pa
 
     C = None
     finite = (bc_MPS == "finite")
+    finite_bc_MPS = "finite"
+
+    if model_type == model_type_dirac:
+        model_params = {"init_H_MPO": False, "monopole_Q": 0, "flux": flux,
+                        "particle_hole": particle_hole}
+    elif model_type == model_type_Z2:
+        model_params = Z2MeanFieldModelOptimalQSL()
+    else:
+        raise ValueError("inrecognized model type")
+        model_params = None
+
+
     if finite:
-        C, triangular_lattice = CalculateExactCMatrixForPiFlux(Lx, Ly, spinfull, site, geometry, gs_manifold_index,
+        triangular_lat = GetPiFluxTriangularLattice(site, Lx, Ly, spinfull, finite_bc_MPS, geometry)
+        model_params["lattice"] = triangular_lat
+        C, triangular_lattice = CalculateExactCMatrixForPiFlux(gs_manifold_index, model_params, model_type,
                                                                zero_energy_tol = zero_energy_tol,
-                                                               plot_lattice=False, pi_flux_model=pi_flux_model,
-                                                               flux=flux, particle_hole=particle_hole)
+                                                               plot_lattice=False, particle_hole=particle_hole)
 
         psi_from_slater = slater.C_to_MPS(C, trunc_par=slater_trunc_par)
     else:
         Lx_short, Lx_long = Lx_short_iMPS, Lx_short_iMPS + hopping_periodicity
-        C_short, triangular_lat_short = CalculateExactCMatrixForPiFlux(Lx_short, Ly, spinfull, site, geometry, 
-                                                                       gs_manifold_index,
+        triangular_lat_short = GetPiFluxTriangularLattice(site, Lx_short, Ly, spinfull, finite_bc_MPS, geometry)
+        model_params["lattice"] = triangular_lat_short
+        C_short, triangular_lat_short = CalculateExactCMatrixForPiFlux(gs_manifold_index, model_params, model_type,
                                                                        zero_energy_tol=zero_energy_tol,
-                                                                       pi_flux_model=pi_flux_model,
-                                                                       flux=flux, particle_hole=particle_hole)
-        C_long, triangular_lat_long = CalculateExactCMatrixForPiFlux(Lx_long, Ly, spinfull, site, geometry, gs_manifold_index,
-                                                   zero_energy_tol=zero_energy_tol,
-                                                   pi_flux_model=pi_flux_model,
-                                                   flux=flux, particle_hole=particle_hole)
+                                                                       particle_hole=particle_hole)
+
+        triangular_lat_long = GetPiFluxTriangularLattice(site, Lx_long, Ly, spinfull, finite_bc_MPS, geometry)
+        model_params["lattice"] = triangular_lat_long
+        C_long, triangular_lat_long = CalculateExactCMatrixForPiFlux(gs_manifold_index, model_params, model_type,
+                                                                     zero_energy_tol=zero_energy_tol,
+                                                                     particle_hole=particle_hole)
 
         middle_site_mps_ind_short = triangular_lat_short.lat2mps_idx([Lx_short // 2, 0, 0])
 
@@ -1452,12 +1505,13 @@ def TriangularPiFluxAnsatz(Lx=2, Ly=3, spinfull=True, bc_MPS="finite",
         particle_hole = False
     main_results_dir = "PiFluxAnsatzResults/"
     finite = (bc_MPS == "finite")
+    model_type = model_type_dirac
 
     site = FermionSite(conserve='N')
     triangular_lat = GetPiFluxTriangularLattice(site, Lx, Ly, spinfull, bc_MPS, geometry)
 
     results_dir = CreateGutzwillerCaseDir(main_results_dir, Lx, Ly, chi_max_temfpy, flux, geometry, bc_MPS,
-                                          gs_manifold_index)
+                                          gs_manifold_index, model_type)
 
     pi_flux_model_params = {"lattice": triangular_lat, "flux":flux, "init_H_MPO": True, "monopole_Q":0,
                             "particle_hole":particle_hole}
@@ -1466,14 +1520,8 @@ def TriangularPiFluxAnsatz(Lx=2, Ly=3, spinfull=True, bc_MPS="finite",
     plot_lattice = False
     if plot_lattice:
         fig_lat, ax_lat = plt.subplots(figsize=(6, 5))
-        plot_order = True
-        # PlotLattice(triangular_lat, ax_lat, pi_flux_model.pos_hoppings_list, plot_nn_couplings=False, plot_order=plot_order)
-        # PlotLattice(triangular_lat, ax_lat, plot_nn_couplings=False, plot_order=plot_order)
         PlotModelHoppingsByPhase(pi_flux_model, ax_lat)
-        #PlotLattice(triangular_lat, ax_lat, pi_flux_model.neg_hoppings_list, plot_nn_couplings=False,
-        #            nnn_line_style="--", plot_order=plot_order)
         fig_lat.savefig(results_dir + "lattice.png", bbox_inches='tight')
-        #PrintCouplings(pi_flux_model, True)
         if local:
             plt.show()
 
@@ -1482,17 +1530,21 @@ def TriangularPiFluxAnsatz(Lx=2, Ly=3, spinfull=True, bc_MPS="finite",
     assert(geometry == "XC" or geometry == "YC")
     flavors = 2 if spinfull else 1
     unitcell_width = flavors if geometry == "YC" else 2 * flavors
-
-    model = pi_flux_model if finite else None
     psi_from_slater, C, lat = GetTriangularFluxSlaterMPS(Lx, Ly, spinfull, site, geometry,
                                                          slater_trunc_par, unitcell_width, bc_MPS,
-                                                         gs_manifold_index, pi_flux_model=model, flux=flux,
-                                                         particle_hole=particle_hole)
+                                                         gs_manifold_index, model_type,
+                                                         flux=flux, particle_hole=particle_hole)
     print("psi slater normalization before canonization: ", psi_from_slater.overlap(psi_from_slater))
     psi_from_slater.canonical_form()
     if not finite:
-        C, _ = CalculateExactCMatrixForPiFlux(2 * Lx_exact_C_infinite, Ly, spinfull, site, geometry, gs_manifold_index,
-                                              flux=flux, particle_hole=particle_hole)
+        finite_bc_MPS = "finite"
+        triangular_lattice_for_corr = GetPiFluxTriangularLattice(site, 2 * Lx_exact_C_infinite, Ly, spinfull,
+                                                                 finite_bc_MPS, geometry)
+        model_params = {"init_H_MPO": False, "monopole_Q": 0, "flux": flux,
+                        "particle_hole": particle_hole, "lattice":triangular_lattice_for_corr}
+
+        C, _ = CalculateExactCMatrixForPiFlux(gs_manifold_index, model_params, model_type,
+                                              particle_hole=particle_hole)
 
     sites1 = None
     sites2 = None
@@ -1569,7 +1621,8 @@ def RescaleMPSForGutzwiller(psi):
         psi._B[i] = Bi.scale_axis(1.5 * np.ones(physical_axis_shape), axis=1)
 
 
-def TriangularPiFluxGutzwiller(Ly, geometry, bc_MPS, gs_manifold_index, Lx=6, chi_max=3000, flux=0.0):
+def TriangularPiFluxGutzwiller(Ly, geometry, bc_MPS, gs_manifold_index, model_type,
+                               Lx=6, chi_max=3000, flux=0.0):
     site = FermionSite(conserve='N')
     spin_site = SpinHalfSite(conserve='Sz')
     gutzwiller_results_dir = "LocalGutzwillerResults/"
@@ -1579,7 +1632,7 @@ def TriangularPiFluxGutzwiller(Ly, geometry, bc_MPS, gs_manifold_index, Lx=6, ch
     debug = False
     if local:
         results_dir = CreateGutzwillerCaseDir(gutzwiller_results_dir, Lx, Ly, chi_max, flux, geometry, bc_MPS,
-                                              gs_manifold_index)
+                                              gs_manifold_index, model_type)
     else:
         results_dir = "./"
     assert((bc_MPS == "finite") or (bc_MPS == "infinite"))
@@ -1589,12 +1642,14 @@ def TriangularPiFluxGutzwiller(Ly, geometry, bc_MPS, gs_manifold_index, Lx=6, ch
     #PlotLattice(lat, ax_lat)
     #plt.show()
 
-    slater_trunc_par = {"chi_max": chi_max, "svd_min": 1e-7, "degeneracy_tol": 1e-12}
+    slater_trunc_par = {"chi_max": chi_max, "svd_min": 1e-6, "degeneracy_tol": 1e-12}
     assert (geometry == "XC" or geometry == "YC")
     flavors = 2 if spinfull else 1
     unitcell_width = flavors if geometry == "YC" else 2 * flavors
+
     psi_from_slater, C, triangular_lat = GetTriangularFluxSlaterMPS(Lx, Ly, spinfull, site, geometry, slater_trunc_par,
                                                                     unitcell_width, bc_MPS, gs_manifold_index,
+                                                                    model_type,
                                                                     flux=flux, particle_hole=particle_hole)
 
     if debug and finite:
@@ -1753,7 +1808,7 @@ def GutzwillerDMRGOverlaps(J2s, gutz_dir, Lx, Ly, gutz_chi_max, flux_gutz,
     dmrg_energies = []
     gutz_energies = []
     gutz_case_dir = CreateGutzwillerCaseDir(gutz_dir, Lx, Ly, gutz_chi_max, flux_gutz, geometry,
-                                            bc_MPS, gutz_gs_manifold_index)
+                                            bc_MPS, gutz_gs_manifold_index, model_type=None)
     finite = (bc_MPS == "finite")
     bc = ("open", "periodic") if finite else ("periodic", "periodic")
     for J2 in J2s:
@@ -2097,6 +2152,13 @@ if __name__ == "__main__":
     # for i in range(4):
     # TriangularPiFluxGutzwiller(2, "XC", "infinite", 0, Lx=2, chi_max=1000, flux=0.0)
     # TriangularPiFluxGutzwiller(3, "XC", "infinite", 0, Lx=2, chi_max=1000, flux=1.0)
+
+    # TestZ2MeanFieldModel()
+    #TriangularPiFluxGutzwiller(8, "YC", "infinite", 0, Lx=2, chi_max=2500, flux=0.0)
+
+    #calculateGutzwillerEnergyTriangularJ1J2("LocalGutzwillerResults/", 2, 8, 2500, 0.0,
+    #                                        "infinite", 0.125, ("periodic", "periodic"), "YC",
+    #                                        0)
 
     # TriangularPiFluxGutzwiller(3, "XC", "finite", 0, Lx=200, chi_max=1000, flux=1.0)
     # TriangularPiFluxGutzwiller(3, "XC", "infinite", 0, Lx=2, chi_max=1000, flux=1.0)

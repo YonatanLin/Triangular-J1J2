@@ -1,0 +1,25 @@
+executable = /srv01/technion/yonlin/scripts/Triangular-J1J2/JobUtilities/RunGutzwiller.sh
+arguments = --Lx $(Lx) --Ly $(Ly) --chi $(chi) --flux $(flux) --geometry $(geometry) --bc_MPS $(bc_MPS) --gs_manifold_index $(gs_manifold_index) --model_type $(model_type)
+root_dir = /storage/ph_keselman/yonlin/TriangularJ1J2
+case_folder = $(root_dir)/$(case_folder_name)
+log_name = run
+
+log = $(case_folder)/$(log_name).log
+output = $(case_folder)/$(log_name).out
+error = $(case_folder)/$(log_name).err
+
+request_cpus = 10
+#RequestMemory = 2 * (12 * $(Lx) * $(Ly) * $(chi) * $(chi) / 648000000) * 1024
+chi_factor = (real($(chi)) / 20000.0) * (real($(chi)) / 20000.0)
+base_memory = (real($(Lx) * $(Ly) * $(chi_factor))) * 1024
+memory = ifThenElse( "$(geometry)" == "XC", \
+                      4 * $(base_memory), \
+                      $(base_memory) )
+RequestMemory = ifThenElse("$(bc_MPS)" == "finite", \ 
+			    $(memory), \
+			    10 * $(memory) / $(Lx))
+Initialdir = $(case_folder)
+universe = vanilla
+input_file = $(root_dir)/gutz_condor_cases.txt
+
+queue Lx, Ly, chi, flux, geometry, bc_MPS, gs_manifold_index, model_type, case_folder_name from $(input_file)

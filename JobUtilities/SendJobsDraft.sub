@@ -1,0 +1,14 @@
+executable = /srv01/technion/yonlin/scripts/Triangular-J1J2/JobUtilities/RunDraft.sh
+root_dir = /storage/ph_keselman/yonlin/TriangularJ1J2/Draft
+log_name = run
+
+log = $(root_dir)/$(log_name).log
+output = $(root_dir)/$(log_name).out
+error = $(root_dir)/$(log_name).err
+
+request_cpus = 10
+RequestMemory = 8000
+Initialdir = $(root_dir)
+universe = vanilla
+
+queue

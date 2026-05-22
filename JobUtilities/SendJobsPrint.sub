@@ -1,0 +1,15 @@
+executable = /srv01/technion/yonlin/scripts/Triangular-J1J2/JobUtilities/RunPrint.sh
+root_dir = /storage/ph_keselman/yonlin/TriangularJ1J2
+case_folder = $(root_dir)
+log_name = run_flux
+
+log = $(log_name).log
+output = $(log_name).out
+error = $(log_name).err
+
+request_cpus = 1
+RequestMemory = 10MB 
+Initialdir = $(case_folder)
+universe = vanilla
+
+queue

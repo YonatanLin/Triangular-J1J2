@@ -1,0 +1,17 @@
+executable = /srv01/technion/yonlin/scripts/Triangular-J1J2/JobUtilities/RunMonopole.sh
+arguments = --Lx $(Lx) --Ly $(Ly) --chi $(chi) --monopole_Q $(monopole_Q) --magnetization $(magnetization)
+root_dir = /storage/ph_keselman/yonlin/TriangularJ1J2
+case_folder = $(root_dir)/$(case_folder_name)
+log_name = run
+
+log = $(case_folder)/$(log_name).log
+output = $(case_folder)/$(log_name).out
+error = $(case_folder)/$(log_name).err
+
+request_cpus = 10
+RequestMemory = (12 * $(Lx) * $(Ly) * $(chi) * $(chi) / 648000000) * 1024
+Initialdir = $(case_folder)
+universe = vanilla
+input_file = $(root_dir)/monopole_condor_cases.txt
+
+queue Lx, Ly, chi, monopole_Q, magnetization, case_folder_name from $(input_file)

@@ -1,0 +1,17 @@
+executable = /srv01/technion/yonlin/scripts/Triangular-J1J2/JobUtilities/RunDMRGGutzwillerComparison.sh
+arguments = --Lx $(Lx) --Ly $(Ly) --geometry $(geometry) --bc_MPS $(bc_MPS) --dmrg_initial_state $(dmrg_initial_state) --dmrg_conserve $(dmrg_conserve) --dmrg_chi_max $(dmrg_chi_max) --dmrg_max_sweeps $(dmrg_max_sweeps) --dmrg_parent_dir $(dmrg_parent_dir) --gutz_chi_max $(gutz_chi_max) --gutz_flux $(gutz_flux) --gutz_gs_manifold_index $(gutz_gs_manifold_index) --gutz_parent_dir $(gutz_parent_dir) --J2_file $(J2_file)
+root_dir = /storage/ph_keselman/yonlin/TriangularJ1J2/CompareGutzwillerAndDMRG
+#log_name = run_J2_$(J2)_InitDMRG_$(dmrg_initial_state)_flux_$(flux_gutz)
+log_name = run_geom_$(geometry)_flux_$(gutz_flux)
+
+log = $(root_dir)/$(log_name).log
+output = $(root_dir)/$(log_name).out
+error = $(root_dir)/$(log_name).err
+
+request_cpus = 10
+RequestMemory = 10000
+Initialdir = $(root_dir)
+universe = vanilla
+input_file = $(root_dir)/comparison_cases.txt
+
+queue Lx, Ly, geometry, bc_MPS, dmrg_initial_state, dmrg_conserve, dmrg_chi_max, dmrg_max_sweeps, dmrg_parent_dir, gutz_chi_max, gutz_flux, gutz_gs_manifold_index, gutz_parent_dir, J2_file from $(input_file)

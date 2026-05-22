@@ -1,0 +1,25 @@
+executable = /srv01/technion/yonlin/scripts/Triangular-J1J2/JobUtilities/Run.sh
+arguments = --Lx $(Lx) --Ly $(Ly) --bc $(bc) --bc_MPS $(bc_MPS) --conserve $(conserve) --initial_state $(initial_state) --J2 $(J2) --geometry $(geometry) --chi $(chi) --max_sweeps $(max_sweeps) --initial_psi_dir $(initial_psi_dir)
+root_dir = /storage/ph_keselman/yonlin/TriangularJ1J2
+case_folder = $(root_dir)/$(case_folder_name)
+log_name = run
+
+log = $(case_folder)/$(log_name).log
+output = $(case_folder)/$(log_name).out
+error = $(case_folder)/$(log_name).err
+
+request_cpus = 10
+chi_mem_factor = (real($(chi)) * real($(chi))) / (16000000.0)
+memory_factor = $(chi_mem_factor) * (real(130 * $(Lx) * $(Ly)) / 72.0) * 1024
+# memory_factor = $(chi_mem_factor) * 1000
+memory = ifThenElse( "$(geometry)" == "XC", \
+                      $(memory_factor) * 2, \
+                      $(memory_factor))
+RequestMemory = ifThenElse( "$(bc_MPS)" == "finite", \
+			    $(memory), \
+ 			    4 * $(memory) )
+Initialdir = $(case_folder)
+universe = vanilla
+input_file = $(root_dir)/condor_cases.txt
+
+queue Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, geometry, chi, max_sweeps, initial_psi_dir, case_folder_name from $(input_file)

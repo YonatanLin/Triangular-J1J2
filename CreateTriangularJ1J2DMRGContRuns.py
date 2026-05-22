@@ -6,7 +6,8 @@ import re
 import os
 
 
-def AddTriangularCaseDirsToCondorCases(main_results_dir, condor_cases_file="condor_cases.txt", chi_input=None):
+def AddTriangularCaseDirsToCondorCases(main_results_dir, condor_cases_file="condor_cases.txt", chi_input=None,
+        max_sweeps_input=None):
     geometry_re = re.compile(r"^Lx_(.+)_Ly_(.+)_bc_([op]{2})_(.+)$")
     params_re = re.compile(r"^(.+)_init_(.+)_conserve_(.+)_J2_(.+)_chi_(.+)_maxsweeps_(.+)$")
 
@@ -37,8 +38,13 @@ def AddTriangularCaseDirsToCondorCases(main_results_dir, condor_cases_file="cond
                 cont_folder = str(case_folder).replace(_initial_state, f"cont_{_initial_state}")
                 if chi_input is not None:
                     #print(f"replacing {chi} with ")
-                    cont_folder = str(cont_folder).replace(chi, f"{chi_input}")
+                    #print(cont_folder)
+                    #print(f"replacing chi_{chi} with chi_{chi_input}")
+                    cont_folder = str(cont_folder).replace(f"chi_{chi}", f"chi_{chi_input}")
                     chi = chi_input
+                if max_sweeps_input is not None:
+                    cont_folder = str(cont_folder).replace(f"maxsweeps_{max_sweeps}", f"maxsweeps_{max_sweeps_input}")
+                    max_sweeps = max_sweeps_input
                 Path(cont_folder).mkdir(parents=True, exist_ok=True)
                 case_folder_absolute = os.getcwd() + "/" + case_folder
                 row = {
@@ -60,6 +66,8 @@ def AddTriangularCaseDirsToCondorCases(main_results_dir, condor_cases_file="cond
 if __name__ == "__main__":
     if len(sys.argv) == 3:
         AddTriangularCaseDirsToCondorCases(sys.argv[1], chi_input=sys.argv[2])
+    elif len(sys.argv) == 4:
+        AddTriangularCaseDirsToCondorCases(sys.argv[1], chi_input=sys.argv[2], max_sweeps_input=sys.argv[3])
     else:
         AddTriangularCaseDirsToCondorCases(sys.argv[1])
 

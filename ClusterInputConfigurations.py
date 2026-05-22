@@ -11,6 +11,14 @@ def parse_bool(value):
         return False
     raise argparse.ArgumentTypeError(f"Invalid boolean value: {value}")
 
+
+def parse_optional(value):
+    if value == "None":
+        return None
+    else:
+        return int(value)
+
+
 dmrg_input_params = [
     ("Lx", int),
     ("Ly", int),
@@ -38,8 +46,8 @@ gutzwiller_input_params = [
 
 
 dmrg_gutz_comp_input_params = [("Lx", int), ("Ly", int), ("geometry", str), ("bc_MPS", str),
-                               ("bc", str), ("dmrg_initial_state", str), ("dmrg_conserve", parse_bool),
-                               ("dmrg_chi_max", int), ("dmrg_max_sweeps", int), ("dmrg_parent_dir", str),
+                               ("dmrg_initial_state", str), ("dmrg_conserve", int),
+                               ("dmrg_chi_max", parse_optional), ("dmrg_max_sweeps", parse_optional), ("dmrg_parent_dir", str),
                                ("gutz_chi_max", int), ("gutz_flux", float), ("gutz_gs_manifold_index", int),
                                ("gutz_parent_dir", str), ("J2_file", str)]
 

@@ -1746,19 +1746,19 @@ def PlotRealSpaceCorrelations(results_dir):
     ax.legend()
 
 
-def GutzwillerDMRGOverlaps(J2s, gutz_dir, Lx, Ly, gutz_chi_max, flux_gutz,
+def GutzwillerDMRGOverlaps(J2s, gutz_parent_dir, Lx, Ly, gutz_chi_max, gutz_flux,
                            output_dir, dmrg_initial_state, dmrg_parent_dir, geometry, bc_MPS, gutz_gs_manifold_index,
-                           dmrg_chi_max, dmrg_max_sweeps):
+                           dmrg_chi_max, dmrg_max_sweeps, dmrg_conserve):
     overlaps = []
     dmrg_energies = []
     gutz_energies = []
-    gutz_case_dir = CreateGutzwillerCaseDir(gutz_dir, Lx, Ly, gutz_chi_max, flux_gutz, geometry,
+    gutz_case_dir = CreateGutzwillerCaseDir(gutz_parent_dir, Lx, Ly, gutz_chi_max, gutz_flux, geometry,
                                             bc_MPS, gutz_gs_manifold_index)
     finite = (bc_MPS == "finite")
     bc = ("open", "periodic") if finite else ("periodic", "periodic")
     for J2 in J2s:
         dmrg_geom_dir, dmrg_params_dir = (
-            TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, dmrg_initial_state, 1, J2, geometry, dmrg_chi_max, dmrg_max_sweeps))
+            TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, dmrg_initial_state, dmrg_conserve, J2, geometry, dmrg_chi_max, dmrg_max_sweeps))
         dmrg_dir = dmrg_parent_dir + dmrg_geom_dir + dmrg_params_dir
         
         unitcell_width = 2 if geometry == "XC" else 1
@@ -1769,7 +1769,7 @@ def GutzwillerDMRGOverlaps(J2s, gutz_dir, Lx, Ly, gutz_chi_max, flux_gutz,
             dmrg_energy /= (Lx * Ly * unitcell_width)
         dmrg_energies.append(dmrg_energy)
 
-        gutz_energy = calculateGutzwillerEnergyTriangularJ1J2(gutz_dir, Lx, Ly, gutz_chi_max, flux_gutz, bc_MPS, J2, bc,
+        gutz_energy = calculateGutzwillerEnergyTriangularJ1J2(gutz_parent_dir, Lx, Ly, gutz_chi_max, gutz_flux, bc_MPS, J2, bc,
                                                               geometry, gutz_gs_manifold_index)
         gutz_energies.append(gutz_energy)
 

@@ -10,14 +10,15 @@ error = $(case_folder)/$(log_name).err
 
 request_cpus = 10
 chi_mem_factor = (real($(chi)) * real($(chi))) / (16000000.0)
-memory_factor = $(chi_mem_factor) * (real(130 * $(Lx) * $(Ly)) / 72.0) * 1024
-# memory_factor = $(chi_mem_factor) * 1000
+memory_factor = $(chi_mem_factor) * (real(110 * $(Lx) * $(Ly)) / 72.0) * 1024
 memory = ifThenElse( "$(geometry)" == "XC", \
                       $(memory_factor) * 2, \
                       $(memory_factor))
 RequestMemory = ifThenElse( "$(bc_MPS)" == "finite", \
 			    $(memory), \
  			    4 * $(memory) )
+#RequestMemory = 50000
+
 Initialdir = $(case_folder)
 universe = vanilla
 input_file = $(root_dir)/condor_cases.txt

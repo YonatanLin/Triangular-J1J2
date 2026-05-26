@@ -17,7 +17,7 @@ memory = ifThenElse( "$(geometry)" == "XC", \
                       $(base_memory) )
 RequestMemory = ifThenElse("$(bc_MPS)" == "finite", \ 
 			    $(memory), \
-			    10 * $(memory) / $(Lx))
+			    17 * $(memory) / $(Lx))
 Initialdir = $(case_folder)
 universe = vanilla
 input_file = $(root_dir)/gutz_condor_cases.txt

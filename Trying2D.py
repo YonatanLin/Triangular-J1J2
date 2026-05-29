@@ -881,6 +881,7 @@ def GetTriangularLatticeInitialState(initial_state, triangular_lat, initial_psi_
         print(f"loading initial state: {initial_psi_path}")
         with open(initial_psi_path, 'rb') as psi_load:
             psi = pickle.load(psi_load)
+        #psi.canonical_form()
 
     else:
         raise ValueError("unrecognized initial state")
@@ -1030,8 +1031,14 @@ def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, conserve=True, initial_state="Random"
 
     with open(results_dir + "dmrg_params.json", "w") as f:
         json.dump(dmrg_params, f, indent=4)
-    with open(results_dir + 'psi_initial' + ".pkl", 'wb') as f:
-        pickle.dump(psi, f)
+
+
+    if initialStateFromFile(initial_state):
+        with open("psi_initial_dir.txt", 'w') as f:
+            f.write(initial_psi_dir)
+    else:
+        with open(results_dir + 'psi_initial' + ".pkl", 'wb') as f:
+            pickle.dump(psi, f)
 
     #psi_120 = TestCorrelationsWithNontrivialUnitCell(Lx, Ly, "120", geometry)
     #print("energy in 120 state:" , J1J2_model.H_MPO.expectation_value(psi_120) / (Lx * Ly))
@@ -1040,6 +1047,10 @@ def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, conserve=True, initial_state="Random"
     RunDMRG(J1J2_model, psi, dmrg_params=dmrg_params, print_final_results=True, results_dir=results_dir,
             energies_fig_title="energies.png")
 
+
+    psi.canonical_form()
+    E_final = J1J2_model.H_MPO.expectation_value(psi)
+    print(f"Energy calculated from full MPO: {E_final}")
     with open(results_dir + 'psi_gs' + ".pkl", 'wb') as f:
         pickle.dump(psi, f)
 
@@ -1615,6 +1626,13 @@ def calculateOverlapBetweenGutzwillerAndDMRG(dmrg_dir, gutzwiller_dir,
         psi_dmrg = pickle.load(f_dmrg)
     with open(gutzwiller_dir + psi_gutz_fname, 'rb') as f_gutz:
         psi_gutz = pickle.load(f_gutz)
+    
+    #compressed_chi = 2000
+    #max_trunc_err_dmrg = psi_dmrg.compress({"compression_method":'SVD', "trunc_params":{"chi_min":compressed_chi, "chi_max":compressed_chi}})
+    #max_trunc_err_gutz = psi_gutz.compress({"compression_method":'SVD', "trunc_params":{"chi_min":compressed_chi, "chi_max":compressed_chi}})
+    #print(f"compressed dmrg psi with max truncation error {max_trunc_err_dmrg} and gutzwiller psi with max truncation error {max_trunc_err_gutz}")
+
+    #overlap = abs(psi_dmrg.overlap(psi_gutz, num_ev=5))
     overlap = abs(psi_dmrg.overlap(psi_gutz))
     print("overlap between wavefunctions: ", overlap)
     return overlap
@@ -1812,14 +1830,19 @@ def PlotRealSpaceCorrelations(results_dir):
 
 def GutzwillerDMRGOverlaps(J2s, gutz_parent_dir, Lx, Ly, gutz_chi_max, gutz_flux,
                            output_dir, dmrg_initial_state, dmrg_parent_dir, geometry, bc_MPS, gutz_gs_manifold_index,
-                           dmrg_chi_max, dmrg_max_sweeps, dmrg_conserve):
+                           dmrg_chi_max, dmrg_max_sweeps, dmrg_conserve, model_type):
     overlaps = []
     dmrg_energies = []
     gutz_energies = []
     gutz_case_dir = CreateGutzwillerCaseDir(gutz_parent_dir, Lx, Ly, gutz_chi_max, gutz_flux, geometry,
-                                            bc_MPS, gutz_gs_manifold_index, model_type=None)
+                                            bc_MPS, gutz_gs_manifold_index, model_type=model_type)
     finite = (bc_MPS == "finite")
     bc = ("open", "periodic") if finite else ("periodic", "periodic")
+    
+    with open(output_dir + "data.txt", 'w') as f:
+        f.write(f"dmrg parent dir: {dmrg_parent_dir}\n")
+        f.write(f"gutzwiller parent dir: {gutz_parent_dir}\n")
+
     for J2 in J2s:
         dmrg_geom_dir, dmrg_params_dir = (
             TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, dmrg_initial_state, dmrg_conserve, J2, geometry, dmrg_chi_max, dmrg_max_sweeps))
@@ -1834,7 +1857,7 @@ def GutzwillerDMRGOverlaps(J2s, gutz_parent_dir, Lx, Ly, gutz_chi_max, gutz_flux
         dmrg_energies.append(dmrg_energy)
 
         gutz_energy = calculateGutzwillerEnergyTriangularJ1J2(gutz_parent_dir, Lx, Ly, gutz_chi_max, gutz_flux, bc_MPS, J2, bc,
-                                                              geometry, gutz_gs_manifold_index)
+                                                              geometry, gutz_gs_manifold_index, model_type=model_type)
         gutz_energies.append(gutz_energy)
 
         PlotCorrelationsFromFiles(dmrg_dir, show_energies=False, output_dir=output_dir,

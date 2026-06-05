@@ -48,7 +48,7 @@ gutzwiller_input_params = [
     ("geometry", str),
     ("bc_MPS", str),
     ("gs_manifold_index", int),
-    ("model_type", optional_str)
+    ("model_type", optional_str),
 ]
 
 

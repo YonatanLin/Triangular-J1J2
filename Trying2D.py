@@ -33,7 +33,7 @@ if not local:
 
 default_chi_max = 3000
 default_dmrg_params = {'mixer': True, 'max_E_err': 1.0e-10, 'trunc_params': {'chi_max': default_chi_max, 'svd_min': 1.0e-7},
-                   'combine': True, 'chi_list': {0: 50, 3: 100, 7: default_chi_max}, 'min_sweeps': 7, 'max_sweeps': 8,
+                    'combine': True, 'chi_list': {0: 50, 3: 100, 7: default_chi_max}, 'min_sweeps': 7, 'max_sweeps': 8,
                    'N_sweeps_check': 1}
 code_dir = "C:/Users/yonli/Desktop/Thesis/Triangular J1J2/Code/"
 
@@ -60,16 +60,17 @@ def SetZeroTensorChargesInGutzwillerWavefunction(psi, magz):
         leg_vL, leg_p, leg_vR = [B.get_leg(label) for label in ["vL", "p", "vR"]]
         leg_p.chinfo = chinfo_s
         leg_p.charges = spin_leg.charges
-
+        new_qtot = 0
         leg_vL.chinfo = chinfo_s
         if idx == 0:
             leg_vL.charges -= idx
-
+        if idx == len(psi._B) - 1:
+            new_qtot = 2 * magz
         leg_vR.chinfo = chinfo_s
         if idx != len(psi._B) - 1:
             leg_vR.charges -= idx + 1
 
-        B_modified_charge = tenpy.Array.from_ndarray(B.to_ndarray(), [leg_vL, leg_p, leg_vR], qtotal=[0],
+        B_modified_charge = tenpy.Array.from_ndarray(B.to_ndarray(), [leg_vL, leg_p, leg_vR], qtotal=[new_qtot],
                                                      labels=["vL", "p", "vR"])
         psi._B[idx] = B_modified_charge
 
@@ -268,13 +269,16 @@ def ChangeChiInDMRGParams(dmrg_params, chi_max):
 
 
 def CreateGutzwillerCaseDir(main_results_dir, Lx, Ly, chi_max, flux, geometry, bc_MPS,
-                            gs_manifold_index, model_type):
+                            gs_manifold_index, model_type, magz):
     Path(main_results_dir).mkdir(parents=True, exist_ok=True)
-    case_name = f"{bc_MPS}_Lx_{Lx}_Ly_{Ly}_chi_{chi_max}_flux_{flux}_{geometry}_gsindex_{gs_manifold_index}/"
+    case_name = f"{bc_MPS}_Lx_{Lx}_Ly_{Ly}_chi_{chi_max}_flux_{flux}_{geometry}_gsindex_{gs_manifold_index}"
 
     if model_type is not None:
         case_name = f"{model_type}_" + case_name
+    if magz is not None:
+        case_name += f"_magz_{magz}"
 
+    case_name += "/"
     gutz_dir = main_results_dir + case_name
     Path(gutz_dir).mkdir(parents=True, exist_ok=True)
     return gutz_dir
@@ -346,6 +350,114 @@ def CalculateSpinSpinCorrelations(psi, sites1=None, sites2=None, inf_mps_unitcel
     zz_corr = psi.correlation_function("Sz", "Sz", sites1=sites1, sites2=sites2)
     spin_corr_x = 0.5 * (pm_corr + mp_corr) + zz_corr
     return spin_corr_x
+
+
+def _nearest_neighbor_dimer_bonds_by_site(psi, lat, sites, pair_key="nearest_neighbors"):
+    bonds_by_site = {int(site): [] for site in sites}
+    base_bonds = []
+    for u1, u2, dx in lat.pairs[pair_key]:
+        mps_sites_1, mps_sites_2, _, _ = lat.possible_couplings(u1, u2, dx)
+        for site1, site2 in zip(mps_sites_1, mps_sites_2):
+            site1 = int(site1)
+            site2 = int(site2)
+            base_bonds.append((site1, site2))
+
+    if psi.bc == "infinite":
+        min_requested_site = min(bonds_by_site)
+        max_requested_site = max(bonds_by_site)
+        min_base_site = min(min(bond) for bond in base_bonds)
+        max_base_site = max(max(bond) for bond in base_bonds)
+        min_shift = (min_requested_site - max_base_site) // psi.L - 1
+        max_shift = (max_requested_site - min_base_site) // psi.L + 2
+        shifts = [shift * psi.L for shift in range(min_shift, max_shift)]
+    else:
+        shifts = [0]
+
+    for shift in shifts:
+        for site1, site2 in base_bonds:
+            shifted_bond = (site1 + shift, site2 + shift)
+            if shifted_bond[0] in bonds_by_site:
+                bonds_by_site[shifted_bond[0]].append(shifted_bond)
+            if shifted_bond[1] in bonds_by_site:
+                bonds_by_site[shifted_bond[1]].append(shifted_bond)
+    return bonds_by_site
+
+
+def _spin_dot_component_terms(site1, site2):
+    return [
+        (0.5, [("Sp", site1), ("Sm", site2)]),
+        (0.5, [("Sm", site1), ("Sp", site2)]),
+        (1.0, [("Sz", site1), ("Sz", site2)]),
+    ]
+
+
+def _site_array_for_correlations(psi, lat, sites, inf_mps_unitcell_fac):
+    if sites is not None:
+        return np.asarray(sites, dtype=int)
+    if psi.bc == "infinite":
+        return np.arange(0, inf_mps_unitcell_fac * psi.L)
+    return np.arange(0, lat.N_sites)
+
+
+def CalculateDimerDimerCorrelations(psi, lat, sites1=None, sites2=None, inf_mps_unitcell_fac=3,
+                                    pair_key="nearest_neighbors"):
+    """
+    Calculate <D_i D_j>, where D_i = sum_{k nearest neighbor of i} S_i . S_k.
+
+    The result is not connected, matching CalculateSpinSpinCorrelations.
+    """
+    sites1 = _site_array_for_correlations(psi, lat, sites1, inf_mps_unitcell_fac)
+    sites2 = _site_array_for_correlations(psi, lat, sites2, inf_mps_unitcell_fac)
+    if len(sites1) == 0 or len(sites2) == 0:
+        return np.zeros((len(sites1), len(sites2)), dtype=float)
+
+    min_requested_site = min(np.min(sites1), np.min(sites2))
+    max_requested_site = max(np.max(sites1), np.max(sites2))
+    if psi.bc != "infinite" and (min_requested_site < 0 or max_requested_site >= lat.N_sites):
+        raise ValueError("lat.N_sites must cover all requested correlation sites")
+
+    sites = np.unique(np.concatenate([sites1, sites2]))
+    bonds_by_site = _nearest_neighbor_dimer_bonds_by_site(psi, lat, sites, pair_key)
+    dimer_corr = np.zeros((len(sites1), len(sites2)), dtype=complex)
+    for ind1, site1 in enumerate(sites1):
+        for ind2, site2 in enumerate(sites2):
+            if ind2 < ind1: # only consider unique pairs without reagrding order
+                continue
+            corr = 0.0
+            for bond1 in bonds_by_site[int(site1)]:
+                for strength1, term1 in _spin_dot_component_terms(*bond1):
+                    for bond2 in bonds_by_site[int(site2)]:
+                        for strength2, term2 in _spin_dot_component_terms(*bond2):
+                            term1_expec = psi.expectation_value_term(term1)
+                            term2_expec = psi.expectation_value_term(term2)
+                            corr += strength1 * strength2 * (psi.expectation_value_term(term1 + term2))
+            dimer_corr[ind1, ind2] = corr
+            dimer_corr[ind2, ind1] = corr #symmetrize
+
+    if np.max(np.abs(np.imag(dimer_corr))) < 1e-13:
+        return np.real(dimer_corr)
+    return dimer_corr
+
+
+def TestDimerDimerCorrelations():
+    site = SpinHalfSite(conserve=None)
+    lat = BuildTriangularLattice(6, 6, site, "finite", bc=("open", "open"), geometry="YC")
+    psi = MPS.from_product_state(
+        lat.mps_sites(),
+        ["up"] * lat.N_sites,
+        bc=lat.bc_MPS,
+        unit_cell_width=lat.mps_unit_cell_width,
+    )
+
+    dimer_corr = CalculateDimerDimerCorrelations(psi, lat)
+    expected_dimer_corr = np.zeros((lat.N_sites, lat.N_sites))
+    assert(dimer_corr.shape == expected_dimer_corr.shape)
+    assert(np.max(np.abs(dimer_corr - expected_dimer_corr)) < 1e-13)
+
+    partial_corr = CalculateDimerDimerCorrelations(psi, lat, sites1=[0, 3], sites2=[0, 3])
+    assert(partial_corr.shape == (2, 2))
+    assert(np.max(np.abs(partial_corr)) < 1e-13)
+    print("success")
 
 
 def PlotLattice(lat, ax, additional_couplings_to_plot=None, plot_nn_couplings=True, nnn_color="green",
@@ -940,9 +1052,9 @@ def GenerateJ1J2SpinTriangularModel(J2, triangular_lat):
 
 
 def calculateGutzwillerEnergyTriangularJ1J2(gutz_results_dir, Lx, Ly, chi, flux, bc_MPS, J2, bc, geometry,
-                                            gs_manifold_index, reorder_lattice=False, model_type=None):
+                                            gs_manifold_index, reorder_lattice=False, model_type=None, magz=None):
     psi_path = CreateGutzwillerCaseDir(gutz_results_dir, Lx, Ly, chi, flux, geometry,
-                                       bc_MPS, gs_manifold_index, model_type) + "/psi_gutzwiller.pkl"
+                                       bc_MPS, gs_manifold_index, model_type, magz) + "/psi_gutzwiller.pkl"
     site = SpinHalfSite(conserve="Sz")
 
     with open(psi_path, 'rb') as f:
@@ -1451,9 +1563,8 @@ def GetTriangularFluxSlaterMPS(Lx, Ly, spinfull, site, geometry, slater_trunc_pa
                                bc_MPS, gs_manifold_index, model_type, flux=0.0, particle_hole=True,
                                Lx_short_iMPS=Lx_short_pi_flux_iMPS, magz=0):
     zero_energy_tol = 1e3 * slater_trunc_par["degeneracy_tol"]
-
-    hopping_periodicity = 2
-    imps_unitcell = hopping_periodicity * unitcell_width * Ly
+    assert(Lx % 2 == 0), "pi-flux model requires even-sized unitcell"
+    imps_unitcell = unitcell_width * Lx * Ly
 
     C = None
     finite = (bc_MPS == "finite")
@@ -1478,7 +1589,7 @@ def GetTriangularFluxSlaterMPS(Lx, Ly, spinfull, site, geometry, slater_trunc_pa
 
         psi_from_slater = slater.C_to_MPS(C, trunc_par=slater_trunc_par)
     else:
-        Lx_short, Lx_long = Lx_short_iMPS, Lx_short_iMPS + hopping_periodicity
+        Lx_short, Lx_long = Lx_short_iMPS, Lx_short_iMPS + Lx
         triangular_lat_short = GetPiFluxTriangularLattice(site, Lx_short, Ly, spinfull, finite_bc_MPS, geometry)
         model_params["lattice"] = triangular_lat_short
         magz_tot_from_magz_unitcell = magz * (triangular_lat_short.N_sites // imps_unitcell)
@@ -1510,7 +1621,7 @@ def GetTriangularFluxSlaterMPS(Lx, Ly, spinfull, site, geometry, slater_trunc_pa
                                                   cut=middle_site_mps_ind_short)
 
         infinite_bc = ("periodic", "periodic")
-        triangular_lattice = BuildTriangularLattice(Lx * hopping_periodicity, Ly, site, bc_MPS, infinite_bc,
+        triangular_lattice = BuildTriangularLattice(Lx, Ly, site, bc_MPS, infinite_bc,
                                                     geometry, spinfull)
 
 
@@ -1531,7 +1642,7 @@ def TriangularPiFluxAnsatz(Lx=2, Ly=3, spinfull=True, bc_MPS="finite",
     triangular_lat = GetPiFluxTriangularLattice(site, Lx, Ly, spinfull, bc_MPS, geometry)
 
     results_dir = CreateGutzwillerCaseDir(main_results_dir, Lx, Ly, chi_max_temfpy, flux, geometry, bc_MPS,
-                                          gs_manifold_index, model_type)
+                                          gs_manifold_index, model_type, magz)
 
     pi_flux_model_params = {"lattice": triangular_lat, "flux":flux, "init_H_MPO": True, "monopole_Q":0,
                             "particle_hole":particle_hole}
@@ -1659,7 +1770,7 @@ def SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, geometry, bc_MPS, g
     debug = False
     if local:
         results_dir = CreateGutzwillerCaseDir(gutzwiller_results_dir, Lx, Ly, chi_max, flux, geometry, bc_MPS,
-                                              gs_manifold_index, model_type)
+                                              gs_manifold_index, model_type, magz)
     else:
         results_dir = "./"
     assert((bc_MPS == "finite") or (bc_MPS == "infinite"))
@@ -1669,7 +1780,7 @@ def SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, geometry, bc_MPS, g
     #PlotLattice(lat, ax_lat)
     #plt.show()
 
-    slater_trunc_par = {"chi_max": chi_max, "svd_min": 1e-6, "degeneracy_tol": 1e-12}
+    slater_trunc_par = {"chi_max": chi_max, "svd_min": 2e-7, "degeneracy_tol": 1e-12}
     assert (geometry == "XC" or geometry == "YC")
     flavors = 2 if spinfull else 1
     unitcell_width = flavors if geometry == "YC" else 2 * flavors
@@ -1830,12 +1941,12 @@ def PlotRealSpaceCorrelations(results_dir):
 
 def GutzwillerDMRGOverlaps(J2s, gutz_parent_dir, Lx, Ly, gutz_chi_max, gutz_flux,
                            output_dir, dmrg_initial_state, dmrg_parent_dir, geometry, bc_MPS, gutz_gs_manifold_index,
-                           dmrg_chi_max, dmrg_max_sweeps, dmrg_conserve, model_type):
+                           dmrg_chi_max, dmrg_max_sweeps, dmrg_conserve, model_type, magz=None):
     overlaps = []
     dmrg_energies = []
     gutz_energies = []
     gutz_case_dir = CreateGutzwillerCaseDir(gutz_parent_dir, Lx, Ly, gutz_chi_max, gutz_flux, geometry,
-                                            bc_MPS, gutz_gs_manifold_index, model_type=model_type)
+                                            bc_MPS, gutz_gs_manifold_index, model_type=model_type, magz=magz)
     finite = (bc_MPS == "finite")
     bc = ("open", "periodic") if finite else ("periodic", "periodic")
     
@@ -2162,9 +2273,88 @@ def CompareGutzwillerGroundStateSectorsXC():
             plt.show()
 
 
+
+def calculateZ2EntanglementEntropy():
+    parent_dir = code_dir + "Z2_Topological_EE/"
+    cases = []
+    central_bonds = []
+    chis = [2000, 3000, 4000, 6000]
+    Lx = 2
+    Lys = [4, 5, 6, 7]
+    for i_Ly, Ly in enumerate(Lys):
+        cases.append(parent_dir + f"Z2_infinite_Lx_{Lx}_Ly_{Ly}_chi_{chis[i_Ly]}_flux_0.0_YC_gsindex_0/")
+        central_bonds.append(Lx * Ly // 2)
+
+    EEs = []
+    for i_case, case in enumerate(cases):
+        with open(case + "psi_gutzwiller.pkl", 'rb') as f:
+            psi = pickle.load(f)
+        EE_central_bond = psi.entanglement_entropy(bonds=[central_bonds[i_case]])[0]
+        EEs.append(EE_central_bond)
+
+    Lys = np.array(Lys)
+    EEs = np.array(EEs)
+    plt.plot(Lys, EEs, "o")
+
+    fit_params = FitLinearModel(Lys, EEs)
+    m, b, db, dm = fit_params["m"], fit_params["b"], fit_params["db"], fit_params["dm"]
+    print(f"Constant EE contribution: {b} +- {db}")
+    Ly_linplot = np.array([0, np.max(Lys)])
+    plt.plot(Ly_linplot, m*Ly_linplot + b, "-")
+
+    plt.show()
+
+
+def getEnergyDifferenceBetweenSectors(dir1, dir2, title, dmrg, fig_name):
+    data1 = np.loadtxt(dir1 + "data.txt")
+    data2 = np.loadtxt(dir2 + "data.txt")
+    J2 = data1[:, 0]
+    assert(np.max(np.abs(J2 - data2[:,0])) <= 0.0)
+    E_dmrg_1 = data1[:,2]
+    E_dmrg_2 = data2[:,2]
+    E_gutz_1 = data1[:, 3]
+    E_gutz_2 = data2[:, 3]
+    fig, ax = plt.subplots(figsize=(6, 5))
+    if dmrg:
+        ax.plot(J2, E_dmrg_1 - E_dmrg_2, "ro", label="DMRG")
+    else:
+        ax.plot(J2, E_gutz_1 - E_gutz_2, "bo", label="Gutzwiller")
+    ax.set_xlabel(r"$J_2$")
+    ax.set_ylabel(r"$\Delta$E")
+    ax.set_title(title)
+    fig.savefig(fig_name, bbox_inches='tight')
+    plt.show()
+
+
 if __name__ == "__main__":
-    output_dir = "C:/Users/yonli/Desktop/Thesis/Triangular J1J2/Meetings/4_5_2026/"
+    #output_dir = "C:/Users/yonli/Desktop/Thesis/Triangular J1J2/Meetings/4_5_2026/"
+
+    #dir = code_dir + "PiFluxAnsatzResults/Dirac_infinite_Lx_6_Ly_4_chi_1000_flux_0.0_YC_gsindex_0_magz_0/"
+    #with open(dir + "psi_slater.pkl", 'rb') as f:
+    #   psi = pickle.load(f)
+    #print("Here")
+    #getEnergyDifferenceBetweenSectors(code_dir + "../Meetings/1_6_2026/XC8/Flux0_Random/",
+    #                                  code_dir + "../Meetings/1_6_2026/XC8/Flux1_Random/", r"Flux 0 vs. Flux $\pi$",
+    #                                  False, "ener_diff_XC8_gutz.png")
+
+    #getEnergyDifferenceBetweenSectors(code_dir + "../Meetings/1_6_2026/YC9/Flux1_stripe/",
+    #                                  code_dir + "../Meetings/1_6_2026/YC9/Flux0_120/", r"Flux $\pi$ vs. Flux 0",
+    #                                  False, "ener_diff_XC6_gutz.png")
+
+    #case_dir = "../Meetings/1_6_2026/XC8/Flux0_Random/"
+    #PlotCorrelationsFromFiles(code_dir + case_dir, show_energies=False,
+    #                          output_dir=code_dir + case_dir, fig_title="gutz")
+    #case_dir = "../Meetings/1_6_2026/XC8/Flux1_Random/"
+    #PlotCorrelationsFromFiles(code_dir + case_dir, show_energies=False,
+    #                          output_dir=code_dir + case_dir, fig_title="gutz")
+    # calculateZ2EntanglementEntropy()
+    # TestDimerDimerCorrelations()
     # PlotSquareLatticeStructureFactor(Lx=3, Ly=3)
+
+    #dir = code_dir + "/LocalGutzwillerResults/Z2_infinite_Lx_2_Ly_4_chi_500_flux_0.0_YC_gsindex_0_magz_1/"
+    #with open(dir + "psi_gutzwiller.pkl", 'rb') as f:
+    #   psi = pickle.load(f)
+    #print(np.sum(psi.expectation_value("Sz")))
 
     #Lx = 6
     #Ly = 6
@@ -2176,7 +2366,7 @@ if __name__ == "__main__":
 
     # TriangularPiFluxAnsatz(2, 2, True, "infinite", 1500, 0.0, "XC")
     # TriangularPiFluxAnsatz(2, 2, True, "infinite", 4000, 1.0, "XC")
-    # TriangularPiFluxAnsatz(2, 4, False, "infinite", 1500, 0.0, "YC")
+    # TriangularPiFluxAnsatz(2, 4, False, "infinite", 1000, 0.0, "YC")
     # TriangularPiFluxAnsatz(2, 4, False, "infinite", 1500, 1.0, "YC")
 
     # fig, ax = plt.subplots(figsize=(6, 5))
@@ -2201,10 +2391,12 @@ if __name__ == "__main__":
     #calculateGutzwillerEnergyTriangularJ1J2(gutz_dir, Lx, Ly, chi_gutz, flux_gutz, geometry=geometry,
     #                                        J2=J2, bc_MPS="infinite", bc=("periodic", "periodic"))
 
-    #SpinonTriangularLatticeMeanFieldGutzwillerProjection(4, "YC", "infinite", 0, model_type_Z2,
-    #                                                     Lx=2, chi_max=500, flux=0.0, magz=1)
-    SpinonTriangularLatticeMeanFieldGutzwillerProjection(7, "YC", "infinite", 0, model_type_dirac,
-                                                         Lx=2, chi_max=500, flux=0.0, magz=0)
+    SpinonTriangularLatticeMeanFieldGutzwillerProjection(4, "YC", "infinite", 0, model_type_dirac,
+                                                         Lx=6, chi_max=1000, flux=0.0)
+
+    #SpinonTriangularLatticeMeanFieldGutzwillerProjection(7, "YC", "infinite", 0,
+    #                                                     model_type_dirac,
+    #                                                     Lx=2, chi_max=500, flux=0.0, magz=0)
 
     #####################
     # i = 1

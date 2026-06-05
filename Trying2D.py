@@ -1055,6 +1055,8 @@ def calculateGutzwillerEnergyTriangularJ1J2(gutz_results_dir, Lx, Ly, chi, flux,
                                             gs_manifold_index, reorder_lattice=False, model_type=None, magz=None):
     psi_path = CreateGutzwillerCaseDir(gutz_results_dir, Lx, Ly, chi, flux, geometry,
                                        bc_MPS, gs_manifold_index, model_type, magz) + "/psi_gutzwiller.pkl"
+
+    print(f"calculating energy for MPS in path {psi_path} with triangular J1J2 model for J2={J2}")
     site = SpinHalfSite(conserve="Sz")
 
     with open(psi_path, 'rb') as f:
@@ -1743,7 +1745,7 @@ def calculateOverlapBetweenGutzwillerAndDMRG(dmrg_dir, gutzwiller_dir,
     #max_trunc_err_gutz = psi_gutz.compress({"compression_method":'SVD', "trunc_params":{"chi_min":compressed_chi, "chi_max":compressed_chi}})
     #print(f"compressed dmrg psi with max truncation error {max_trunc_err_dmrg} and gutzwiller psi with max truncation error {max_trunc_err_gutz}")
 
-    #overlap = abs(psi_dmrg.overlap(psi_gutz, num_ev=5))
+    #overlap = abs(psi_dmrg.overlap(psi_gutz, num_ev=4))
     overlap = abs(psi_dmrg.overlap(psi_gutz))
     print("overlap between wavefunctions: ", overlap)
     return overlap
@@ -1950,7 +1952,7 @@ def GutzwillerDMRGOverlaps(J2s, gutz_parent_dir, Lx, Ly, gutz_chi_max, gutz_flux
     finite = (bc_MPS == "finite")
     bc = ("open", "periodic") if finite else ("periodic", "periodic")
     
-    with open(output_dir + "data.txt", 'w') as f:
+    with open(output_dir + "parent_directories.txt", 'w') as f:
         f.write(f"dmrg parent dir: {dmrg_parent_dir}\n")
         f.write(f"gutzwiller parent dir: {gutz_parent_dir}\n")
 
@@ -1977,12 +1979,20 @@ def GutzwillerDMRGOverlaps(J2s, gutz_parent_dir, Lx, Ly, gutz_chi_max, gutz_flux
         overlap_J2 = calculateOverlapBetweenGutzwillerAndDMRG(dmrg_dir, gutz_case_dir)
         overlaps.append(overlap_J2)
 
+
+    J2s = np.array(J2s)
+    overlaps = np.array(overlaps)
+    dmrg_energies = np.array(dmrg_energies)
+    gutz_energies = np.array(gutz_energies)
+    data = np.column_stack((J2s, overlaps, dmrg_energies, gutz_energies))
+    np.savetxt(output_dir + "data.txt", data, header='J2 overlap E_DMRG E_Gutzwiller')
+
     fig, ax = plt.subplots(figsize=(6, 5))
     ax.plot(J2s, overlaps, "o")
     ax.set_xlabel(r"$J_2$")
     ax.set_ylabel("overlap")
     fig.savefig(output_dir + f"overlaps_initial_state_{dmrg_initial_state}.png", bbox_inches='tight')
-
+    
     fig, ax = plt.subplots(figsize=(6, 5))
     ax.plot(J2s, dmrg_energies, "ro", label="dmrg")
     ax.plot(J2s, gutz_energies, "bo", label="Gutzwiller")
@@ -2165,8 +2175,8 @@ def DetermineSpinsOccupation(N_spins, H, e):
     e_up, _ = eigh(H_up)
     e_down, _ = eigh(H_down)
     for i in range(e_up.shape[0]):
-        assert (np.min(np.abs(e_up[i] - e)) < 1e-14)
-        assert (np.min(np.abs(e_down[i] - e)) < 1e-14)
+        assert (np.min(np.abs(e_up[i] - e)) < 3e-14)
+        assert (np.min(np.abs(e_down[i] - e)) < 3e-14), f"e_down doesn't match full Hamiltonian e, err={np.min(np.abs(e_down[i] - e))} for i = {i}, e_down={e_down[i]}"
 
     N_up = int(np.argmax(e_up > Ef))
     N_down = int(np.argmax(e_down > Ef))

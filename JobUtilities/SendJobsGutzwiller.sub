@@ -10,14 +10,17 @@ error = $(case_folder)/$(log_name).err
 
 request_cpus = 10
 #RequestMemory = 2 * (12 * $(Lx) * $(Ly) * $(chi) * $(chi) / 648000000) * 1024
-chi_factor = (real($(chi)) / 20000.0) * (real($(chi)) / 20000.0)
-base_memory = (real($(Lx) * $(Ly) * $(chi_factor))) * 1024
+
+chi_factor = real(7E-08) * real($(chi) * $(chi))
+#chi_factor = (real($(chi)) / 20000.0) * (real($(chi)) / 20000.0)
+base_memory = (real($(Lx) * $(Ly) * $(chi_factor)) + 1) * 1024
 memory = ifThenElse( "$(geometry)" == "XC", \
-                      4 * $(base_memory), \
+                      2 * $(base_memory), \
                       $(base_memory) )
-RequestMemory = ifThenElse("$(bc_MPS)" == "finite", \ 
-			    $(memory), \
-			    17 * $(memory) / $(Lx))
+#RequestMemory = ifThenElse("$(bc_MPS)" == "finite", \ 
+#			    $(memory), \
+#			    $(memory))
+RequestMemory = $(memory)
 Initialdir = $(case_folder)
 universe = vanilla
 input_file = $(root_dir)/gutz_condor_cases.txt

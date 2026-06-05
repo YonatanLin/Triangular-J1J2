@@ -9,7 +9,7 @@ output = $(root_dir)/$(log_name).out
 error = $(root_dir)/$(log_name).err
 
 request_cpus = 10
-RequestMemory = 10000
+RequestMemory = 25000
 Initialdir = $(root_dir)
 universe = vanilla
 input_file = $(root_dir)/comparison_cases.txt

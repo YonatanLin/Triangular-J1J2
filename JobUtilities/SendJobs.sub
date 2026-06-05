@@ -8,15 +8,17 @@ log = $(case_folder)/$(log_name).log
 output = $(case_folder)/$(log_name).out
 error = $(case_folder)/$(log_name).err
 
-request_cpus = 10
-chi_mem_factor = (real($(chi)) * real($(chi))) / (16000000.0)
-memory_factor = $(chi_mem_factor) * (real(110 * $(Lx) * $(Ly)) / 72.0) * 1024
+request_cpus = 30
+chi_mem_factor = real(2E-07) * real($(chi) * $(chi))
+memory_factor = $(chi_mem_factor) * (real($(Lx) * $(Ly))) * 1024
 memory = ifThenElse( "$(geometry)" == "XC", \
                       $(memory_factor) * 2, \
                       $(memory_factor))
-RequestMemory = ifThenElse( "$(bc_MPS)" == "finite", \
-			    $(memory), \
- 			    4 * $(memory) )
+RequestMemory = $(memory)
+#RequestMemory = ifThenElse( "$(bc_MPS)" == "finite", \
+#			    $(memory), \
+# 			    $(memory) )
+
 #RequestMemory = 50000
 
 Initialdir = $(case_folder)

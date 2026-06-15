@@ -36,6 +36,7 @@ dmrg_input_params = [
     ("geometry", str),
     ("chi_max", int),
     ("max_sweeps", int),
+    ("norm_magz", float),
     ("initial_psi_dir", str)]
 
 dmrg_params_excluded_from_dirname = ["initial_psi_dir"]
@@ -49,6 +50,7 @@ gutzwiller_input_params = [
     ("bc_MPS", str),
     ("gs_manifold_index", int),
     ("model_type", optional_str),
+    ("norm_magz", float)
 ]
 
 

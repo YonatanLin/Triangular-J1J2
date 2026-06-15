@@ -46,16 +46,19 @@ model_type_dirac = "Dirac"
 model_type_Z2 = "Z2"
 
 
+def AbsMagzFromNormMagz(norm_magz, N_sites):
+    return int(np.floor(norm_magz * N_sites))
+
+
 def parity_mask(leg, parity=0):
     mask = (leg.to_qflat() % 2 == parity % 2).ravel()
     return mask
 
-
-def SetZeroTensorChargesInGutzwillerWavefunction(psi, magz):
+def SetZeroTensorChargesInGutzwillerWavefunction(psi, abs_magz):
     charges = np.array([psi.get_B(i).qtotal[0] for i in range(psi.L)])
     print("charges: ", charges)
     print("last tensor charges: ", psi.get_B(psi.L-1).qtotal)
-    assert (np.all(charges[:-1] == 0) and charges[-1] == psi.L + 2 * magz) #factor of two over magnetization becasue a site with up spin has occupation of 2
+    assert (np.all(charges[:-1] == 0) and charges[-1] == psi.L + 2 * abs_magz) #factor of two over magnetization becasue a site with up spin has occupation of 2
     spin_site = networks.SpinHalfSite("Sz")
     spin_leg = spin_site.leg
     chinfo_s = spin_leg.chinfo
@@ -68,7 +71,7 @@ def SetZeroTensorChargesInGutzwillerWavefunction(psi, magz):
         if idx == 0:
             leg_vL.charges -= idx
         if idx == len(psi._B) - 1:
-            new_qtot = 2 * magz
+            new_qtot = 2 * abs_magz
         leg_vR.chinfo = chinfo_s
         if idx != len(psi._B) - 1:
             leg_vR.charges -= idx + 1
@@ -79,7 +82,7 @@ def SetZeroTensorChargesInGutzwillerWavefunction(psi, magz):
 
 
 
-def iMPSAbrikosov(mps, magz):
+def iMPSAbrikosov(mps, norm_magz):
     conserved_fermion = mps.sites[0].conserve
     assert(conserved_fermion == "N")
     conserved_spin = "Sz"
@@ -95,6 +98,7 @@ def iMPSAbrikosov(mps, magz):
     spin_leg = spin_site.leg
     chinfo_s = spin_leg.chinfo
     mps = mps.copy()
+    abs_magz = AbsMagzFromNormMagz(norm_magz, mps.L)
     mps.group_sites(2)
 
     # can take _B[0] because the physical charge is the same on every tensor
@@ -127,7 +131,7 @@ def iMPSAbrikosov(mps, magz):
         else:  # None
             B = B.drop_charge(charge="parity_N", chinfo=chinfo_s)
 
-    SetZeroTensorChargesInGutzwillerWavefunction(mps, magz)
+    SetZeroTensorChargesInGutzwillerWavefunction(mps, abs_magz)
 
     mps.chinfo = chinfo_s
     mps.grouped = 1
@@ -273,14 +277,14 @@ def ChangeChiInDMRGParams(dmrg_params, chi_max):
 
 
 def CreateGutzwillerCaseDir(main_results_dir, Lx, Ly, chi_max, flux, geometry, bc_MPS,
-                            gs_manifold_index, model_type, magz, monopole_Q):
+                            gs_manifold_index, model_type, norm_magz, monopole_Q):
     Path(main_results_dir).mkdir(parents=True, exist_ok=True)
     case_name = f"{bc_MPS}_Lx_{Lx}_Ly_{Ly}_chi_{chi_max}_flux_{flux}_{geometry}_gsindex_{gs_manifold_index}"
 
     if model_type is not None:
         case_name = f"{model_type}_" + case_name
-    if magz is not None:
-        case_name += f"_magz_{magz}"
+    if norm_magz is not None and norm_magz > 1e-15:
+        case_name += f"_magz_{norm_magz:.3f}"
     if monopole_Q is not None:
         case_name += f"_monQ_{monopole_Q}"
 
@@ -987,12 +991,15 @@ def BuildTriangularLattice(Lx, Ly, site, bc_MPS, bc = ('periodic', 'periodic'), 
 def initialStateFromFile(initial_state):
     return "from_file" in initial_state
 
-def GetTriangularLatticeInitialState(initial_state, triangular_lat, initial_psi_dir, magz=0):
+def GetTriangularLatticeInitialState(initial_state, triangular_lat, initial_psi_dir, abs_magz):
     Lx = triangular_lat.Ls[0]
     Ly = triangular_lat.Ls[1]
     N_sites = triangular_lat.N_sites
+    assert(abs_magz <= N_sites // 2), "normalized magnetization cannot exceed 1"
+    if abs_magz > 0:
+        assert(initial_state == "Random")
     if initial_state == "Random":
-        N_up = N_sites // 2 + magz
+        N_up = N_sites // 2 + abs_magz
         N_down = N_sites - N_up
         down_indices = np.random.choice(np.arange(0, N_sites), N_down, replace=False)
         print(down_indices)
@@ -1021,7 +1028,7 @@ def GetTriangularLatticeInitialState(initial_state, triangular_lat, initial_psi_
     return psi
 
 
-def TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, geometry, chi, max_sweeps):
+def TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, geometry, chi, max_sweeps, norm_magz):
     bc_string = ""
     for bc_ax in bc:
         if bc_ax == "periodic":
@@ -1036,14 +1043,16 @@ def TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, g
         params_dir += f"_chi_{chi}"
     if max_sweeps is not None:
         params_dir += f"_maxsweeps_{max_sweeps}"
+    if norm_magz > 1e-15:
+        params_dir += f"_magz_{norm_magz:.3f}"
     return geometry_dir, params_dir + "/"
 
 
 def CreateTriangularCaseDir(main_results_dir, Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, geometry,
-                            chi_max=None, max_sweeps=None):
+                            chi_max=None, max_sweeps=None, norm_magz=0.0):
     Path(main_results_dir).mkdir(parents=True, exist_ok=True)
     geometry_dir, params_dir = TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, geometry,
-                                                         chi_max, max_sweeps)
+                                                         chi_max, max_sweeps, norm_magz)
     results_dir = main_results_dir + geometry_dir
     Path(results_dir).mkdir(parents=True, exist_ok=True)
     results_dir += params_dir
@@ -1072,10 +1081,10 @@ def GenerateJ1J2SpinTriangularModel(J2, triangular_lat):
 
 
 def calculateGutzwillerEnergyTriangularJ1J2(gutz_results_dir, Lx, Ly, chi, flux, bc_MPS, J2, bc, geometry,
-                                            gs_manifold_index, reorder_lattice=False, model_type=None, magz=None,
+                                            gs_manifold_index, reorder_lattice=False, model_type=None, norm_magz=None,
                                             monopole_Q=None):
     psi_path = CreateGutzwillerCaseDir(gutz_results_dir, Lx, Ly, chi, flux, geometry,
-                                       bc_MPS, gs_manifold_index, model_type, magz, monopole_Q) + "/psi_gutzwiller.pkl"
+                                       bc_MPS, gs_manifold_index, model_type, norm_magz, monopole_Q) + "/psi_gutzwiller.pkl"
 
     print(f"calculating energy for MPS in path {psi_path} with triangular J1J2 model for J2={J2}")
     site = SpinHalfSite(conserve="Sz")
@@ -1107,7 +1116,7 @@ def SaveSimulationOutput(results_dir, spin_corr_x, Kx, Ky, spin_corr_k, fig_corr
 
 
 def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, conserve=True, initial_state="Random", J2=0.0, geometry="YC",
-                       chi_max=None, initial_psi_dir=None, max_sweeps=None):
+                       chi_max=None, initial_psi_dir=None, max_sweeps=None, norm_magz=0.0):
     if isinstance(bc, str):
         bc_parsed = bc.split("-")
         bc = (bc_parsed[0], bc_parsed[1])
@@ -1125,7 +1134,7 @@ def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, conserve=True, initial_state="Random"
         site = SpinHalfSite(conserve=None)
 
     triangular_lat = BuildTriangularLattice(Lx, Ly, site, bc_MPS, bc=bc, geometry=geometry)
-
+    abs_magz = AbsMagzFromNormMagz(norm_magz, triangular_lat.N_sites)
     center_site_mps_index = triangular_lat.lat2mps_idx([Lx // 2, Ly // 2, 0])
     print("center site mps index: ", center_site_mps_index)
 
@@ -1144,7 +1153,7 @@ def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, conserve=True, initial_state="Random"
     if local:
             plt.show()
 
-    psi = GetTriangularLatticeInitialState(initial_state, triangular_lat, initial_psi_dir)
+    psi = GetTriangularLatticeInitialState(initial_state, triangular_lat, initial_psi_dir, abs_magz)
    
     dmrg_params = default_dmrg_params
 
@@ -1525,7 +1534,7 @@ def getZeroModesDict(gs_manifold_index):
 
 
 def CalculateExactCMatrixForPiFlux(gs_manifold_index, model_params, model_type,
-                                   zero_energy_tol=1e-9, plot_lattice=False, particle_hole=True, magz=0,
+                                   zero_energy_tol=1e-9, plot_lattice=False, particle_hole=True, abs_magz=0,
                                    results_dir=None):
     triangular_lat = model_params["lattice"]
     if model_type == model_type_dirac:
@@ -1554,13 +1563,13 @@ def CalculateExactCMatrixForPiFlux(gs_manifold_index, model_params, model_type,
         assert (gs_manifold_index == 0), "don't support gs_manifold_index for more than 4 zero modes"
     print(f"number of zero modes in pi flux model: {num_zero_modes}")
     zero_modes = num_zero_modes > 0
-    finite_magz = abs(magz) > 0
+    finite_magz = abs(abs_magz) > 0
     if model_type == model_type_Z2:
         assert not zero_modes, "shouldn't have zero modes in the Z2 gapped ansatz"
 
     if finite_magz:
-        assert(magz <= triangular_lat.N_sites // 4), "magz requires more than half filling"
-        N_up  = (triangular_lat.N_sites // 4 + magz)
+        assert(abs_magz <= triangular_lat.N_sites // 4), "magz requires more than half filling"
+        N_up  = (triangular_lat.N_sites // 4 + abs_magz)
         N_filling = 2 * N_up
         if results_dir is not None:
             fig, ax = plt.subplots(figsize=(6,5))
@@ -1596,7 +1605,7 @@ def CalculateExactCMatrixForPiFlux(gs_manifold_index, model_params, model_type,
 
 def GetTriangularFluxSlaterMPS(Lx, Ly, spinfull, site, geometry, slater_trunc_par, unitcell_width,
                                bc_MPS, gs_manifold_index, model_type, flux=0.0, particle_hole=True,
-                               Lx_short_iMPS=Lx_short_pi_flux_iMPS, magz=0, monopole_Q=0, results_dir=None):
+                               Lx_short_iMPS=Lx_short_pi_flux_iMPS, norm_magz=0, monopole_Q=0, results_dir=None):
     zero_energy_tol = 1e3 * slater_trunc_par["degeneracy_tol"]
     assert(Lx % 2 == 0), "pi-flux model requires even-sized unitcell"
     imps_unitcell = unitcell_width * Lx * Ly
@@ -1614,33 +1623,35 @@ def GetTriangularFluxSlaterMPS(Lx, Ly, spinfull, site, geometry, slater_trunc_pa
         raise ValueError("inrecognized model type")
         model_params = None
 
-
+    triangular_lat_finite = GetPiFluxTriangularLattice(site, Lx, Ly, spinfull, finite_bc_MPS, geometry)
     if finite:
-        triangular_lat = GetPiFluxTriangularLattice(site, Lx, Ly, spinfull, finite_bc_MPS, geometry)
-        model_params["lattice"] = triangular_lat
+        abs_magz = AbsMagzFromNormMagz(norm_magz, triangular_lat_finite.N_sites)
+        model_params["lattice"] = triangular_lat_finite
         C, triangular_lattice = CalculateExactCMatrixForPiFlux(gs_manifold_index, model_params, model_type,
                                                                zero_energy_tol = zero_energy_tol,
-                                                               plot_lattice=False, particle_hole=particle_hole, magz=magz,
+                                                               plot_lattice=False, particle_hole=particle_hole, abs_magz=abs_magz,
                                                                results_dir=results_dir)
 
         psi_from_slater = slater.C_to_MPS(C, trunc_par=slater_trunc_par)
     else:
+        abs_magz_unitcell = AbsMagzFromNormMagz(norm_magz, triangular_lat_finite.N_sites)
+        assert(abs(triangular_lat_finite.N_sites * norm_magz - abs_magz_unitcell) < 1e-15) # magnetization should fit in unitcell
         Lx_short, Lx_long = Lx_short_iMPS, Lx_short_iMPS + Lx
         triangular_lat_short = GetPiFluxTriangularLattice(site, Lx_short, Ly, spinfull, finite_bc_MPS, geometry)
         model_params["lattice"] = triangular_lat_short
-        magz_tot_from_magz_unitcell = magz * (triangular_lat_short.N_sites // imps_unitcell)
+        abs_magz_short = AbsMagzFromNormMagz(norm_magz, triangular_lat_short.N_sites)
         C_short, triangular_lat_short = CalculateExactCMatrixForPiFlux(gs_manifold_index, model_params, model_type,
                                                                        zero_energy_tol=zero_energy_tol,
                                                                        particle_hole=particle_hole,
-                                                                       magz=magz_tot_from_magz_unitcell)
+                                                                       abs_magz=abs_magz_short)
 
         triangular_lat_long = GetPiFluxTriangularLattice(site, Lx_long, Ly, spinfull, finite_bc_MPS, geometry)
         model_params["lattice"] = triangular_lat_long
-        magz_tot_from_magz_unitcell = magz * (triangular_lat_long.N_sites // imps_unitcell)
+        abs_magz_long = AbsMagzFromNormMagz(norm_magz, triangular_lat_long.N_sites)
         C_long, triangular_lat_long = CalculateExactCMatrixForPiFlux(gs_manifold_index, model_params, model_type,
                                                                      zero_energy_tol=zero_energy_tol,
                                                                      particle_hole=particle_hole,
-                                                                     magz=magz_tot_from_magz_unitcell)
+                                                                     abs_magz=abs_magz_long)
 
         middle_site_mps_ind_short = triangular_lat_short.lat2mps_idx([Lx_short // 2, 0, 0])
 
@@ -1666,8 +1677,9 @@ def GetTriangularFluxSlaterMPS(Lx, Ly, spinfull, site, geometry, slater_trunc_pa
 
 def TriangularPiFluxAnsatz(Lx=2, Ly=3, spinfull=True, bc_MPS="finite",
                            chi_max_temfpy = 1000, flux=0.0, geometry="YC", particle_hole=True,
-                           gs_manifold_index=0, magz=0, monopole_Q=0):
+                           gs_manifold_index=0, norm_magz=0, monopole_Q=0):
     assert(Lx > 1)
+    assert(norm_magz == 0)
     if not spinfull:
         particle_hole = False
     main_results_dir = "PiFluxAnsatzResults/"
@@ -1678,7 +1690,7 @@ def TriangularPiFluxAnsatz(Lx=2, Ly=3, spinfull=True, bc_MPS="finite",
     triangular_lat = GetPiFluxTriangularLattice(site, Lx, Ly, spinfull, bc_MPS, geometry)
 
     results_dir = CreateGutzwillerCaseDir(main_results_dir, Lx, Ly, chi_max_temfpy, flux, geometry, bc_MPS,
-                                          gs_manifold_index, model_type, magz, monopole_Q=monopole_Q)
+                                          gs_manifold_index, model_type, norm_magz, monopole_Q=monopole_Q)
 
     pi_flux_model_params = {"lattice": triangular_lat, "flux":flux, "init_H_MPO": True, "monopole_Q":monopole_Q,
                             "particle_hole":particle_hole}
@@ -1709,9 +1721,9 @@ def TriangularPiFluxAnsatz(Lx=2, Ly=3, spinfull=True, bc_MPS="finite",
                                                                  finite_bc_MPS, geometry)
         model_params = {"init_H_MPO": False, "monopole_Q": 0, "flux": flux,
                         "particle_hole": particle_hole, "lattice":triangular_lattice_for_corr}
-
+        abs_magz = AbsMagzFromNormMagz(norm_magz, triangular_lattice_for_corr.N_sites)
         C, _ = CalculateExactCMatrixForPiFlux(gs_manifold_index, model_params, model_type,
-                                              particle_hole=particle_hole, magz=magz)
+                                              particle_hole=particle_hole, abs_magz=abs_magz)
 
     sites1 = None
     sites2 = None
@@ -1796,7 +1808,7 @@ def RescaleMPSForGutzwiller(psi):
 
 
 def SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, geometry, bc_MPS, gs_manifold_index, model_type,
-                                                         Lx=6, chi_max=3000, flux=0.0, magz=0, monopole_Q=0,
+                                                         Lx=6, chi_max=3000, flux=0.0, norm_magz=0.0, monopole_Q=0,
                                                          show_transverse_correlations=False):
     site = FermionSite(conserve='N')
     spin_site = SpinHalfSite(conserve='Sz')
@@ -1807,7 +1819,7 @@ def SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, geometry, bc_MPS, g
     debug = False
     if local:
         results_dir = CreateGutzwillerCaseDir(gutzwiller_results_dir, Lx, Ly, chi_max, flux, geometry, bc_MPS,
-                                              gs_manifold_index, model_type, magz, monopole_Q)
+                                              gs_manifold_index, model_type, norm_magz, monopole_Q)
     else:
         results_dir = "./"
     assert((bc_MPS == "finite") or (bc_MPS == "infinite"))
@@ -1825,7 +1837,7 @@ def SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, geometry, bc_MPS, g
     psi_from_slater, C, triangular_lat = GetTriangularFluxSlaterMPS(Lx, Ly, spinfull, site, geometry, slater_trunc_par,
                                                                     unitcell_width, bc_MPS, gs_manifold_index,
                                                                     model_type, flux=flux, particle_hole=particle_hole,
-                                                                    magz=magz, monopole_Q=monopole_Q, results_dir=results_dir)
+                                                                    norm_magz=norm_magz, monopole_Q=monopole_Q, results_dir=results_dir)
     # np.savetxt(results_dir + "C_slater.csv", C)
 
     if debug and finite:
@@ -1852,7 +1864,7 @@ def SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, geometry, bc_MPS, g
         if finite:
             psi_gutzwiller = gutz.abrikosov_ph(psi_from_slater)
         else:
-            psi_gutzwiller = iMPSAbrikosov(psi_from_slater, magz)
+            psi_gutzwiller = iMPSAbrikosov(psi_from_slater, norm_magz)
 
     else:
         assert(finite)
@@ -1972,12 +1984,12 @@ def PlotRealSpaceCorrelations(results_dir):
 
 def GutzwillerDMRGOverlaps(J2s, gutz_parent_dir, Lx, Ly, gutz_chi_max, gutz_flux,
                            output_dir, dmrg_initial_state, dmrg_parent_dir, geometry, bc_MPS, gutz_gs_manifold_index,
-                           dmrg_chi_max, dmrg_max_sweeps, dmrg_conserve, model_type, magz=None, monopole_Q=None):
+                           dmrg_chi_max, dmrg_max_sweeps, dmrg_conserve, model_type, norm_magz=None, monopole_Q=None):
     overlaps = []
     dmrg_energies = []
     gutz_energies = []
     gutz_case_dir = CreateGutzwillerCaseDir(gutz_parent_dir, Lx, Ly, gutz_chi_max, gutz_flux, geometry,
-                                            bc_MPS, gutz_gs_manifold_index, model_type=model_type, magz=magz,
+                                            bc_MPS, gutz_gs_manifold_index, model_type=model_type, norm_magz=norm_magz,
                                             monopole_Q=monopole_Q)
     finite = (bc_MPS == "finite")
     bc = ("open", "periodic") if finite else ("periodic", "periodic")
@@ -2162,7 +2174,7 @@ def TryMonopoleModelHofstadter(output_dir, Lx, Ly, plot=True,
     return energies
 
 
-def CheckMegnatizedPiFluxEnergyVsMonopoleDensity(Lx, Ly, magnetization, bc, ax, color="b", plot=True):
+def CheckMegnatizedPiFluxEnergyVsMonopoleDensity(Lx, Ly, norm_magz, bc, ax, color="b", plot=True):
     """
         Calculate the single particle spectrum of the spinless pi-flux model with finite monopole density,
         then determine occupation of energy levels from magnetization (the spinfull spectrum is just the spinless
@@ -2171,7 +2183,7 @@ def CheckMegnatizedPiFluxEnergyVsMonopoleDensity(Lx, Ly, magnetization, bc, ax, 
     single_particle_energies = TryMonopoleModelHofstadter(None, Lx, Ly, plot=False, bc=bc)
     energies = np.zeros(single_particle_energies.shape[0])
     N_filling = Lx * Ly
-    m = magnetization * Lx * Ly
+    m = norm_magz * Lx * Ly
     N_up = int(np.ceil((N_filling + m) / 2))
     N_down = N_filling - N_up
     assert((N_up + N_down) == N_filling)
@@ -2183,8 +2195,8 @@ def CheckMegnatizedPiFluxEnergyVsMonopoleDensity(Lx, Ly, magnetization, bc, ax, 
         energies[monopole_Q] = (energy_up + energy_down) / N_filling
 
     if plot:
-        ax.axvline(magnetization / 2, linestyle="--", color='black', linewidth=0.6, alpha=0.75)
-        ax.axvline(magnetization, linestyle="--", color='black', linewidth=0.6, alpha=0.75)
+        ax.axvline(norm_magz / 2, linestyle="--", color='black', linewidth=0.6, alpha=0.75)
+        ax.axvline(norm_magz, linestyle="--", color='black', linewidth=0.6, alpha=0.75)
         ax.plot(np.arange(0, energies.shape[0]) / (Lx * Ly), energies, color+"o",
                 label=f"x {bc[0]}")
         ax.legend()
@@ -2192,12 +2204,12 @@ def CheckMegnatizedPiFluxEnergyVsMonopoleDensity(Lx, Ly, magnetization, bc, ax, 
 
 
 def CheckOptimalMonopoleStateEnergyVsMagnetization(Lx, Ly):
-    magzs = [0.05, 0.1, 0.15, 0.2, 0.25, 0.3]
+    norm_magzs = [0.05, 0.1, 0.15, 0.2, 0.25, 0.3]
     es = []
-    for magz in magzs:
-        e = CheckMegnatizedPiFluxEnergyVsMonopoleDensity(Lx, Ly, magz, ("open", "periodic"), None, plot=False)
+    for norm_magz in norm_magzs:
+        e = CheckMegnatizedPiFluxEnergyVsMonopoleDensity(Lx, Ly, norm_magz, ("open", "periodic"), None, plot=False)
         es.append(e)
-    plt.plot(magzs, es, "o")
+    plt.plot(norm_magz, es, "o")
     if local:
             plt.show()
 
@@ -2218,82 +2230,6 @@ def DetermineSpinsOccupation(N_spins, H, e):
     N_down = int(np.argmax(e_down > Ef))
     assert((N_up + N_down) == N_spins)
     return N_up, N_down
-
-
-def TryPiFluxMonopoleState(Lx, Ly, bc_MPS, chi_max=1000, monopole_Q=1, magnetization=0.0, geometry="YC"):
-    fermion_site = FermionSite(conserve='N')
-    bc = ('open', 'periodic')
-    lat = BuildTriangularLattice(Lx, Ly, fermion_site, bc_MPS, bc = bc, geometry=geometry,
-                                 unit_cell= [[-0.1, 0.0], [0.1, 0.0]])
-    monopole_model = MonopoleCondensatePiFluxModel({"init_H_MPO": True, "lattice": lat,
-                                                    "monopole_Q": monopole_Q, "flux":0.0})
-
-    fig_lat, ax_lat = plt.subplots(figsize=(6,5))
-    PlotModelHoppingsByPhase(monopole_model, ax_lat)
-    if local:
-            plt.show()
-
-    print_couplings = True
-    if print_couplings:
-        PrintCouplings(monopole_model, True)
-
-    H = CreateHamiltonianMatrixFromCouplingsList(monopole_model, lat.N_sites, dtype=np.complex128)
-
-    e, v = eigh(H)
-    zero_energy_tol = 1e-9
-
-    if np.min(np.abs(e)) < zero_energy_tol:
-        print("cant handle zero modes in Gutzwiller projections!")
-        exit(1)
-    for i in range(H.shape[0]):
-        for j in range(H.shape[1]):
-            if (not (i%2 == j%2)) and np.abs(H[i,j]) > 1e-14:
-                print("expect spin conservation!")
-                exit(1)
-
-    N_filling = lat.N_sites//2
-    N_up, N_down_holes = DetermineSpinsOccupation(N_filling, H, e)
-
-    print(f"N_up={N_up}, N_down_holes={N_down_holes}")
-
-    if magnetization > 1e-15:
-        m = int(round(magnetization * N_filling))
-        N_up = int(round((N_filling + m) / 2))
-
-    C, _ = slater.correlation_matrix(H, 2*N_up)
-
-    slater_trunc_par = {"chi_max": chi_max, "svd_min": svd_min_slater_default, "degeneracy_tol": 1e-12}
-
-    psi_from_slater = slater.C_to_MPS(C, trunc_par=slater_trunc_par)
-    RescaleMPSForGutzwiller(psi_from_slater)
-
-    results_dir = "./"
-    if local:
-        results_dir = "MonopoleCondensateGutzwiller/"
-
-    psi_gutz = gutz.abrikosov_ph(psi_from_slater, return_canonical=True)
-    with open(results_dir + "psi_gutzwiller.pkl", "wb") as f:
-        pickle.dump(psi_gutz, f)
-
-    gutz_magz = np.sum(psi_gutz.expectation_value("Sz"))
-    print(f"input required magz = {0.5 * magnetization * N_filling}, gutz magz = {gutz_magz}")
-    spin_corr_x = CalculateSpinSpinCorrelations(psi_gutz)
-
-    spin_lat = BuildTriangularLattice(Lx, Ly, fermion_site, bc_MPS, bc=bc, geometry=geometry)
-    Kx, Ky, spin_corr_k = ComputeMomentumSpaceStructureFactor(spin_corr_x, spin_lat)
-
-    fig_corr, ax_corr = plt.subplots(figsize=(6, 5))
-    ImshowMatrix(ax_corr, fig_corr, Kx, Ky, spin_corr_k)
-    spin_lat.plot_brillouin_zone(ax_corr)
-
-
-    fig_lat, ax_lat = plt.subplots(figsize=(6, 5))
-    PlotLattice(spin_lat, ax_lat)
-
-    SaveSimulationOutput(results_dir, spin_corr_x, Kx, Ky, spin_corr_k, fig_corr, fig_lat)
-    if local:
-        if local:
-            plt.show()
 
 
 def CompareGutzwillerGroundStateSectorsXC():
@@ -2373,11 +2309,11 @@ def getEnergyDifferenceBetweenSectors(dir1, dir2, title, dmrg, fig_name):
 
 
 if __name__ == "__main__":
-    shortest_dist_02 = getShortestDistanceOnLatticeAxis(0, 2, "periodic", 3, True)
-    shortest_dist_20 = getShortestDistanceOnLatticeAxis(2, 0, "periodic", 3, True)
-    print(f"shortest dist 0->2: {shortest_dist_02}")
-    print(f"shortest dist 2->0: {shortest_dist_20}")
-    #output_dir = "C:/Users/yonli/Desktop/Thesis/Triangular J1J2/Meetings/4_5_2026/"
+    #shortest_dist_02 = getShortestDistanceOnLatticeAxis(0, 2, "periodic", 3, True)
+    #shortest_dist_20 = getShortestDistanceOnLatticeAxis(2, 0, "periodic", 3, True)
+    #print(f"shortest dist 0->2: {shortest_dist_02}")
+    #print(f"shortest dist 2->0: {shortest_dist_20}")
+    output_dir = "C:/Users/yonli/Desktop/Thesis/Triangular J1J2/Meetings/4_5_2026/"
     # TryMonopoleModelHofstadter("./", 18, 18, bc=("open", "periodic"))
 
     #getEnergyDifferenceBetweenSectors(code_dir + "../Meetings/1_6_2026/XC8/Flux0_Random/",
@@ -2443,26 +2379,34 @@ if __name__ == "__main__":
     #calculateGutzwillerEnergyTriangularJ1J2(gutz_dir, Lx, Ly, chi_gutz, flux_gutz, geometry=geometry,
     #                                        J2=J2, bc_MPS="infinite", bc=("periodic", "periodic"))
 
-    # Lx, Ly = 4, 4
-    # magz = int(np.floor(0.5 * Lx * Ly / 3.))
-    # for monopole_Q in [magz]:
-    #     SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, "YC", "finite", 0,
-    #                                                          model_type_dirac, Lx=Lx, chi_max=2000, flux=0.0,
-    #                                                          magz=magz, monopole_Q=monopole_Q,
-    #                                                          show_transverse_correlations=True)
+    #Lx, Ly = 6, 6
+    #norm_magz = 1. / 36.
+    #abs_magz = AbsMagzFromNormMagz(norm_magz, Lx*Ly)
+    #for monopole_Q in [0, abs_magz]:
+    #    SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, "YC", "finite", 0,
+    #                                                         model_type_dirac, Lx=Lx, chi_max=2000, flux=0.0,
+    #                                                         norm_magz=norm_magz, monopole_Q=monopole_Q,
+    #                                                         show_transverse_correlations=True)
+        #SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, "YC", "infinite", 0,
+        #                                                     model_type_dirac, Lx=Lx, chi_max=1500, flux=0.0,
+        #                                                     norm_magz=norm_magz, monopole_Q=monopole_Q,
+        #                                                     show_transverse_correlations=True)
 
     # GutzwillerDMRGOverlaps()
     # mon_Qs = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    # mon_Qs= [0,1]
     # Es = []
     # fig, ax = plt.subplots(figsize=(6,5))
     # magz = 6
-    monopole_dir = code_dir + "MonopoleCondensateGutzwiller/"
+    # monopole_dir = code_dir + "MonopoleCondensateGutzwiller/"
+    # Lx, Ly = 6, 6
+    # norm_magz = round(1/(Lx*Ly), ndigits=3)
     # for monopole_Q in mon_Qs:
-    #     E = calculateGutzwillerEnergyTriangularJ1J2(monopole_dir, 6, 6, 2000,
+    #     E = calculateGutzwillerEnergyTriangularJ1J2(monopole_dir, Lx, Ly, 2000,
     #                                                 0.0,
     #                                                 "finite", 0.125, ("open", "periodic"),
     #                                                 "YC", 0, model_type=model_type_dirac,
-    #                                                 magz=magz, monopole_Q=monopole_Q)
+    #                                                 norm_magz=norm_magz, monopole_Q=monopole_Q)
     #     Es.append(E)
     # ax.plot(mon_Qs, Es, "o")
     # ax.set_xlabel(r"$Q[2\pi/N]$")

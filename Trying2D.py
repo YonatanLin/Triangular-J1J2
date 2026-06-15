@@ -47,7 +47,7 @@ model_type_Z2 = "Z2"
 
 
 def AbsMagzFromNormMagz(norm_magz, N_sites):
-    return int(np.floor(norm_magz * N_sites))
+    return int(np.round(norm_magz * N_sites))
 
 
 def parity_mask(leg, parity=0):

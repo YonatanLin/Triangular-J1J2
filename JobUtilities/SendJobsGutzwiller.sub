@@ -1,5 +1,5 @@
 executable = /srv01/technion/yonlin/scripts/Triangular-J1J2/JobUtilities/RunGutzwiller.sh
-arguments = --Lx $(Lx) --Ly $(Ly) --chi $(chi) --flux $(flux) --geometry $(geometry) --bc_MPS $(bc_MPS) --gs_manifold_index $(gs_manifold_index) --model_type $(model_type)
+arguments = --Lx $(Lx) --Ly $(Ly) --chi $(chi) --flux $(flux) --geometry $(geometry) --bc_MPS $(bc_MPS) --gs_manifold_index $(gs_manifold_index) --model_type $(model_type) --norm_magz $(norm_magz)
 root_dir = /storage/ph_keselman/yonlin/TriangularJ1J2
 case_folder = $(root_dir)/$(case_folder_name)
 log_name = run
@@ -25,4 +25,4 @@ Initialdir = $(case_folder)
 universe = vanilla
 input_file = $(root_dir)/gutz_condor_cases.txt
 
-queue Lx, Ly, chi, flux, geometry, bc_MPS, gs_manifold_index, model_type, case_folder_name from $(input_file)
+queue Lx, Ly, chi, flux, geometry, bc_MPS, gs_manifold_index, model_type, norm_magz, case_folder_name from $(input_file)

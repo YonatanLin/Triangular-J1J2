@@ -1,5 +1,5 @@
 executable = /srv01/technion/yonlin/scripts/Triangular-J1J2/JobUtilities/Run.sh
-arguments = --Lx $(Lx) --Ly $(Ly) --bc $(bc) --bc_MPS $(bc_MPS) --conserve $(conserve) --initial_state $(initial_state) --J2 $(J2) --geometry $(geometry) --chi $(chi) --max_sweeps $(max_sweeps) --initial_psi_dir $(initial_psi_dir)
+arguments = --Lx $(Lx) --Ly $(Ly) --bc $(bc) --bc_MPS $(bc_MPS) --conserve $(conserve) --initial_state $(initial_state) --J2 $(J2) --geometry $(geometry) --chi $(chi) --max_sweeps $(max_sweeps) --norm_magz $(norm_magz) --initial_psi_dir $(initial_psi_dir)
 root_dir = /storage/ph_keselman/yonlin/TriangularJ1J2
 case_folder = $(root_dir)/$(case_folder_name)
 log_name = run
@@ -25,4 +25,4 @@ Initialdir = $(case_folder)
 universe = vanilla
 input_file = $(root_dir)/condor_cases.txt
 
-queue Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, geometry, chi, max_sweeps, initial_psi_dir, case_folder_name from $(input_file)
+queue Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, geometry, chi, max_sweeps, norm_magz, initial_psi_dir, case_folder_name from $(input_file)

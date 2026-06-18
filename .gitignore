@@ -16,3 +16,5 @@ GutzwillerResults
 LocalGutzwillerResults
 PiFluxGutzwiller_*
 TriangularJ1J2DMRG_*
+*/*.sh
+JobUtilities/*.txt

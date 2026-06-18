@@ -50,7 +50,8 @@ gutzwiller_input_params = [
     ("bc_MPS", str),
     ("gs_manifold_index", int),
     ("model_type", optional_str),
-    ("norm_magz", float)
+    ("norm_magz", float),
+    ("monopole_Q", int)
 ]
 
 

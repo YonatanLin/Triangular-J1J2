@@ -26,7 +26,6 @@ import json
 from tenpy import networks
 from temfpy.utils import HT
 from tenpy import MPSEnvironment
-from SpinChirality import plot_scalar_spin_chirality
 
 
 setup_logging(to_stdout="INFO")
@@ -1043,8 +1042,9 @@ def TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, g
         params_dir += f"_chi_{chi}"
     if max_sweeps is not None:
         params_dir += f"_maxsweeps_{max_sweeps}"
-    if norm_magz > 1e-15:
-        params_dir += f"_magz_{norm_magz:.3f}"
+    if float(norm_magz) > 1e-15:
+        norm_magz_float = float(norm_magz)
+        params_dir += f"_magz_{norm_magz_float:.3f}"
     return geometry_dir, params_dir + "/"
 
 

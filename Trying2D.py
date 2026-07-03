@@ -295,8 +295,9 @@ def CreateGutzwillerCaseDir(main_results_dir, Lx, Ly, chi_max, flux, geometry, b
 
     if model_type is not None:
         case_name = f"{model_type}_" + case_name
-    if norm_magz is not None and norm_magz > 1e-15:
-        case_name += f"_magz_{norm_magz:.3f}"
+    if float(norm_magz) > 1e-15:
+        norm_magz_float = float(norm_magz)
+        case_name += f"_magz_{norm_magz_float:.3f}"
     if monopole_Q is not None:
         case_name += f"_monQ_{monopole_Q}"
 

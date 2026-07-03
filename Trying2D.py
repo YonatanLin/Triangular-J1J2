@@ -284,8 +284,9 @@ def CreateGutzwillerCaseDir(main_results_dir, Lx, Ly, chi_max, flux, geometry, b
 
     if model_type is not None:
         case_name = f"{model_type}_" + case_name
-    if norm_magz is not None and norm_magz > 1e-15:
-        case_name += f"_magz_{norm_magz:.3f}"
+    if float(norm_magz) > 1e-15:
+        norm_magz_float = float(norm_magz)
+        case_name += f"_magz_{norm_magz_float:.3f}"
     if monopole_Q is not None:
         case_name += f"_monQ_{monopole_Q}"
 
@@ -2308,6 +2309,31 @@ def getEnergyDifferenceBetweenSectors(dir1, dir2, title, dmrg, fig_name):
     ax.set_title(title)
     fig.savefig(fig_name, bbox_inches='tight')
     plt.show()
+
+
+def calculateMonopoleEnergies(parent_dir, Lx, Ly, chi, flux, norm_magz, mon_Qs):
+    assert(mon_Qs[0] == 0)
+    Es = []
+    existing_mon_Qs = []
+    fig, ax = plt.subplots(figsize=(6,5))
+    J2 = 0.125
+    for monopole_Q in mon_Qs:
+        E = calculateGutzwillerEnergyTriangularJ1J2(parent_dir, Lx, Ly, chi, flux,
+                                                    "finite", J2, ("open", "periodic"),
+                                                    "YC", 0, model_type=model_type_dirac,
+                                                    norm_magz=norm_magz, monopole_Q=monopole_Q)
+        Es.append(E)
+
+    Es = np.array(Es)
+    mon_Qs = np.array(mon_Qs)
+    E_fermi_pocket = Es[0]
+    e_diff = (Es[1:] - E_fermi_pocket) / abs(E_fermi_pocket)
+    ax.plot(mon_Qs[1:], e_diff, "o")
+    ax.set_xlabel(r"$Q[2\pi/N]$")
+    ax.set_ylabel(r"$\delta E[J_1] / E_{fp}$")
+    ax.set_title("Energy vs. Monopole Flux for J2/J1=1/8")
+    # fig.savefig(parent_dir + "energies.png", bbox_inches='tight') 
+    return e_diff, ax, fig
 
 
 if __name__ == "__main__":

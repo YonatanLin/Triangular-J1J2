@@ -2584,8 +2584,6 @@ def DebugMagnetizedIMPS():
     # plt.show()
     exit(0)
 
->>>>>>> 8669096d2033858a87360cac1c9a827af48cefe5
-
 
 if __name__ == "__main__":
     output_dir = "C:/Users/yonli/Desktop/Thesis/Triangular J1J2/Meetings/4_5_2026/"

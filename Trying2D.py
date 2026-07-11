@@ -28,6 +28,8 @@ import json
 from tenpy import networks
 from temfpy.utils import HT
 from tenpy import MPSEnvironment
+import threading
+import time
 if local:
     from SpinChirality import plot_scalar_spin_chirality
 
@@ -35,7 +37,8 @@ setup_logging(to_stdout="INFO")
 if not local:
     print(f"num threads: {tenpy.tools.process.mkl_get_nthreads()}")
 
-svd_min_slater_default = 4e-7
+
+svd_min_slater_default = 5e-7
 default_chi_max = 3000
 default_dmrg_params = {'mixer': True, 'max_E_err': 1.0e-10, 'trunc_params': {'chi_max': default_chi_max, 'svd_min': 1.0e-7},
                     'combine': True, 'chi_list': {0: 50, 3: 100, 7: default_chi_max}, 'min_sweeps': 7, 'max_sweeps': 8,
@@ -43,7 +46,7 @@ default_dmrg_params = {'mixer': True, 'max_E_err': 1.0e-10, 'trunc_params': {'ch
 code_dir = "C:/Users/yonli/Desktop/Thesis/Triangular J1J2/Code/"
 meetings_dir = "C:/Users/yonli/Desktop/Thesis/Triangular J1J2/Meetings/"
 
-Lx_short_factor_temfpy_iMPS = 100
+Lx_short_factor_temfpy_iMPS = 50
 
 model_type_dirac = "Dirac"
 model_type_Z2 = "Z2"
@@ -54,6 +57,7 @@ pauli_z = np.array([[1., 0.0], [0.0, -1.0]])
 paulis = np.asarray([pauli_x, pauli_y, pauli_z])
 
 def AbsMagzFromNormMagz(norm_magz, N_sites):
+    print(f"norm_magz: {norm_magz}, N_sites: {N_sites}")
     magz_tot_doubled = int(round(norm_magz * N_sites))
     assert(magz_tot_doubled % 2 == 0)
     return magz_tot_doubled // 2
@@ -301,7 +305,7 @@ def CreateGutzwillerCaseDir(main_results_dir, Lx, Ly, chi_max, flux, geometry, b
         case_name = f"{model_type}_" + case_name
     if float(norm_magz) > 1e-15:
         norm_magz_float = float(norm_magz)
-        case_name += f"_magz_{norm_magz_float:.3f}"
+        case_name += f"_magz_{norm_magz_float:.4f}"
     if monopole_Q is not None:
         case_name += f"_monQ_{monopole_Q}"
 
@@ -1132,7 +1136,7 @@ def TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, g
         params_dir += f"_maxsweeps_{max_sweeps}"
     if float(norm_magz) > 1e-15:
         norm_magz_float = float(norm_magz)
-        params_dir += f"_magz_{norm_magz_float:.3f}"
+        params_dir += f"_magz_{norm_magz_float:.4f}"
     return geometry_dir, params_dir + "/"
 
 
@@ -1169,8 +1173,7 @@ def GenerateJ1J2SpinTriangularModel(J2, triangular_lat):
 
 
 def calculateGutzwillerEnergyTriangularJ1J2(gutz_results_dir, Lx, Ly, chi, flux, bc_MPS, J2, bc, geometry,
-                                            gs_manifold_index, reorder_lattice=False, model_type=None, norm_magz=None,
-                                            monopole_Q=None):
+                                            gs_manifold_index, norm_magz, monopole_Q, reorder_lattice=False, model_type=None):
     psi_path = CreateGutzwillerCaseDir(gutz_results_dir, Lx, Ly, chi, flux, geometry,
                                        bc_MPS, gs_manifold_index, model_type, norm_magz, monopole_Q) + "/psi_gutzwiller.pkl"
 
@@ -1922,6 +1925,7 @@ def calculateOverlapBetweenGutzwillerAndDMRG(dmrg_dir, gutzwiller_dir,
     #print(f"compressed dmrg psi with max truncation error {max_trunc_err_dmrg} and gutzwiller psi with max truncation error {max_trunc_err_gutz}")
 
     #overlap = abs(psi_dmrg.overlap(psi_gutz, num_ev=4))
+    print(f"calculating overlap between dmrg wavefunction in {dmrg_dir} and gutzwiller wavefunction in {gutzwiller_dir}")
     overlap = abs(psi_dmrg.overlap(psi_gutz))
     print("overlap between wavefunctions: ", overlap)
     return overlap
@@ -1940,6 +1944,8 @@ def RescaleMPSForGutzwiller(psi):
 def SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, geometry, bc_MPS, gs_manifold_index, model_type,
                                                          Lx=6, chi_max=3000, flux=0.0, norm_magz=0.0, monopole_Q=0,
                                                          show_transverse_correlations=False, iMPS_Lx_factor=Lx_short_factor_temfpy_iMPS):
+    
+    print(f"norm_magz: {norm_magz}")
     site = FermionSite(conserve='N')
     spin_site = SpinHalfSite(conserve='Sz')
     gutzwiller_results_dir = "MonopoleCondensateGutzwiller/"
@@ -1986,8 +1992,6 @@ def SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, geometry, bc_MPS, g
               f"{pi_flux_model.H_MPO.expectation_value(psi_from_slater) / (0.5 * _triangular_lat.N_sites)}")
 
     psi_from_slater.canonical_form()
-    with open(results_dir + "psi_slater.pkl", 'wb') as f:
-        pickle.dump(psi_from_slater, f)
         
     RescaleMPSForGutzwiller(psi_from_slater)
 
@@ -2113,15 +2117,15 @@ def PlotRealSpaceCorrelations(results_dir):
     ax.legend()
 
 
-def GutzwillerDMRGOverlaps(J2s, gutz_parent_dir, Lx, Ly, gutz_chi_max, gutz_flux,
+def GutzwillerDMRGOverlaps(J2s, gutz_parent_dir, Lx, Ly, gutz_chi_max, gutz_flux, gutz_mon_Q,
                            output_dir, dmrg_initial_state, dmrg_parent_dir, geometry, bc_MPS, gutz_gs_manifold_index,
-                           dmrg_chi_max, dmrg_max_sweeps, dmrg_conserve, model_type, norm_magz=None, monopole_Q=None):
+                           dmrg_chi_max, dmrg_max_sweeps, dmrg_conserve, model_type, norm_magz):
     overlaps = []
     dmrg_energies = []
     gutz_energies = []
     gutz_case_dir = CreateGutzwillerCaseDir(gutz_parent_dir, Lx, Ly, gutz_chi_max, gutz_flux, geometry,
                                             bc_MPS, gutz_gs_manifold_index, model_type=model_type, norm_magz=norm_magz,
-                                            monopole_Q=monopole_Q)
+                                            monopole_Q=gutz_mon_Q)
     finite = (bc_MPS == "finite")
     bc = ("open", "periodic") if finite else ("periodic", "periodic")
     
@@ -2131,7 +2135,7 @@ def GutzwillerDMRGOverlaps(J2s, gutz_parent_dir, Lx, Ly, gutz_chi_max, gutz_flux
 
     for J2 in J2s:
         dmrg_geom_dir, dmrg_params_dir = (
-            TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, dmrg_initial_state, dmrg_conserve, J2, geometry, dmrg_chi_max, dmrg_max_sweeps))
+            TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, dmrg_initial_state, dmrg_conserve, J2, geometry, dmrg_chi_max, dmrg_max_sweeps, norm_magz))
         dmrg_dir = dmrg_parent_dir + dmrg_geom_dir + dmrg_params_dir
         
         unitcell_width = 2 if geometry == "XC" else 1
@@ -2143,7 +2147,7 @@ def GutzwillerDMRGOverlaps(J2s, gutz_parent_dir, Lx, Ly, gutz_chi_max, gutz_flux
         dmrg_energies.append(dmrg_energy)
 
         gutz_energy = calculateGutzwillerEnergyTriangularJ1J2(gutz_parent_dir, Lx, Ly, gutz_chi_max, gutz_flux, bc_MPS, J2, bc,
-                                                              geometry, gutz_gs_manifold_index, model_type=model_type)
+                                                              geometry, gutz_gs_manifold_index, norm_magz, gutz_mon_Q, model_type=model_type)
         gutz_energies.append(gutz_energy)
 
         PlotCorrelationsFromFiles(dmrg_dir, show_energies=False, output_dir=output_dir,
@@ -2202,7 +2206,7 @@ def GutzwillerBondDimensionScaling(gutz_results_dir, Lx, Ly, chis, flux,
     gs_manifold_index = 0
     for chi in chis:
         E = calculateGutzwillerEnergyTriangularJ1J2(gutz_results_dir, Lx, Ly, chi, flux, bc_MPS, J2, bc, geometry,
-                                                    gs_manifold_index)
+                                                    gs_manifold_index, None, None)
         Es.append(E)
 
     fit_params = FitLinearModel(inv_chis, Es)
@@ -2340,7 +2344,7 @@ def CheckMegnatizedPiFluxEnergyVsMonopoleDensity(Lx, Ly, norm_magz, bc, ax, fig,
         ax.set_title(f"Noninteracting Total Energy vs. Monopole Flux for Lx,Ly={Lx,Ly}")
         ax.legend()
         if save_dir is not None:
-            fig.savefig(save_dir + f"/noninteracting_mon_energies_magz_{norm_magz:.3f}.png", bbox_inches='tight')
+            fig.savefig(save_dir + f"/noninteracting_mon_energies_magz_{norm_magz:.4f}.png", bbox_inches='tight')
     return np.min(energies)
 
 
@@ -2587,7 +2591,7 @@ def calculateMonopoleEnergies(parent_dir, norm_magz, mon_Qs):
     for monopole_Q in mon_Qs:
         E = calculateGutzwillerEnergyTriangularJ1J2(parent_dir, Lx, Ly, chi, flux,
                                                     "finite", J2, ("open", "periodic"),
-                                                    "YC", 0, model_type=model_type_dirac,
+                                                    "YC", 0, norm_magz, mon_Q, model_type=model_type_dirac,
                                                     norm_magz=norm_magz, monopole_Q=monopole_Q)
         Es.append(E)
 
@@ -2840,7 +2844,6 @@ if __name__ == "__main__":
 
 
     # calculateOverlapsFastLocal(6, 6, 2, 0.056)
-    # GutzwillerDMRGOverlaps()
 
     #ComputeCorrelationsFromMPSFile(code_dir, 6, 6, ("open", "periodic"), "finite", geometry="YC",
     #                               psi_dir="LocalGutzwillerResults/Dirac_finite_Lx_6_Ly_6_chi_1000_flux_0.0_YC_gsindex_0_magz_6_monQ_8/",

@@ -1,17 +1,17 @@
 executable = /srv01/technion/yonlin/scripts/Triangular-J1J2/JobUtilities/RunDMRGGutzwillerComparison.sh
-arguments = --Lx $(Lx) --Ly $(Ly) --geometry $(geometry) --bc_MPS $(bc_MPS) --dmrg_initial_state $(dmrg_initial_state) --dmrg_conserve $(dmrg_conserve) --dmrg_chi_max $(dmrg_chi_max) --dmrg_max_sweeps $(dmrg_max_sweeps) --dmrg_parent_dir $(dmrg_parent_dir) --gutz_chi_max $(gutz_chi_max) --gutz_flux $(gutz_flux) --gutz_gs_manifold_index $(gutz_gs_manifold_index) --gutz_parent_dir $(gutz_parent_dir) --model_type $(model_type) --J2_file $(J2_file)
-root_dir = /storage/ph_keselman/yonlin/TriangularJ1J2/CompareGutzwillerAndDMRG_CompressedMPSs
+arguments = --Lx $(Lx) --Ly $(Ly) --geometry $(geometry) --bc_MPS $(bc_MPS) --dmrg_initial_state $(dmrg_initial_state) --dmrg_conserve $(dmrg_conserve) --dmrg_chi_max $(dmrg_chi_max) --dmrg_max_sweeps $(dmrg_max_sweeps) --dmrg_parent_dir $(dmrg_parent_dir) --gutz_chi_max $(gutz_chi_max) --gutz_flux $(gutz_flux) --gutz_gs_manifold_index $(gutz_gs_manifold_index) --gutz_mon_Q $(gutz_mon_Q) --gutz_parent_dir $(gutz_parent_dir) --model_type $(model_type) --norm_magz $(norm_magz) --J2_file $(J2_file)
+root_dir = /storage/ph_keselman/yonlin/TriangularJ1J2/CompareGutzwillerAndDMRG_7_8
 #log_name = run_J2_$(J2)_InitDMRG_$(dmrg_initial_state)_flux_$(flux_gutz)
-log_name = run_Lx_$(Lx)_Ly_$(Ly)_geom_$(geometry)_flux_$(gutz_flux)_modeltype_$(model_type)_initDMRG_$(dmrg_initial_state)
+log_name = run_Lx_$(Lx)_Ly_$(Ly)_geom_$(geometry)_flux_$(gutz_flux)_magz_$(norm_magz)_monQ_$(gutz_mon_Q)_initDMRG_$(dmrg_initial_state)
 
 log = $(root_dir)/$(log_name).log
 output = $(root_dir)/$(log_name).out
 error = $(root_dir)/$(log_name).err
 
 request_cpus = 10
-RequestMemory = 25000
+RequestMemory = 50000
 Initialdir = $(root_dir)
 universe = vanilla
 input_file = $(root_dir)/comparison_cases.txt
 
-queue Lx, Ly, geometry, bc_MPS, dmrg_initial_state, dmrg_conserve, dmrg_chi_max, dmrg_max_sweeps, dmrg_parent_dir, gutz_chi_max, gutz_flux, gutz_gs_manifold_index, gutz_parent_dir, model_type, J2_file from $(input_file)
+queue Lx, Ly, geometry, bc_MPS, dmrg_initial_state, dmrg_conserve, dmrg_chi_max, dmrg_max_sweeps, dmrg_parent_dir, gutz_chi_max, gutz_flux, gutz_gs_manifold_index, gutz_mon_Q, gutz_parent_dir, model_type, norm_magz, J2_file from $(input_file)

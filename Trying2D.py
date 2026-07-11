@@ -110,7 +110,6 @@ def iMPSAbrikosov(mps, norm_magz):
 
     spin_leg = spin_site.leg
     chinfo_s = spin_leg.chinfo
-    mps = mps.copy()
     mps.group_sites(2)
     abs_magz = AbsMagzFromNormMagz(norm_magz, mps.L)
 
@@ -177,8 +176,6 @@ def iMPSAbrikosov(mps, norm_magz):
 
     # Transform into right canoncial form
     mps.canonical_form()
-
-    return mps
 
 
 def isEdgeMode(abs_state, side, eps=0.01):
@@ -1970,7 +1967,7 @@ def SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, geometry, bc_MPS, g
     flavors = 2 if spinfull else 1
     unitcell_width = flavors if geometry == "YC" else 2 * flavors
 
-    psi_from_slater, C, triangular_lat = GetTriangularFluxSlaterMPS(Lx, Ly, spinfull, site, geometry, slater_trunc_par,
+    psi_pi_flux, C, triangular_lat = GetTriangularFluxSlaterMPS(Lx, Ly, spinfull, site, geometry, slater_trunc_par,
                                                                     unitcell_width, bc_MPS, gs_manifold_index,
                                                                     model_type, flux=flux, particle_hole=particle_hole,
                                                                     norm_magz=norm_magz, monopole_Q=monopole_Q,
@@ -1989,26 +1986,26 @@ def SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, geometry, bc_MPS, g
             plt.show()
 
         print(f"energy per mode of triangular pi flux gs = "
-              f"{pi_flux_model.H_MPO.expectation_value(psi_from_slater) / (0.5 * _triangular_lat.N_sites)}")
+              f"{pi_flux_model.H_MPO.expectation_value(psi_pi_flux) / (0.5 * _triangular_lat.N_sites)}")
 
-    psi_from_slater.canonical_form()
+    psi_pi_flux.canonical_form()
         
-    RescaleMPSForGutzwiller(psi_from_slater)
+    RescaleMPSForGutzwiller(psi_pi_flux)
 
     if particle_hole:
         if finite:
-            psi_gutzwiller = gutz.abrikosov_ph(psi_from_slater)
+            gutz.abrikosov_ph(psi_pi_flux, inplace=True)
         else:
-            psi_gutzwiller = iMPSAbrikosov(psi_from_slater, norm_magz)
+            iMPSAbrikosov(psi_pi_flux, norm_magz)
 
     else:
         assert(finite)
-        psi_gutzwiller = gutz.abrikosov(psi_from_slater)
+        gutz.abrikosov(psi_pi_flux, inplace=True)
 
     with open(results_dir + 'psi_gutzwiller' + ".pkl", 'wb') as f:
-        pickle.dump(psi_gutzwiller, f)
+        pickle.dump(psi_pi_flux, f)
 
-    assert(abs(psi_gutzwiller.overlap(psi_gutzwiller) - 1.0) < 1e-7)
+    assert(abs(psi_pi_flux.overlap(psi_pi_flux) - 1.0) < 1e-7)
 
     Lx_for_corr = triangular_lat.Ls[0] if finite else 20
     Ly_for_corr = triangular_lat.Ls[1]
@@ -2016,9 +2013,9 @@ def SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, geometry, bc_MPS, g
     if not particle_hole:
         return
     if finite:
-        spin_corr_x = CalculateSpinSpinCorrelations(psi_gutzwiller, transverse_correlations=show_transverse_correlations)
+        spin_corr_x = CalculateSpinSpinCorrelations(psi_pi_flux, transverse_correlations=show_transverse_correlations)
     else:
-        spin_corr_x = CalculateSpinSpinCorrelations(psi_gutzwiller, np.arange(0, Nsites_for_iMPS_corr),
+        spin_corr_x = CalculateSpinSpinCorrelations(psi_pi_flux, np.arange(0, Nsites_for_iMPS_corr),
                                                     np.arange(0, Nsites_for_iMPS_corr),
                                                     transverse_correlations=show_transverse_correlations)
 
@@ -2035,9 +2032,6 @@ def SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, geometry, bc_MPS, g
     ax_corr_k.set_title("Spin Correlations")
 
     SaveSimulationOutput(results_dir, spin_corr_x, Kx, Ky, spin_corr_k, fig_corr_k, fig_lat)
-
-    #if local:
-    #        plt.show()
 
 
 def ComputeCorrelationsFromMPSFile(parent_results_path, Lx, Ly, bc, bc_MPS,
@@ -2734,7 +2728,7 @@ if __name__ == "__main__":
 
     # TestFreeFermionsSpinCorrelations()
     # checkXC8SlaterCorrelations()
-    checkPiFluxFreeSpinCorrelations()
+    # checkPiFluxFreeSpinCorrelations()
     #exit(1)
 
     # DebugMagnetizedIMPS()
@@ -2813,22 +2807,7 @@ if __name__ == "__main__":
     # ax.legend()
     # plt.show()
 
-    def H(L, t1=-1, t2=-1.5):
-        M = t1 * np.ones(L - 1)
-        M[1::2] = t2
-        M = np.diag(M, 1)
-        return M + M.T
-
-    trunc_par = {"chi_max": 100}  # cf. Listing 1
-    L_short = 128
-    cell = 2  # cf. periodicity of H
-    C_short, _ = slater.correlation_matrix(H(L_short))
-    C_long, _ = slater.correlation_matrix(H(L_short + cell))
-    iMPS, error = slater.C_to_iMPS(C_short, C_long, trunc_par, sites_per_cell = cell, cut = L_short // 2)
-
-    for norm_magz_fac in [2.]:
-        # Lx, Ly = 6, 6
-        # iMPS_Lx_factor = 30
+    for norm_magz_fac in [0.]:
         Lx, Ly = 2, 6
         norm_magz = norm_magz_fac / (Lx * Ly)
         iMPS_Lx_factor = 20
@@ -2836,7 +2815,8 @@ if __name__ == "__main__":
         abs_magz = AbsMagzFromNormMagz(norm_magz, Lx * Ly)
         monopole_Q_opt = int(norm_magz_fac//2)
         flux = 0.0
-        SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, "YC", "infinite", 0,
+        bc_MPS = "infinite"
+        SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, "YC", bc_MPS, 0,
                                                              model_type_dirac, Lx=Lx, chi_max=chi_max, flux=flux,
                                                              norm_magz=norm_magz, monopole_Q=0,
                                                              show_transverse_correlations=True,
@@ -2869,10 +2849,6 @@ if __name__ == "__main__":
     #dir = code_dir + "LocalGutzwillerResults/Dirac_finite_Lx_6_Ly_6_chi_1000_flux_0. 0_YC_gsindex_0_magz_6_monQ_6/"
     #with open(dir + "psi_gutzwiller.pkl", 'rb') as f:
     #  psi = pickle.load(f)
-
-    #SpinonTriangularLatticeMeanFieldGutzwillerProjection(7, "YC", "infinite", 0,
-    #                                                     model_type_dirac,
-    #                                                     Lx=2, chi_max=500, flux=0.0, magz=0)
 
     #####################
     # i = 1

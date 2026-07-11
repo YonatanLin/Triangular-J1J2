@@ -35,7 +35,7 @@ setup_logging(to_stdout="INFO")
 if not local:
     print(f"num threads: {tenpy.tools.process.mkl_get_nthreads()}")
 
-svd_min_slater_default = 3e-7
+svd_min_slater_default = 4e-7
 default_chi_max = 3000
 default_dmrg_params = {'mixer': True, 'max_E_err': 1.0e-10, 'trunc_params': {'chi_max': default_chi_max, 'svd_min': 1.0e-7},
                     'combine': True, 'chi_list': {0: 50, 3: 100, 7: default_chi_max}, 'min_sweeps': 7, 'max_sweeps': 8,
@@ -48,6 +48,10 @@ Lx_short_factor_temfpy_iMPS = 100
 model_type_dirac = "Dirac"
 model_type_Z2 = "Z2"
 
+pauli_x = np.array([[0., 1.], [1., 0.]])
+pauli_y = np.array([[0., -1j], [1j, 0.]])
+pauli_z = np.array([[1., 0.0], [0.0, -1.0]])
+paulis = np.asarray([pauli_x, pauli_y, pauli_z])
 
 def AbsMagzFromNormMagz(norm_magz, N_sites):
     magz_tot_doubled = int(round(norm_magz * N_sites))
@@ -378,6 +382,52 @@ def CalculateSpinSpinCorrelations(psi, sites1=None, sites2=None, inf_mps_unitcel
     return spin_corr
 
 
+def FreeFermionSpinCorrelations(C):
+    """
+    input: two-fermions spatial correlation matrix C, corresponding to a quadratic Hamiltonian
+    :return: spin-spin correlations, where the spin operator is expressed as a fermion bilinear contracted with Pauli
+    matrices
+    """
+    C_up = C[0::2, 0::2]
+    C_down = np.eye(C_up.shape[0]) - np.transpose(C[1::2, 1::2])
+
+    assert(np.max(np.abs(C_up - HT(C_up))) < 1e-14), "C_up should be hermitian"
+    assert (np.max(np.abs(C_down - HT(C_down))) < 1e-14), "C_down should be hermitian"
+    assert(C_up.shape == C_down.shape)
+
+    G = np.zeros((C_up.shape[0], C_up.shape[1], 2), dtype=np.complex128)
+    G[:, :, 0] = C_up
+    G[:, :, 1] = C_down
+
+    n = G.shape[0]
+
+    if G.shape != (n, n, 2):
+        raise ValueError(f"G must have shape (n, n, 2), got {G.shape}")
+
+    # --- Mean (disconnected) part: <S^a_i> <S^b_j> ---
+    # <S^a_i> = (1/2) sum_sigma sigma^a_{sigma,sigma} G^sigma_{ii}
+    diag_pauli = np.einsum('aii->ai', paulis)  # (3, 2):  sigma^a_{s,s}
+    G_ii = np.einsum('iis->si', G)  # (2, n):  G^s_{ii}
+    S_mean = 0.5 * np.einsum('as,si->ai', diag_pauli, G_ii)  # (3, n)
+
+    disconnected = np.einsum('ai,bj->abij', S_mean, S_mean)  # (3,3,n,n)
+
+    # --- Connected (exchange) part ---
+    # term2[i,j,s'] = delta_ij - G^{s'}_{ji}
+    delta_ij = np.eye(n)[:, :, None]  # (n, n, 1)
+    G_ji = np.transpose(G, (1, 0, 2))  # G_ji[i,j,s'] = G[j,i,s']
+    term2 = delta_ij - G_ji  # (n, n, 2)
+
+    # connected[a,b,i,j] = 1/4 * sum_{s,s'} P[a,s,s'] P[b,s',s] G[i,j,s] term2[i,j,s']
+    connected = 0.25 * np.einsum(
+        'ast,bts,ijs,ijt->abij', paulis, paulis, G, term2
+    )
+
+    total_spin_spin_tensor = disconnected + connected
+    spin_spin_correlations = np.einsum('iiab->ab', total_spin_spin_tensor) #sum_{s,s} C[s,s,i,j]
+    return spin_spin_correlations
+
+
 def _nearest_neighbor_dimer_bonds_by_site(psi, lat, sites, pair_key="nearest_neighbors"):
     bonds_by_site = {int(site): [] for site in sites}
     base_bonds = []
@@ -624,16 +674,18 @@ def StructureFactorPairPhases(coor_i, coor_j, bc_MPS, bcs, Ls, basis_vectors, un
     return phases
 
 
-
-def ComputeMomentumSpaceStructureFactor(corr_x, lat, assert_realness=True, transform_expectation_value=False):
+def ComputeMomentumSpaceStructureFactor(corr_x, lat, assert_realness=True, transform_expectation_value=False,
+                                        Kx=None, Ky=None):
     if transform_expectation_value:
         assert(corr_x.ndim == 1)
     elif lat.bc_MPS != "infinite":
         assert (lat.N_sites == corr_x.shape[0] and lat.N_sites==corr_x.shape[1])
 
     corr_x_shape = corr_x.shape
-    kx = ky = np.linspace(-2 * np.pi, 2 * np.pi, 100)
-    Kx, Ky = np.meshgrid(kx, ky)
+    if Kx is None:
+        assert(Ky is None), "need to specify momentum along both axes"
+        kx = ky = np.linspace(-2 * np.pi, 2 * np.pi, 100)
+        Kx, Ky = np.meshgrid(kx, ky)
     bcs = lat.boundary_conditions
     Ls = lat.Ls
     corr_k = np.zeros(Kx.shape, dtype=complex)
@@ -1622,8 +1674,6 @@ def CalculateExactCMatrixForPiFlux(gs_manifold_index, model_params, model_type,
         assert (abs_magz <= triangular_lat.N_sites // 4), "absolute magnetization cannot exceed the number of sites"
         N_up = (triangular_lat.N_sites // 4 + abs_magz)
         N_filling = 2 * N_up
-        assert(abs(e[N_filling] - e[N_filling - 1]) > zero_energy_tol), \
-            "Fermi level should sit inside a gap for magnetized state"
 
         n_edge_modes_L_up = 0
         n_edge_modes_L_down = 0
@@ -1674,6 +1724,9 @@ def CalculateExactCMatrixForPiFlux(gs_manifold_index, model_params, model_type,
         C, _ = CorrelationMatrixArbitraryOccupation(H, N_filling, psi_support_per_spin, zero_energy_tol,
                                                     num_zero_modes)
     else:
+        if N_filling < e.shape[0]:
+            assert(abs(e[N_filling] - e[N_filling - 1]) > zero_energy_tol), \
+                "Fermi level should sit inside a gap for magnetized state"
         C, _ = slater.correlation_matrix(H, N_filling)
 
     return C, triangular_lat
@@ -1711,8 +1764,6 @@ def GetTriangularFluxSlaterMPS(Lx, Ly, spinfull, site, geometry, slater_trunc_pa
         psi_from_slater = slater.C_to_MPS(C, trunc_par=slater_trunc_par)
     else:
         abs_magz_unitcell = AbsMagzFromNormMagz(norm_magz, triangular_lat_finite.N_sites // 2)
-        assert (abs(triangular_lat_finite.N_sites * norm_magz // 2 - abs_magz_unitcell)
-                < 1e-15)  # magnetization should fit in unitcell
         Q_unitcell = model_params["monopole_Q"]
 
         Lx_short, Lx_long = iMPS_Lx_factor * Lx, (iMPS_Lx_factor + 1) * Lx
@@ -1733,7 +1784,7 @@ def GetTriangularFluxSlaterMPS(Lx, Ly, spinfull, site, geometry, slater_trunc_pa
         model_params_long["monopole_Q"] = Q_unitcell * (Lx_long // Lx)
         abs_magz_long = AbsMagzFromNormMagz(norm_magz, triangular_lat_long.N_sites // 2)
 
-        assert (abs_magz_short + AbsMagzFromNormMagz(norm_magz, triangular_lat_finite.N_sites // 2) == abs_magz_long), \
+        assert (abs_magz_short + abs_magz_unitcell == abs_magz_long), \
                 "magnetization should fit in unitcell for iMPS temfpy calculation"
 
         C_long, triangular_lat_long = CalculateExactCMatrixForPiFlux(gs_manifold_index, model_params_long, model_type,
@@ -2402,36 +2453,124 @@ def getEnergyDifferenceBetweenSectors(dir1, dir2, title, dmrg, fig_name):
     plt.show()
 
 
-def checkXC8SlaterCorrelations():
-    temfpy_dir = code_dir + "LocalGutzwillerResults/Dirac_infinite_Lx_2_Ly_4_chi_25000_flux_0.0_XC_gsindex_0/"
+def TestFreeFermionsSpinCorrelations():
+    Lx, Ly = 6, 6
     spinfull_fermions = True
-    Lx, Ly = 10, 4
 
     site = FermionSite('N')
     triangular_lat = BuildTriangularLattice(Lx, Ly, site, "finite",
                                             ("open", "periodic"), "XC", spinfull_fermions)
     pi_flux_parameters = {"init_H_MPO": False, "monopole_Q": 0, "flux": 0.0,
+                          "particle_hole": spinfull_fermions, "lattice": triangular_lat}
+    C_x_exact, _ = CalculateExactCMatrixForPiFlux(0, pi_flux_parameters, model_type_dirac,
+                                                  abs_magz=Lx*Ly)
+
+    spin_spin_corr = FreeFermionSpinCorrelations(C_x_exact)
+    spin_triangular_lat = BuildTriangularLattice(Lx, Ly, site, "finite", ("open", "periodic"),
+                                                 "XC")
+    momentum_space = True
+    fig, ax = plt.subplots(figsize=(6, 5))
+    if momentum_space:
+        Kx, Ky, C_k = ComputeMomentumSpaceStructureFactor(spin_spin_corr, spin_triangular_lat)
+        ImshowMatrix(ax, fig, Kx, Ky, C_k)
+        lat_for_bz = BuildTriangularLattice(1, 1, site, "finite", ("open", "open"), "YC")
+        lat_for_bz.plot_brillouin_zone(ax)
+    else:
+        ImshowMatrix(ax, fig, np.array([0.,1.]), np.array([0.,1.0]), spin_spin_corr, "X", "Y")
+
+    plt.show()
+
+    for i in range(spin_spin_corr.shape[0]):
+        for j in range(spin_spin_corr.shape[1]):
+            if i != j:
+                assert(np.abs(spin_spin_corr[i,j] - 0.25) < 1e-14), "test failed - incorrect off diagonal term"
+            else:
+                assert(np.abs(spin_spin_corr[i,j] - 0.75) < 1e-14), "test failed - incorrect diagonal term"
+
+
+def checkPiFluxFreeSpinCorrelations():
+    Lx, Ly = 10, 10
+    site = FermionSite('N')
+    bc_exact = ("periodic", "periodic")
+    geometry = "XC"
+    flux = 1.0
+    abs_magz = 0
+    Q = 0
+    spinfull_fermions = True
+    gs_manifold_index = 0
+    triangular_lat = BuildTriangularLattice(Lx, Ly, site, "finite",
+                                            bc_exact, geometry, spinfull_fermions)
+    pi_flux_parameters = {"init_H_MPO": False, "monopole_Q": Q, "flux": flux,
+                          "particle_hole": spinfull_fermions, "lattice": triangular_lat}
+    C_x_exact, _ = CalculateExactCMatrixForPiFlux(gs_manifold_index, pi_flux_parameters,
+                                                  model_type_dirac, abs_magz=abs_magz)
+    fig_exact, ax_exact = plt.subplots(figsize=(5, 6))
+    spin_spin_corr = FreeFermionSpinCorrelations(C_x_exact)
+    spin_triangular_lat = BuildTriangularLattice(Lx, Ly, site, "finite", bc_exact, geometry)
+
+    M1 = np.array([0., 2 * pi / sqrt(3)])
+    M2 = np.array([pi, (-1) * pi / sqrt(3)])
+    M3 = np.array([pi, pi / sqrt(3)])
+    Ms = (M1, M2, M3)
+    for i_M, M in enumerate(Ms):
+        S_M = ComputeMomentumSpaceStructureFactor(spin_spin_corr, spin_triangular_lat, Kx=np.array([M[0]]),
+                                                   Ky=np.array([M[1]]))[-1]
+        print(f"spin structure factor at M{i_M+1}: {S_M}")
+
+
+    Kx, Ky, C_k = ComputeMomentumSpaceStructureFactor(spin_spin_corr, spin_triangular_lat)
+    Ky0_ind = np.argmin(np.abs(Ky[:, 0] - M1[1]))
+    C_ky0_slice = C_k[Ky0_ind, :]
+    fig_slice, ax_slice = plt.subplots(figsize=(5, 6))
+    ax_slice.plot(Kx[0, :], np.abs(C_ky0_slice), "o")
+
+    ImshowMatrix(ax_exact, fig_exact, Kx, Ky, np.abs(C_k))
+    lat_for_bz = BuildTriangularLattice(1, 1, site, "finite", bc_exact, "YC")
+    lat_for_bz.plot_brillouin_zone(ax_exact)
+    plt.show()
+
+
+def checkXC8SlaterCorrelations():
+    geometry = "XC"
+    flux = 0.0
+    gs_manifold_index = 0
+    Ly = 4
+    temfpy_dir = (code_dir + f"LocalGutzwillerResults/Dirac_infinite_Lx_2_Ly_{Ly}_" +
+                  "chi_25000_flux_{flux}_{geometry}_gsindex_{gs_manifold_index}/")
+    spinfull_fermions = True
+
+    Lx = 10
+    site = FermionSite('N')
+    bc_exact = ("open", "periodic")
+    abs_magz = 0
+    Q = 0
+
+    triangular_lat = BuildTriangularLattice(Lx, Ly, site, "finite",
+                                            bc_exact, geometry, spinfull_fermions)
+    pi_flux_parameters = {"init_H_MPO": False, "monopole_Q": Q, "flux": flux,
                           "particle_hole": spinfull_fermions, "lattice":triangular_lat}
-    C_x_exact, _ = CalculateExactCMatrixForPiFlux(0, pi_flux_parameters, model_type_dirac)
+    C_x_exact, _ = CalculateExactCMatrixForPiFlux(gs_manifold_index, pi_flux_parameters,
+                                                  model_type_dirac, abs_magz=abs_magz)
 
     fig_exact, ax_exact = plt.subplots(figsize=(5, 6))
-    fig_temfpy, ax_temfpy = plt.subplots(figsize=(5, 6))
-    # fig_diff, ax_diff = plt.subplots(figsize=(5, 6))
-    x, y = np.arange(0, C_x_exact.shape[0]), np.arange(0, C_x_exact.shape[1])
-    plot_spatial = True
+    plot_spatial = False
     if plot_spatial:
+        x, y = np.arange(0, C_x_exact.shape[0]), np.arange(0, C_x_exact.shape[1])
         X, Y = np.meshgrid(x, y)
         ImshowMatrix(ax_exact, fig_exact, X, Y, C_x_exact)
         C_x_temfpy = np.loadtxt(temfpy_dir + "slater_correlations.csv")
+        fig_temfpy, ax_temfpy = plt.subplots(figsize=(5, 6))
         ImshowMatrix(ax_temfpy, fig_temfpy, X, Y, C_x_temfpy)
         #rel_diff = (C_x_exact - C_x_temfpy) / (np.abs(C_x_exact) + np.abs(C_x_temfpy))
         #rel_diff[np.abs(C_x_exact) < 1e-12] = 0.0
         #rel_diff[np.abs(C_x_temfpy) < 1e-12] = 0.0
         #ImshowMatrix(ax_diff, fig_diff, X, Y, rel_diff)
     else:
-        Kx, Ky, C_k = ComputeMomentumSpaceStructureFactor(C_x_exact, triangular_lat)
-        ImshowMatrix(ax_exact, fig_exact, Kx, Ky, C_k)
-        lat_for_bz = BuildTriangularLattice(1, 1, site, "finite", ("open", "open"), "YC")
+        spin_spin_corr = FreeFermionSpinCorrelations(C_x_exact)
+        spin_triangular_lat = BuildTriangularLattice(Lx, Ly, site, "finite", bc_exact, geometry)
+        Kx, Ky, C_k = ComputeMomentumSpaceStructureFactor(spin_spin_corr, spin_triangular_lat)
+        ImshowMatrix(ax_exact, fig_exact, Kx, Ky, np.abs(C_k))
+        lat_for_bz = BuildTriangularLattice(1, 1, site, "finite", bc_exact, "YC")
         lat_for_bz.plot_brillouin_zone(ax_exact)
 
     plt.show()
@@ -2589,6 +2728,11 @@ if __name__ == "__main__":
     output_dir = "C:/Users/yonli/Desktop/Thesis/Triangular J1J2/Meetings/4_5_2026/"
     monopole_dir = code_dir + "MonopoleCondensateGutzwiller/"
 
+    # TestFreeFermionsSpinCorrelations()
+    # checkXC8SlaterCorrelations()
+    checkPiFluxFreeSpinCorrelations()
+    #exit(1)
+
     # DebugMagnetizedIMPS()
 
     # checkXC8SlaterCorrelations()
@@ -2655,23 +2799,42 @@ if __name__ == "__main__":
     #print(det(arr))
     #exit(0)
 
-    for norm_magz_fac in [12.]:
+    # C_magnetized = np.loadtxt("debug_magnetized_iMPS/C_Lx_80_m_0.0833.txt", dtype=np.complex128)
+    # C_unmagnetized = np.loadtxt("debug_magnetized_iMPS/C_Lx_80_m_0.0.txt", dtype=np.complex128)
+    # fig, ax = plt.subplots(figsize=(5,6))
+    # # ImshowMatrix(ax, fig, np.array([0.0,1.0]), np.array([0.0,1.0]), np.abs(C), xlabel="X", ylabel="Y")
+    # middle_site = C_magnetized.shape[0]//2
+    # ax.plot(C_magnetized[middle_site, (middle_site)::2], "bo", markersize=2, label="with magz")
+    # ax.plot(C_unmagnetized[middle_site, (middle_site)::2], "ro", markersize=2, label="without magz")
+    # ax.legend()
+    # plt.show()
+
+    def H(L, t1=-1, t2=-1.5):
+        M = t1 * np.ones(L - 1)
+        M[1::2] = t2
+        M = np.diag(M, 1)
+        return M + M.T
+
+    trunc_par = {"chi_max": 100}  # cf. Listing 1
+    L_short = 128
+    cell = 2  # cf. periodicity of H
+    C_short, _ = slater.correlation_matrix(H(L_short))
+    C_long, _ = slater.correlation_matrix(H(L_short + cell))
+    iMPS, error = slater.C_to_iMPS(C_short, C_long, trunc_par, sites_per_cell = cell, cut = L_short // 2)
+
+    for norm_magz_fac in [2.]:
         # Lx, Ly = 6, 6
         # iMPS_Lx_factor = 30
-        Lx, Ly = 6, 6
+        Lx, Ly = 2, 6
         norm_magz = norm_magz_fac / (Lx * Ly)
         iMPS_Lx_factor = 20
         chi_max = 1000
         abs_magz = AbsMagzFromNormMagz(norm_magz, Lx * Ly)
-        # for monopole_Q in [7]:
-        #    SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, "YC", "finite", 0,
-        #                                                         model_type_dirac, Lx=Lx, chi_max=2000, flux=0.0,
-        #                                                         norm_magz=norm_magz, monopole_Q=monopole_Q,
-        #                                                         show_transverse_correlations=True)
         monopole_Q_opt = int(norm_magz_fac//2)
+        flux = 0.0
         SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, "YC", "infinite", 0,
-                                                             model_type_dirac, Lx=Lx, chi_max=chi_max, flux=0.0,
-                                                             norm_magz=norm_magz, monopole_Q=monopole_Q_opt,
+                                                             model_type_dirac, Lx=Lx, chi_max=chi_max, flux=flux,
+                                                             norm_magz=norm_magz, monopole_Q=0,
                                                              show_transverse_correlations=True,
                                                              iMPS_Lx_factor=iMPS_Lx_factor)
 

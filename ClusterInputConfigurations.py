@@ -59,7 +59,8 @@ dmrg_gutz_comp_input_params = [("Lx", int), ("Ly", int), ("geometry", str), ("bc
                                ("dmrg_initial_state", str), ("dmrg_conserve", int),
                                ("dmrg_chi_max", optional_int), ("dmrg_max_sweeps", optional_int), ("dmrg_parent_dir", str),
                                ("gutz_chi_max", int), ("gutz_flux", float), ("gutz_gs_manifold_index", int),
-                               ("gutz_parent_dir", str), ("model_type", optional_str), ("J2_file", str)]
+                               ("gutz_mon_Q", int), ("gutz_parent_dir", str), ("model_type", optional_str),
+                               ("norm_magz", float), ("J2_file", str)]
 
 def build_parser(input_params):
     parser = argparse.ArgumentParser(

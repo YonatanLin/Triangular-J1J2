@@ -7,4 +7,4 @@ if __name__ == "__main__":
     assert(sys.argv[1][-1] == "/")
     CreateTriangularCaseDirFromInputFile(sys.argv[1], sys.argv[2], dmrg_gutz_comp_input_params,
                                          [], CreateOverlapsCaseDir,
-                                         "gutz_condor_cases.txt")
+                                         "overlaps_condor_cases.txt")

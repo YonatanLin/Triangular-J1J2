@@ -7,7 +7,7 @@ if __name__ == "__main__":
     args = build_parser(dmrg_gutz_comp_input_params).parse_args()
     args_dict = vars(args)
 
-    kwargs = {param: args_dict[param] for param, param_type in dmrg_input_params}
+    kwargs = {param: args_dict[param] for param, param_type in dmrg_gutz_comp_input_params}
 
     J2_file = args_dict["J2_file"]
     print(f"input file: {J2_file}")

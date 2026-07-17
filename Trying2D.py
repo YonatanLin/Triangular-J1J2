@@ -1948,8 +1948,8 @@ def calculateOverlapBetweenGutzwillerAndDMRG(dmrg_dir, gutzwiller_dir,
 
     #overlap = abs(psi_dmrg.overlap(psi_gutz, num_ev=4))
     print(f"calculating overlap between dmrg wavefunction in {dmrg_dir} and gutzwiller wavefunction in {gutzwiller_dir}")
-    overlap = abs(psi_dmrg.overlap(psi_gutz))
-    print("overlap between wavefunctions: ", overlap)
+    overlap = psi_dmrg.overlap(psi_gutz)
+    print(f"overlap is {overlap}, |overlap| is {abs(overlap)}")
     return overlap
 
 

@@ -312,6 +312,31 @@ def CreateGutzwillerCaseDir(main_results_dir, Lx, Ly, chi_max, flux, geometry, b
     return gutz_dir
 
 
+def CreateOverlapsCaseDir(main_results_dir, **kwargs):
+    Lx = kwargs.get("Lx")
+    Ly = kwargs.get("Ly")
+    gutz_chi_max = kwargs.get("gutz_chi_max")
+    gutz_flux = kwargs.get("gutz_flux")
+    gutz_mon_Q = kwargs.get("gutz_mon_Q")
+    dmrg_initial_state = kwargs.get("dmrg_initial_state")
+    geometry = kwargs.get("geometry")
+    bc_MPS = kwargs.get("bc_MPS")
+    dmrg_chi_max = kwargs.get("dmrg_chi_max")
+    dmrg_max_sweeps = kwargs.get("dmrg_max_sweeps")
+    norm_magz = kwargs.get("norm_magz")
+
+    Path(main_results_dir).mkdir(parents=True, exist_ok=True)
+    geometry_case_dir = f"{bc_MPS}_Lx_{Lx}_Ly_{Ly}_{geometry}/"
+    overlaps_dir = main_results_dir + geometry_case_dir
+    Path(overlaps_dir).mkdir(parents=True, exist_ok=True)
+    hamiltonian_case_dir = (f"chiGutz_{gutz_chi_max}_flux_{gutz_flux}_monQ_{gutz_mon_Q}_"
+                            f"initDMRG_{dmrg_initial_state}_chiDMRG_{dmrg_chi_max}_sweeps_{dmrg_max_sweeps}_"
+                            f"magz_{norm_magz}/")
+    overlaps_dir = overlaps_dir + hamiltonian_case_dir
+    Path(overlaps_dir).mkdir(parents=True, exist_ok=True)
+    return overlaps_dir
+
+
 def AddAndTrackCoupling(model, strength, u1, op1, u2, op2, dx, couplings_list, plus_hc=False,
                         flux=0.0):
     if abs(flux) > 1e-15:

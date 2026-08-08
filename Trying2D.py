@@ -1105,7 +1105,7 @@ def GetTriangularLatticeInitialState(initial_state, triangular_lat, initial_psi_
     N_sites = triangular_lat.N_sites
     assert(abs_magz <= N_sites // 2), "normalized magnetization cannot exceed 1"
     if abs_magz > 0:
-        assert(initial_state == "Random")
+        assert(initial_state == "Random" or initialStateFromFile(initial_state))
     if initial_state == "Random":
         N_up = N_sites // 2 + abs_magz
         N_down = N_sites - N_up

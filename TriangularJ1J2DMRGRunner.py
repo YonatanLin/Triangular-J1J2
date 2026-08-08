@@ -2,7 +2,7 @@ import argparse
 
 import numpy as np
 
-from Trying2D import TriangularJ1J2DMRG, TriangularJ1J2CaseDirName
+from Main import TriangularJ1J2DMRG, TriangularJ1J2CaseDirName
 from ClusterInputConfigurations import dmrg_input_params, build_parser
 from pathlib import Path
 

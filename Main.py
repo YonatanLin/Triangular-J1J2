@@ -16,7 +16,7 @@ from numpy import sin, cos, sqrt, pi
 from tenpy.models.model import CouplingModel, CouplingMPOModel
 from tenpy.networks.mps import MPS
 import tenpy.linalg.np_conserved as npc
-from tenpy.models import lattice
+import tenpy.models
 from tenpy.algorithms import dmrg
 from numpy.linalg import eigh, det, inv
 from tenpy.tools.misc import setup_logging
@@ -30,8 +30,8 @@ from temfpy.utils import HT
 from tenpy import MPSEnvironment
 import threading
 import time
-if local:
-    from SpinChirality import plot_scalar_spin_chirality
+from WaveFunctionProperties import (plot_scalar_spin_chirality, compute_structure_factor_grid,
+                                    plot_structure_factor, structure_factor, ComputeMomentumSpaceStructureFactor)
 
 setup_logging(to_stdout="INFO")
 if not local:
@@ -674,75 +674,9 @@ def ImshowMatrix(ax, fig, X, Y, spin_corr_k, xlabel = r"$k_x$",
     ax.axvline(0.0, color='white', linewidth=0.6, alpha=0.5)
 
 
-def getShortestDistanceOnLatticeAxis(ax_coor_site1, ax_coor_site2, ax_bc, ax_L, finite_axis):
-    coor_diff = ax_coor_site1 - ax_coor_site2
-    coor_dist = abs(coor_diff)
-    if ax_bc == "periodic" and finite_axis:
-        assert(coor_dist < ax_L)
-        dist_orig = coor_dist
-        dist_opposite = ax_L - coor_dist
-        if dist_orig < dist_opposite:
-            return np.sign(coor_diff) * dist_orig
-        else:
-            return (-1) * np.sign(coor_diff) * dist_opposite
-    return coor_diff
-
-
-def StructureFactorPairPhases(coor_i, coor_j, bc_MPS, bcs, Ls, basis_vectors, unit_cell_pos, Kx, Ky):
-    finite = (bc_MPS != "infinite")
-    coor_diff_x = getShortestDistanceOnLatticeAxis(coor_i[0], coor_j[0], bcs[0], Ls[0], finite)
-    coor_diff_y = getShortestDistanceOnLatticeAxis(coor_i[1], coor_j[1], bcs[1], Ls[1], True)
-
-    coor_diff = np.array([coor_diff_x, coor_diff_y])
-    r_ij = np.dot(coor_diff, basis_vectors) + (unit_cell_pos[coor_i[-1], :] - unit_cell_pos[coor_j[-1], :])
-
-    phases = np.exp(-1j * (Kx * r_ij[0] + Ky * r_ij[1]))
-    return phases
-
-
-def ComputeMomentumSpaceStructureFactor(corr_x, lat, assert_realness=True, transform_expectation_value=False,
-                                        Kx=None, Ky=None):
-    if transform_expectation_value:
-        assert(corr_x.ndim == 1)
-    elif lat.bc_MPS != "infinite":
-        assert (lat.N_sites == corr_x.shape[0] and lat.N_sites==corr_x.shape[1])
-
-    corr_x_shape = corr_x.shape
-    if Kx is None:
-        assert(Ky is None), "need to specify momentum along both axes"
-        kx = ky = np.linspace(-2 * np.pi, 2 * np.pi, 100)
-        Kx, Ky = np.meshgrid(kx, ky)
-    bcs = lat.boundary_conditions
-    Ls = lat.Ls
-    corr_k = np.zeros(Kx.shape, dtype=complex)
-    bc_MPS = lat.bc_MPS
-    unit_cell_pos = lat.unit_cell_positions
-    basis_vectors = np.asarray(lat.basis, dtype=float)
-
-    for i in range(corr_x_shape[0]):
-        coor_i = lat.mps2lat_idx(i)
-        if transform_expectation_value:
-                coor_center = [(Ls[0]-1)/2., (Ls[1]-1)/2., len(unit_cell_pos)//2]
-                phases = StructureFactorPairPhases(coor_i, coor_center, bc_MPS, bcs, Ls, basis_vectors,
-                                                   unit_cell_pos, Kx, Ky)
-                corr_k += corr_x[i] * phases
-        else:
-            for j in range(corr_x_shape[1]):
-                coor_j = lat.mps2lat_idx(j)
-                phases = StructureFactorPairPhases(coor_i, coor_j, bc_MPS, bcs, Ls, basis_vectors,
-                                                   unit_cell_pos, Kx, Ky)
-                corr_k += corr_x[i, j] * phases
-                
-    corr_k = corr_k / lat.N_sites
-    if assert_realness:
-        assert(np.max(np.abs(np.imag(corr_k))) < 1e-13)
-
-    return Kx, Ky, corr_k
-
-
 def PlotSquareLatticeStructureFactor(Lx=6, Ly=6):
     site = SpinHalfSite(conserve=None)
-    square_lat = lattice.Square(Lx=Lx, Ly=Ly, site=site, bc=['open', 'open'])
+    square_lat = tenpy.models.lattice.Square(Lx=Lx, Ly=Ly, site=site, bc=['open', 'open'])
 
     fig_lat, ax_lat = plt.subplots(figsize=(6, 5))
     square_lat.plot_order(ax_lat)
@@ -766,12 +700,12 @@ def PlotSquareLatticeStructureFactor(Lx=6, Ly=6):
     psi.canonical_form()
 
     spin_corr_x = CalculateSpinSpinCorrelations(psi)
-    Kx, Ky, spin_corr_k = ComputeMomentumSpaceStructureFactor(spin_corr_x, square_lat)
+    ks, spin_corr_k = ComputeMomentumSpaceStructureFactor(spin_corr_x, square_lat)
 
     fig, ax = plt.subplots(figsize=(6, 5))
     title = f"Spin structure factor on a {Lx}x{Ly} square lattice"
-    ImshowMatrix(ax, fig, Kx, Ky, spin_corr_k, title=title)
-
+    ax.set_title(title)
+    plot_structure_factor(ks, spin_corr_k, square_lat, ax)
     square_lat.plot_brillouin_zone(ax)
 
     fig.tight_layout()
@@ -779,14 +713,15 @@ def PlotSquareLatticeStructureFactor(Lx=6, Ly=6):
             plt.show()
 
 
-def Generate120DegOrderedState(lat=None, Lx=None, Ly=None, plot=False):
+def Generate120DegOrderedState(lat=None, plot=False):
     if lat == None:
         site = SpinHalfSite(conserve=None)
         Lx = 9
         Ly = 9
-        triangular_lat = lattice.Triangular(Lx=Lx, Ly=Ly, site=site, bc=['periodic', 'open'])
+        triangular_lat = tenpy.models.lattice.Triangular(Lx=Lx, Ly=Ly, site=site, bc=['periodic', 'open'])
         lat = triangular_lat
     else:
+        Lx, Ly = lat.Ls[0], lat.Ls[1]
         site = lat.mps_sites()[0]
     basis = lat.basis
     unitcell_pos = lat.unit_cell_positions
@@ -835,10 +770,12 @@ def Generate120DegOrderedState(lat=None, Lx=None, Ly=None, plot=False):
         lat.plot_coupling(ax_lat)
         lat.plot_sites(ax_lat)
         spin_corr_x = CalculateSpinSpinCorrelations(psi)
-        Kx, Ky, spin_corr_k = ComputeMomentumSpaceStructureFactor(spin_corr_x, lat)
+        ks, spin_corr_k = ComputeMomentumSpaceStructureFactor(spin_corr_x, lat)
         fig_corr, ax_corr = plt.subplots(figsize=(6, 5))
-        ImshowMatrix(ax_corr, fig_corr, Kx, Ky, spin_corr_k)
-        lat.plot_brillouin_zone(ax_corr)
+        plot_structure_factor(ks, spin_corr_k, lat, ax_corr)
+        YC_lat = BuildTriangularLattice(1, 1, SpinHalfSite(None), "finite",
+                                        ("open", "open"), "YC")
+        YC_lat.plot_brillouin_zone(ax_corr)
         if local:
             plt.show()
 
@@ -907,9 +844,9 @@ def TestCorrelationsWithNontrivialUnitCell(Lx, Ly, state="120", geometry="YC"):
             plt.show()
 
     spin_corr_x = CalculateSpinSpinCorrelations(spin_state)
-    Kx, Ky, spin_corr_k = ComputeMomentumSpaceStructureFactor(spin_corr_x, triangular_lat)
+    ks, spin_corr_k = ComputeMomentumSpaceStructureFactor(spin_corr_x, triangular_lat)
     fig, ax = plt.subplots(figsize=(6, 5))
-    ImshowMatrix(ax, fig, Kx, Ky, np.abs(spin_corr_k))
+    plot_structure_factor(ks, spin_corr_k, triangular_lat, ax)
     triangular_lat = BuildTriangularLattice(Lx, Ly, site, "finite")
     triangular_lat.plot_brillouin_zone(ax)
     if local:
@@ -952,7 +889,7 @@ def TestSquareLattice(Lx=5, Ly=5, bc=('open', 'open'), J2s=[0.0],
                       bc_MPS="finite"):
     for J2 in J2s:
         site = SpinHalfSite(conserve='Sz')
-        square_lat = lattice.Square(Lx=Lx, Ly=Ly, site=site, bc=list(bc), bc_MPS=bc_MPS)
+        square_lat = tenpy.models.lattice.Square(Lx=Lx, Ly=Ly, site=site, bc=list(bc), bc_MPS=bc_MPS)
         J = 1.0
 
         J1J2_model = SpinModel({"lattice": square_lat, "Jx": J, "Jy": J, "Jz": J})
@@ -1006,12 +943,13 @@ def TestSquareLattice(Lx=5, Ly=5, bc=('open', 'open'), J2s=[0.0],
             pickle.dump(psi, f)
 
         spin_corr = CalculateSpinSpinCorrelations(psi)
-        Kx, Ky, spin_corr_k = ComputeMomentumSpaceStructureFactor(spin_corr, square_lat,
+        ks, spin_corr_k = ComputeMomentumSpaceStructureFactor(spin_corr, square_lat,
                                                                   assert_realness=False)
 
         fig_corr, ax_corr = plt.subplots(figsize=(6, 5))
         title = f"Spin structure factor"
-        ImshowMatrix(ax_corr, fig_corr, Kx, Ky, spin_corr_k, title=title)
+        ax_corr.set_title(title)
+        plot_structure_factor(ks, spin_corr_k, square_lat, ax_corr)
         square_lat.plot_brillouin_zone(ax_corr)
         fig_corr.tight_layout()
 
@@ -1082,7 +1020,7 @@ def BuildTriangularLattice(Lx, Ly, site, bc_MPS, bc = ('periodic', 'periodic'), 
             next_nearest_neighbors += [[i, i, [1, 1]], [i, i, [-1, 2]],
                                        [i, i, [-2, 1]]]
 
-        triangular_lat = lattice.Lattice([Lx, Ly], [site]*len(unit_cell), basis=basis,
+        triangular_lat = tenpy.models.lattice.Lattice([Lx, Ly], [site]*len(unit_cell), basis=basis,
                                         positions=unit_cell, bc=bc, pairs={'nearest_neighbors': nearest_neighbors,
                                                                            'next_nearest_neighbors': next_nearest_neighbors},
                                         bc_MPS=bc_MPS)
@@ -1219,11 +1157,10 @@ def calculateGutzwillerEnergyTriangularJ1J2(gutz_results_dir, Lx, Ly, chi, flux,
     return E
 
 
-def SaveSimulationOutput(results_dir, spin_corr_x, Kx, Ky, spin_corr_k, fig_corr_k, fig_lat):
+def SaveSimulationOutput(results_dir, spin_corr_x, ks, spin_corr_k, fig_corr_k, fig_lat):
     np.savetxt(results_dir + "spin_corr_x.csv", spin_corr_x)
     np.savetxt(results_dir + "spin_corr_k.csv", spin_corr_k)
-    np.savetxt(results_dir + "Kx.csv", Kx)
-    np.savetxt(results_dir + "Ky.csv", Ky)
+    np.savetxt(results_dir + "ks.csv", ks)
     fig_corr_k.savefig(results_dir + "momentum_space_correlations.png", bbox_inches='tight')
     fig_lat.savefig(results_dir + "lattice.png", bbox_inches='tight')
 
@@ -1314,14 +1251,13 @@ def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, conserve=True, initial_state="Random"
 
     spin_corr_x = CalculateSpinSpinCorrelations(psi, sites1, sites2)
 
-    Kx, Ky, spin_corr_k = ComputeMomentumSpaceStructureFactor(spin_corr_x, lat_for_corr,
+    ks, spin_corr_k = ComputeMomentumSpaceStructureFactor(spin_corr_x, lat_for_corr,
                                                               assert_realness=False)
 
     fig_corr, ax_corr = plt.subplots(figsize=(6, 5))
-    title = f"Spin structure factor on a {Lx}x{Ly} square lattice"
-    ImshowMatrix(ax_corr, fig_corr, Kx, Ky, spin_corr_k, title=title)
+    plot_structure_factor(ks, spin_corr_k, triangular_lat, ax_corr)
     lat_for_corr.plot_brillouin_zone(ax_corr)
-    SaveSimulationOutput(results_dir, spin_corr_x, Kx, Ky, spin_corr_k, fig_corr, fig_lat)
+    SaveSimulationOutput(results_dir, spin_corr_x, ks, spin_corr_k, fig_corr, fig_lat)
 
 
 def DeterminePiFluxCoupling(x, y, dx, dy, basis_vectors):
@@ -1521,7 +1457,6 @@ def AddCouplingsToZ2ModelDict(test_sites, coupled_sites, zeta):
     couplings = AddCouplingsToModelDict(test_sites, coupled_sites)
     AddTermToFermionCouplingsDict(couplings, test_sites[0], test_sites[1], zeta)
     return couplings
-
 
 
 def TestDictsAreCompatible(couplings_dict, expected_couplings_dict):
@@ -2048,15 +1983,15 @@ def SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, geometry, bc_MPS, g
     fig_lat, ax_lat = plt.subplots(figsize=(6, 5))
     PlotLattice(spin_lat, ax_lat)
 
-    Kx, Ky, spin_corr_k = ComputeMomentumSpaceStructureFactor(spin_corr_x, spin_lat)
+    ks, spin_corr_k = ComputeMomentumSpaceStructureFactor(spin_corr_x, spin_lat)
 
     fig_corr_k, ax_corr_k = plt.subplots(figsize=(6, 5))
-    ImshowMatrix(ax_corr_k, fig_corr_k, Kx, Ky, spin_corr_k)
-    spin_lat_singlesite_unitcell = BuildTriangularLattice(1, 1, spin_site, bc_MPS, geometry=geometry)
+    plot_structure_factor(ks, spin_corr_k, triangular_lat, ax_corr_k)
+    spin_lat_singlesite_unitcell = BuildTriangularLattice(1, 1, spin_site, bc_MPS, geometry="YC")
     spin_lat_singlesite_unitcell.plot_brillouin_zone(ax_corr_k)
     ax_corr_k.set_title("Spin Correlations")
 
-    SaveSimulationOutput(results_dir, spin_corr_x, Kx, Ky, spin_corr_k, fig_corr_k, fig_lat)
+    SaveSimulationOutput(results_dir, spin_corr_x, ks, spin_corr_k, fig_corr_k, fig_lat)
 
 
 def ComputeCorrelationsFromMPSFile(parent_results_path, Lx, Ly, bc, bc_MPS,
@@ -2079,14 +2014,15 @@ def ComputeCorrelationsFromMPSFile(parent_results_path, Lx, Ly, bc, bc_MPS,
     spin_corr_x = CalculateSpinSpinCorrelations(psi, sites1=np.arange(0, triangular_lattice.N_sites),
                                                 sites2=np.arange(0, triangular_lattice.N_sites),
                                                 transverse_correlations=transverse_correlations)
-    Kx, Ky, spin_corr_k = ComputeMomentumSpaceStructureFactor(spin_corr_x, triangular_lattice,
+    ks, spin_corr_k = ComputeMomentumSpaceStructureFactor(spin_corr_x, triangular_lattice,
                                                               assert_realness=True)
 
     # spin_corr_k_from_file = np.loadtxt(psi_dir + "spin_corr_k.csv", dtype=complex)
     # print("largest diff: ", np.max(np.abs(spin_corr_k - spin_corr_k_from_file)))
     fig, ax = plt.subplots(figsize=(6, 5))
-    title = f"Spin structure factor"
-    ImshowMatrix(ax, fig, Kx, Ky, spin_corr_k, title=title)
+    title = f"Spin Structure Factor"
+    ax.set_title(title)
+    plot_structure_factor(ks, spin_corr_k, triangular_lattice, ax)
     triangular_lattice.plot_brillouin_zone(ax)
     fig.savefig(psi_dir + "momentum_space_correlations_local", bbox_inches='tight')
     if local:
@@ -2494,8 +2430,8 @@ def TestFreeFermionsSpinCorrelations():
     momentum_space = True
     fig, ax = plt.subplots(figsize=(6, 5))
     if momentum_space:
-        Kx, Ky, C_k = ComputeMomentumSpaceStructureFactor(spin_spin_corr, spin_triangular_lat)
-        ImshowMatrix(ax, fig, Kx, Ky, C_k)
+        ks, C_k = ComputeMomentumSpaceStructureFactor(spin_spin_corr, spin_triangular_lat)
+        plot_structure_factor(ks, C_k, spin_triangular_lat, ax)
         lat_for_bz = BuildTriangularLattice(1, 1, site, "finite", ("open", "open"), "YC")
         lat_for_bz.plot_brillouin_zone(ax)
     else:
@@ -2541,7 +2477,7 @@ def checkPiFluxFreeSpinCorrelations():
         print(f"spin structure factor at M{i_M+1}: {S_M}")
 
 
-    Kx, Ky, C_k = ComputeMomentumSpaceStructureFactor(spin_spin_corr, spin_triangular_lat)
+    Kx, Ky, C_k = ComputeMomentumSpaceStructureFactor(spin_spin_corr, spin_triangular_lat, new_implementation=False)
     Ky0_ind = np.argmin(np.abs(Ky[:, 0] - M1[1]))
     C_ky0_slice = C_k[Ky0_ind, :]
     fig_slice, ax_slice = plt.subplots(figsize=(5, 6))
@@ -2591,8 +2527,8 @@ def checkXC8SlaterCorrelations():
     else:
         spin_spin_corr = FreeFermionSpinCorrelations(C_x_exact)
         spin_triangular_lat = BuildTriangularLattice(Lx, Ly, site, "finite", bc_exact, geometry)
-        Kx, Ky, C_k = ComputeMomentumSpaceStructureFactor(spin_spin_corr, spin_triangular_lat)
-        ImshowMatrix(ax_exact, fig_exact, Kx, Ky, np.abs(C_k))
+        ks, C_k = ComputeMomentumSpaceStructureFactor(spin_spin_corr, spin_triangular_lat)
+        plot_structure_factor(ks, C_k, triangular_lat, ax_exact)
         lat_for_bz = BuildTriangularLattice(1, 1, site, "finite", bc_exact, "YC")
         lat_for_bz.plot_brillouin_zone(ax_exact)
 
@@ -2664,7 +2600,8 @@ def plotMonopoleOrderParameter():
     local_vals = env.expectation_value("Sp")
 
     Kx, Ky, monopole_op_k = ComputeMomentumSpaceStructureFactor(local_vals, lattice, assert_realness=False,
-                                                                transform_expectation_value=True)
+                                                                transform_expectation_value=True,
+                                                                new_implementation=False)
 
     fig, ax = plt.subplots(figsize=(6, 5))
     ImshowMatrix(ax, fig, Kx, Ky, np.abs(monopole_op_k), title=r"Fourier Transform of $<n+1|S^+|n>$")
@@ -2747,10 +2684,105 @@ def DebugMagnetizedIMPS():
     exit(0)
 
 
+def Test120State(Lx, Ly, geometry="YC"):
+    fig, ax = plt.subplots()
+    YC_lat = BuildTriangularLattice(1, 1, SpinHalfSite(None), "finite",
+                              ("open", "open"), "YC")
+
+    lat = BuildTriangularLattice(Lx, Ly, SpinHalfSite(None), "finite",
+                              ("open", "periodic"), geometry)
+    N = lat.N_sites
+    psi = Generate120DegOrderedState(lat=lat, plot=False)
+    spin_corr_x = CalculateSpinSpinCorrelations(psi)
+    # spin_corr_x = np.loadtxt(code_dir + "../Meetings/spin_corr_x.csv")
+
+    # b1, b2 = lat.reciprocal_basis
+    ks, Sk = compute_structure_factor_grid(spin_corr_x, lat, wrap_displacements=True)
+
+    # exit(1)
+
+    if geometry == "XC":
+        plot_structure_factor(ks, Sk, lat, ax=ax, mode='interpolate', n_tiles=1)
+    else:
+        plot_structure_factor(ks, Sk, lat, ax=ax, mode='voronoi', n_tiles=1)
+
+    YC_lat.plot_brillouin_zone(ax, draw_points=False)
+    plt.show()
+
+    K = np.array([2 * pi / 3., 2 * pi / sqrt(3)])
+    K_prime = np.array([-2 * pi / 3., 2 * pi / sqrt(3)])
+    structure_factor_at_K = structure_factor(spin_corr_x, lat, K)
+    structure_factor_at_K_prime = structure_factor(spin_corr_x, lat, K_prime)
+
+    expected_max = ((1. / 4.) * N * (N / 3. - 1.) + (1. / 16.) * N * (2. * N / 3.) + 0.75 * N) / N
+    expected_min = 0.5
+
+    assert (np.abs(structure_factor_at_K_prime - expected_max) < 1e-14), "unexpected value for S in K point"
+    assert (np.abs(structure_factor_at_K - expected_max) < 1e-14), "unexpected value for S in K point"
+
+    if geometry != "XC":
+        ks_minus_K_norm = np.linalg.norm(ks - K, axis=1)
+        ks_minus_K_prime_norm = np.linalg.norm(ks - K_prime, axis=1)
+        assert (np.min(ks_minus_K_norm) < 1e-14), "should have K point in k grid"
+        assert (np.min(ks_minus_K_prime_norm) < 1e-14), "should have K' point in k grid"
+        assert (np.abs(Sk[np.argmin(ks_minus_K_norm)] - expected_max) < 1e-14), "unexpected value for S in K point"
+        assert (np.abs(Sk[np.argmin(ks_minus_K_prime_norm)] - expected_max) < 1e-14), "unexpected value for S in K' point"
+
+    assert (np.abs(Sk[np.argmin(np.linalg.norm(ks, axis=1))] - expected_min) < 1e-14), \
+        "unexpected value for S in Gamma point"
+
+    print("Test finished succesfully")
+
+
+def TestRandomStateCorrelations(geometry="YC", bc_MPS="finite"):
+    from tenpy.algorithms.tebd import RandomUnitaryEvolution
+    fig, ax = plt.subplots()
+    Lx, Ly = 6, 6
+    L = Lx * Ly
+    spin_half = SpinHalfSite(conserve=None)
+    psi = MPS.from_product_state([spin_half] * L, ["up", "down"] * (L // 2), bc=bc_MPS)
+    options = dict(N_steps=1, trunc_params={'chi_max': 8}, dt=0.1)
+    eng = RandomUnitaryEvolution(psi, options)
+    eng.run()
+    psi.canonical_form()
+    lat = BuildTriangularLattice(Lx, Ly, SpinHalfSite(None), bc_MPS,
+                                 ("periodic", "periodic"), geometry)
+    spin_corr_x = CalculateSpinSpinCorrelations(psi)
+    ks, Sk = compute_structure_factor_grid(spin_corr_x, lat, wrap_displacements=True)
+
+    for kx in np.linspace(-pi, pi, 25):
+        for ky in np.linspace(-pi, pi, 25):
+            Kx, Ky = np.array([kx]), np.array([ky])
+            _kx, _ky, sf_my_method = ComputeMomentumSpaceStructureFactor(spin_corr_x, lat, Kx=Kx, Ky=Ky,
+                                                                         new_implementation=False)
+            sf_claude = structure_factor(spin_corr_x, lat, np.array([kx, ky]))
+            diff_between_methods = np.abs(sf_claude - sf_my_method)
+            if(diff_between_methods > 1e-13):
+                print(f"Found large diff between methods: {diff_between_methods}")
+                exit(1)
+
+    plot_structure_factor(ks, Sk, lat, ax=ax, mode='interpolate', n_tiles=1)
+    YC_lat = BuildTriangularLattice(1, 1, SpinHalfSite(None), "finite",
+                                    ("open", "open"), "YC")
+    YC_lat.plot_brillouin_zone(ax, draw_points=False)
+    plt.show()
+
+
 if __name__ == "__main__":
     output_dir = "C:/Users/yonli/Desktop/Thesis/Triangular J1J2/Meetings/4_5_2026/"
     monopole_dir = code_dir + "MonopoleCondensateGutzwiller/"
 
+    TestRandomStateCorrelations(bc_MPS="infinite")
+    TestRandomStateCorrelations()
+    Test120State(6, 6)
+    Test120State(9, 9)
+    Test120State(6, 3, "XC")
+    Test120State(9, 4, "XC")
+
+    TriangularJ1J2DMRG(4, 4, ("open", "periodic"), "finite", True, J2=1.0, chi_max=200,
+                       max_sweeps=20)
+
+    exit(0)
     # TestFreeFermionsSpinCorrelations()
     # checkXC8SlaterCorrelations()
     # checkPiFluxFreeSpinCorrelations()

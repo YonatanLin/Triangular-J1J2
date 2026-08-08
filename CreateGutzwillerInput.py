@@ -1,5 +1,5 @@
 import sys
-from Trying2D import CreateGutzwillerCaseDir
+from Main import CreateGutzwillerCaseDir
 from ClusterInputConfigurations import CreateTriangularCaseDirFromInputFile, gutzwiller_input_params
 
 

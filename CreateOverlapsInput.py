@@ -1,5 +1,5 @@
 import sys
-from Trying2D import CreateOverlapsCaseDir
+from Main import CreateOverlapsCaseDir
 from ClusterInputConfigurations import CreateTriangularCaseDirFromInputFile, dmrg_gutz_comp_input_params
 
 

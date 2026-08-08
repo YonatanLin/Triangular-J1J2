@@ -1,4 +1,4 @@
-from Trying2D import CreateTriangularCaseDir
+from Main import CreateTriangularCaseDir
 from ClusterInputConfigurations import dmrg_input_params
 import sys
 from pathlib import Path

@@ -1,4 +1,4 @@
-from Trying2D import SpinonTriangularLatticeMeanFieldGutzwillerProjection
+from Main import SpinonTriangularLatticeMeanFieldGutzwillerProjection
 from ClusterInputConfigurations import build_parser, gutzwiller_input_params
 
 

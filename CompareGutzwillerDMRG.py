@@ -1,4 +1,4 @@
-from Trying2D import GutzwillerDMRGOverlaps
+from Main import GutzwillerDMRGOverlaps
 from ClusterInputConfigurations import build_parser, dmrg_gutz_comp_input_params
 import numpy as np
 from pathlib import Path

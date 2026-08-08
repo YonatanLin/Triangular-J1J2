@@ -21,7 +21,6 @@ JobUtilities/*.txt
 Z2_Topological_EE
 LocalJ1J2TriangularDMRGResults/
 MonopoleCondensateGutzwiller/
-SpinChirality.py
 TryTriangularXC.py
 debug_magnetized_iMPS/
 q

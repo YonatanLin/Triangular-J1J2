@@ -430,7 +430,7 @@ def _structure_factor_reciprocal_basis(lattice):
     """Reciprocal basis for plotting/sampling the physical spin lattice.
 
     TeNPy's ``lattice.reciprocal_basis`` is the reciprocal basis of the
-    chosen unit cell.  For the XC triangular lattice used in ``Trying2D``,
+    chosen unit cell.  For XC triangular lattices,
     the implementation uses a rectangular two-site unit cell whose
     reciprocal cell is folded relative to the one-site triangular
     Brillouin zone.  The spin structure factor is an extended-zone

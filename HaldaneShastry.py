@@ -6,8 +6,8 @@ import matplotlib.pyplot as plt
 from numpy.linalg import eigh
 import temfpy.gutzwiller as gutz
 from tenpy import SpinHalfSite, Chain, MPS, CouplingMPOModel
-from Trying2D import RunDMRG, CalculateSpinSpinCorrelations
-from Trying2D import ExplicitMPSNorm
+from Main import RunDMRG, CalculateSpinSpinCorrelations
+from Main import ExplicitMPSNorm
 
 class HaldaneShastryModel(CouplingMPOModel):
     def init_terms(self, model_params):

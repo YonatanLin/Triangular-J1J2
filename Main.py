@@ -1,3 +1,5 @@
+import os.path
+
 from temfpy.slater import C_to_iMPS
 
 from TryingTemfpy import local
@@ -390,6 +392,15 @@ def CreateHamiltonianMatrixFromCouplingsList(model, N_sites, dtype=np.float64):
         H[site, site] = strength
     assert (np.abs(H - np.conj(np.transpose(H))) < 1e-15).all()
     return H
+
+
+def getSpecielBzPoints():
+    M1 = np.array([0., 2 * pi / sqrt(3)])
+    M2 = np.array([pi, (-1) * pi / sqrt(3)])
+    M3 = np.array([pi, pi / sqrt(3)])
+    K = 2 * pi * np.array([1./3., 1./sqrt(3.)])
+    K_prime = 2 * pi * np.array([-1./3., 1./sqrt(3.)])
+    return {"M1": M1, "M2": M2, "M3": M3, "K": K, "K_prime": K_prime}
 
 
 def CalculateSpinSpinCorrelations(psi, sites1=None, sites2=None, inf_mps_unitcell_fac=3, transverse_correlations=False):
@@ -855,7 +866,7 @@ def TestCorrelationsWithNontrivialUnitCell(Lx, Ly, state="120", geometry="YC"):
 
 
 def RunDMRG(model, psi_init, dmrg_params=default_dmrg_params,
-            plot_convergence=True, print_final_results=False,
+            plot_convergence=True, print_final_results=True,
             expected_energy=None, results_dir="", energies_fig_title=None):
     E_initial = model.H_MPO.expectation_value(psi_init)
     print("initial energy before dmrg: ", E_initial)
@@ -1032,6 +1043,16 @@ def BuildTriangularLattice(Lx, Ly, site, bc_MPS, bc = ('periodic', 'periodic'), 
     else:
         raise ValueError("unrecognized geometry")
 
+def LxInfiniteMPSCorrelations(Lx, Ly):
+    return Lx * max(1, Ly//Lx) # integer multiple of the unitcell, taking Lx_large, Ly to be close
+
+def BuildSpinTriangularLatticeWrap(Lx, Ly, bc_MPS, conserve, bc, geometry):
+    Lx_correlations = Lx
+    if bc_MPS == "infinite":
+        Lx_correlations = LxInfiniteMPSCorrelations(Lx, Ly)
+    site = SpinHalfSite(conserve=conserve)
+    return BuildTriangularLattice(Lx_correlations, Ly, site, bc_MPS, bc=bc, geometry=geometry)
+
 
 def initialStateFromFile(initial_state):
     return "from_file" in initial_state
@@ -1157,12 +1178,19 @@ def calculateGutzwillerEnergyTriangularJ1J2(gutz_results_dir, Lx, Ly, chi, flux,
     return E
 
 
-def SaveSimulationOutput(results_dir, spin_corr_x, ks, spin_corr_k, fig_corr_k, fig_lat):
+def SaveSimulationOutput(results_dir, spin_corr_x, ks, spin_corr_k, fig_corr_k, fig_lat,
+                         special_points_structure_factor=None, lattice=None):
     np.savetxt(results_dir + "spin_corr_x.csv", spin_corr_x)
     np.savetxt(results_dir + "spin_corr_k.csv", spin_corr_k)
     np.savetxt(results_dir + "ks.csv", ks)
     fig_corr_k.savefig(results_dir + "momentum_space_correlations.png", bbox_inches='tight')
     fig_lat.savefig(results_dir + "lattice.png", bbox_inches='tight')
+    if special_points_structure_factor is not None:
+        np.savetxt(results_dir + "special_points_structure_factor.csv", special_points_structure_factor)
+
+    if lattice is not None:
+        with open(results_dir + 'lattice.pkl', 'wb') as f_lat:
+            pickle.dump(lattice, f_lat)
 
 
 def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, conserve=True, initial_state="Random", J2=0.0, geometry="YC",
@@ -1244,20 +1272,30 @@ def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, conserve=True, initial_state="Random"
     sites1, sites2 = None, None
     lat_for_corr = triangular_lat
     if bc_MPS == "infinite":
-        Lx_large = 10 * Lx
+        Lx_large = LxInfiniteMPSCorrelations(Lx, Ly)
         sites1 = np.arange(0, Ly * Lx_large)
         sites2 = np.arange(0, Ly * Lx_large)
         lat_for_corr = BuildTriangularLattice(Lx_large, Ly, site, bc_MPS, bc=bc, geometry=geometry)
 
     spin_corr_x = CalculateSpinSpinCorrelations(psi, sites1, sites2)
-
-    ks, spin_corr_k = ComputeMomentumSpaceStructureFactor(spin_corr_x, lat_for_corr,
-                                                              assert_realness=False)
+    ks, spin_corr_k = ComputeMomentumSpaceStructureFactor(spin_corr_x, lat_for_corr, assert_realness=False)
 
     fig_corr, ax_corr = plt.subplots(figsize=(6, 5))
     plot_structure_factor(ks, spin_corr_k, triangular_lat, ax_corr)
-    lat_for_corr.plot_brillouin_zone(ax_corr)
-    SaveSimulationOutput(results_dir, spin_corr_x, ks, spin_corr_k, fig_corr, fig_lat)
+
+    YC_lat = BuildTriangularLattice(1, 1, SpinHalfSite(None), "finite", ("open", "open"), "YC")
+    YC_lat.plot_brillouin_zone(ax_corr)
+
+    special_bz_points = getSpecielBzPoints()
+    special_points_structure_factor = np.zeros((len(special_bz_points.keys()), 3))
+    for ind, key in enumerate(special_bz_points.keys()):
+        k = special_bz_points[key]
+        sf_at_special_point = structure_factor(spin_corr_x, triangular_lat, k)
+        special_points_structure_factor[ind, 0:2] = k
+        special_points_structure_factor[ind, 2] = sf_at_special_point
+
+    SaveSimulationOutput(results_dir, spin_corr_x, ks, spin_corr_k, fig_corr, fig_lat,
+                         special_points_structure_factor=special_points_structure_factor, lattice=lat_for_corr)
 
 
 def DeterminePiFluxCoupling(x, y, dx, dy, basis_vectors):
@@ -1753,9 +1791,13 @@ def GetTriangularFluxSlaterMPS(Lx, Ly, spinfull, site, geometry, slater_trunc_pa
         middle_site_mps_ind_short = triangular_lat_short.lat2mps_idx([Lx_short // 2, 0, 0])
         # exit(0)
 
-        psi_from_slater, error = slater.C_to_iMPS(C_short, C_long, slater_trunc_par,
-                                                  sites_per_cell=imps_unitcell,
-                                                  cut=middle_site_mps_ind_short)
+        offset = "auto"
+        if(C_short.dtype == np.complex128):
+            # bug in temfpy, complex correlations are unhandled when they determine offset...
+            offset = 0
+
+        psi_from_slater, error = slater.C_to_iMPS(C_short, C_long, slater_trunc_par, sites_per_cell=imps_unitcell,
+                                                  cut=middle_site_mps_ind_short, offset=offset)
 
         infinite_bc = ("periodic", "periodic")
         triangular_lattice = BuildTriangularLattice(Lx, Ly, site, bc_MPS, infinite_bc,
@@ -1900,7 +1942,8 @@ def RescaleMPSForGutzwiller(psi):
 
 def SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, geometry, bc_MPS, gs_manifold_index, model_type,
                                                          Lx=6, chi_max=3000, flux=0.0, norm_magz=0.0, monopole_Q=0,
-                                                         show_transverse_correlations=False, iMPS_Lx_factor=Lx_short_factor_temfpy_iMPS):
+                                                         show_transverse_correlations=False,
+                                                         iMPS_Lx_factor=Lx_short_factor_temfpy_iMPS):
     
     print(f"norm_magz: {norm_magz}")
     site = FermionSite(conserve='N')
@@ -1967,8 +2010,9 @@ def SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, geometry, bc_MPS, g
 
     assert(abs(psi_pi_flux.overlap(psi_pi_flux) - 1.0) < 1e-7)
 
-    Lx_for_corr = triangular_lat.Ls[0] if finite else 20
-    Ly_for_corr = triangular_lat.Ls[1]
+    Lx, Ly = triangular_lat.Ls
+    Lx_for_corr = Lx if finite else LxInfiniteMPSCorrelations(Lx, Ly)
+    Ly_for_corr = Ly
     Nsites_for_iMPS_corr = Lx_for_corr * Ly_for_corr * (unitcell_width // flavors)
     if not particle_hole:
         return
@@ -1987,79 +2031,80 @@ def SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, geometry, bc_MPS, g
 
     fig_corr_k, ax_corr_k = plt.subplots(figsize=(6, 5))
     plot_structure_factor(ks, spin_corr_k, triangular_lat, ax_corr_k)
-    spin_lat_singlesite_unitcell = BuildTriangularLattice(1, 1, spin_site, bc_MPS, geometry="YC")
-    spin_lat_singlesite_unitcell.plot_brillouin_zone(ax_corr_k)
+    YC_triangular_lat = BuildTriangularLattice(1, 1, spin_site, bc_MPS, geometry="YC")
+    YC_triangular_lat.plot_brillouin_zone(ax_corr_k)
     ax_corr_k.set_title("Spin Correlations")
 
     SaveSimulationOutput(results_dir, spin_corr_x, ks, spin_corr_k, fig_corr_k, fig_lat)
 
 
-def ComputeCorrelationsFromMPSFile(parent_results_path, Lx, Ly, bc, bc_MPS,
-                                   conserve=True, geometry=None, psi_fname="psi_gs.pkl", sort_charge=False,
-                                   Lx_for_infinite_bc_MPS=None, psi_dir=None, transverse_correlations=False):
-    psi_dir = parent_results_path + psi_dir
-
+def ComputeCorrelationsFromMPSFile(psi_dir, Lx, Ly, bc, geometry="YC", psi_fname="psi_gs.pkl",
+                                   transverse_correlations=False, plot_mode="interpolate"):
     with open(psi_dir + psi_fname, 'rb') as f:
         psi = pickle.load(f)
 
-    site = SpinHalfSite(conserve=('Sz' if conserve else None),sort_charge=sort_charge)
-    Lx_correlations = Lx
-    if bc_MPS == "infinite" or Lx_for_infinite_bc_MPS is not None:
-        assert(Lx_for_infinite_bc_MPS is not None)
-        Lx_correlations = Lx_for_infinite_bc_MPS
-
-    triangular_lattice = BuildTriangularLattice(Lx_correlations, Ly, site, bc_MPS, bc=bc,
-                                                geometry=geometry)
+    bc_MPS = "finite" if psi.finite else "infinite"
+    conserve = psi.sites[0].conserve
+    triangular_lattice = BuildSpinTriangularLatticeWrap(Lx, Ly, bc_MPS, conserve, bc, geometry)
 
     spin_corr_x = CalculateSpinSpinCorrelations(psi, sites1=np.arange(0, triangular_lattice.N_sites),
                                                 sites2=np.arange(0, triangular_lattice.N_sites),
                                                 transverse_correlations=transverse_correlations)
     ks, spin_corr_k = ComputeMomentumSpaceStructureFactor(spin_corr_x, triangular_lattice,
-                                                              assert_realness=True)
+                                                          assert_realness=True)
 
     # spin_corr_k_from_file = np.loadtxt(psi_dir + "spin_corr_k.csv", dtype=complex)
     # print("largest diff: ", np.max(np.abs(spin_corr_k - spin_corr_k_from_file)))
     fig, ax = plt.subplots(figsize=(6, 5))
     title = f"Spin Structure Factor"
     ax.set_title(title)
-    plot_structure_factor(ks, spin_corr_k, triangular_lattice, ax)
+    plot_structure_factor(ks, spin_corr_k, triangular_lattice, ax, mode=plot_mode)
     triangular_lattice.plot_brillouin_zone(ax)
     fig.savefig(psi_dir + "momentum_space_correlations_local", bbox_inches='tight')
     if local:
             plt.show()
 
 
-def PlotCorrelationsFromFiles(results_dir, energy_ax=None, initial_state="",
-                              show_energies = True, psi_fname="psi_gs.pkl", output_dir=None,
-                              fig_title="", k_space=True):
+def PlotCorrelationsFromFiles(results_dir,
+                              energy_ax=None, initial_state="", show_energies=True, output_dir=None,
+                              fig_title="", k_space=True, plot_mode="interpolate"):
     if show_energies:
         if energy_ax is None:
             fig, energy_ax = plt.subplots()
         energies = np.loadtxt(results_dir + "Energies.txt")
         energy_ax.plot(energies, "o", label=initial_state)
 
-    # with open(results_dir + psi_fname, 'rb') as f:
-    #     psi = pickle.load(f)
-    #print("Magentization of gs: ", psi.get_total_charge(only_physical_legs=True))
-    #print("Magentization of gs: ", np.sum(psi.expectation_value("Sz")))
-
     fig, ax = plt.subplots(figsize=(6, 5))
     if k_space:
-        Kx = np.loadtxt(results_dir + "Kx.csv")
-        Ky = np.loadtxt(results_dir + "Ky.csv")
-        corr_k = np.loadtxt(results_dir + "spin_corr_k.csv", dtype=np.complex128)
-
-        triangular_lat = BuildTriangularLattice(2, 2, SpinHalfSite(conserve='Sz'), "finite")
-        triangular_lat.plot_brillouin_zone(ax)
-        assert (np.max(np.abs(np.imag(corr_k))) < 1e-14)
-        ImshowMatrix(ax, fig, Kx, Ky, np.real(corr_k), title="Spin Correlations")
+        new_format = os.path.isfile(results_dir + "ks.csv")
+        if new_format:
+            ks = np.loadtxt(results_dir + "ks.csv")
+            corr_k = np.loadtxt(results_dir + "spin_corr_k.csv")
+            with open(results_dir + "lattice.pkl", 'rb') as f:
+                lattice = pickle.load(f)
+            plot_structure_factor(ks, corr_k, lattice, ax, mode=plot_mode)
+        else:
+            corr_k = np.loadtxt(results_dir + "spin_corr_k.csv", dtype=np.complex128)
+            Kx = np.loadtxt(results_dir + "Kx.csv")
+            Ky = np.loadtxt(results_dir + "Ky.csv")
+            triangular_lat = BuildTriangularLattice(2, 2, SpinHalfSite(conserve='Sz'), "finite")
+            triangular_lat.plot_brillouin_zone(ax)
+            assert (np.max(np.abs(np.imag(corr_k))) < 1e-14)
+            ImshowMatrix(ax, fig, Kx, Ky, np.real(corr_k), title="Spin Correlations")
+        YC_lat = BuildTriangularLattice(1, 1, SpinHalfSite(None), "finite", ("open", "open"), "YC")
+        YC_lat.plot_brillouin_zone(ax)
     else:
         corr_x = np.loadtxt(results_dir + "spin_corr_x.csv", dtype=np.complex128)
         ImshowMatrix(ax, fig, np.array([0,1]), np.array([0,1]), corr_x, xlabel="x/L",
                      ylabel="y/L")
 
-    if output_dir is not None:
-        fig.savefig(output_dir + f"correlations_{fig_title}.png", bbox_inches='tight')
+    if output_dir is None:
+        fig_fname = "momentum_space_correlations_local.png" if k_space else "momentum_space_correlations_local.png"
+        fig.savefig(results_dir + fig_fname, bbox_inches='tight')
+    else:
+        fig_fname = output_dir + f"correlations_{fig_title}.png"
+        fig.savefig(fig_fname, bbox_inches='tight')
+
 
 
 def PlotRealSpaceCorrelations(results_dir):
@@ -2467,9 +2512,8 @@ def checkPiFluxFreeSpinCorrelations():
     spin_spin_corr = FreeFermionSpinCorrelations(C_x_exact)
     spin_triangular_lat = BuildTriangularLattice(Lx, Ly, site, "finite", bc_exact, geometry)
 
-    M1 = np.array([0., 2 * pi / sqrt(3)])
-    M2 = np.array([pi, (-1) * pi / sqrt(3)])
-    M3 = np.array([pi, pi / sqrt(3)])
+    special_bz_points = getSpecielBzPoints()
+    M1, M2, M3 = special_bz_points["M1"], special_bz_points["M2"], special_bz_points["M3"]
     Ms = (M1, M2, M3)
     for i_M, M in enumerate(Ms):
         S_M = ComputeMomentumSpaceStructureFactor(spin_spin_corr, spin_triangular_lat, Kx=np.array([M[0]]),
@@ -2709,8 +2753,8 @@ def Test120State(Lx, Ly, geometry="YC"):
     YC_lat.plot_brillouin_zone(ax, draw_points=False)
     plt.show()
 
-    K = np.array([2 * pi / 3., 2 * pi / sqrt(3)])
-    K_prime = np.array([-2 * pi / 3., 2 * pi / sqrt(3)])
+    special_bz_points = getSpecielBzPoints()
+    K, K_prime = special_bz_points["K"], special_bz_points["K_prime"]
     structure_factor_at_K = structure_factor(spin_corr_x, lat, K)
     structure_factor_at_K_prime = structure_factor(spin_corr_x, lat, K_prime)
 
@@ -2768,25 +2812,39 @@ def TestRandomStateCorrelations(geometry="YC", bc_MPS="finite"):
     plt.show()
 
 
-if __name__ == "__main__":
-    output_dir = "C:/Users/yonli/Desktop/Thesis/Triangular J1J2/Meetings/4_5_2026/"
-    monopole_dir = code_dir + "MonopoleCondensateGutzwiller/"
-
-    TestRandomStateCorrelations(bc_MPS="infinite")
-    TestRandomStateCorrelations()
+def StaticCorrelationsTests():
     Test120State(6, 6)
     Test120State(9, 9)
     Test120State(6, 3, "XC")
     Test120State(9, 4, "XC")
+    TestRandomStateCorrelations(bc_MPS="infinite")
+    TestRandomStateCorrelations()
 
-    TriangularJ1J2DMRG(4, 4, ("open", "periodic"), "finite", True, J2=1.0, chi_max=200,
-                       max_sweeps=20)
 
-    exit(0)
+if __name__ == "__main__":
+    output_dir = "C:/Users/yonli/Desktop/Thesis/Triangular J1J2/Meetings/4_5_2026/"
+    monopole_dir = code_dir + "MonopoleCondensateGutzwiller/"
+
+    gutzwiller_dir = "C:/Users/yonli/Desktop/Thesis/Triangular J1J2/Code/MonopoleCondensateGutzwiller/" + \
+                      "Dirac_finite_Lx_6_Ly_6_chi_2000_flux_0.0_YC_gsindex_0_magz_0.333_monQ_6/"
+
+    #ComputeCorrelationsFromMPSFile(gutzwiller_dir, 6, 6, ("open", "periodic"),
+    #                               psi_fname="psi_gutzwiller.pkl", plot_mode="voronoi",
+    #                               transverse_correlations=True)
+
+    results_dir = "C:/Users/yonli/Desktop/Thesis/Triangular J1J2/Code/LocalJ1J2TriangularDMRGResults/Lx_3_Ly_3_bc_pp_YC/infinite_init_Random_conserve_True_J2_0.0/"
+    #mat = np.loadtxt(results_dir + special_points_structure_factor.csv)
+    #print(mat)
+    #exit(1)
+
+    #PlotCorrelationsFromFiles(results_dir, show_energies=False, plot_mode="voronoi")
+    #plt.show()
+    #exit(1)
+    # TriangularJ1J2DMRG(3, 3, ("periodic", "periodic"), "infinite", chi_max=200, max_sweeps=10)
+
     # TestFreeFermionsSpinCorrelations()
     # checkXC8SlaterCorrelations()
     # checkPiFluxFreeSpinCorrelations()
-    #exit(1)
 
     # DebugMagnetizedIMPS()
 
@@ -2864,18 +2922,18 @@ if __name__ == "__main__":
     # ax.legend()
     # plt.show()
 
-    for norm_magz_fac in [0.]:
+    for norm_magz_fac in [2.]:
         Lx, Ly = 2, 6
         norm_magz = norm_magz_fac / (Lx * Ly)
-        iMPS_Lx_factor = 20
-        chi_max = 1000
+        iMPS_Lx_factor = 10
+        chi_max = 500
         abs_magz = AbsMagzFromNormMagz(norm_magz, Lx * Ly)
         monopole_Q_opt = int(norm_magz_fac//2)
         flux = 0.0
         bc_MPS = "infinite"
         SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, "YC", bc_MPS, 0,
                                                              model_type_dirac, Lx=Lx, chi_max=chi_max, flux=flux,
-                                                             norm_magz=norm_magz, monopole_Q=0,
+                                                             norm_magz=norm_magz, monopole_Q=1,
                                                              show_transverse_correlations=True,
                                                              iMPS_Lx_factor=iMPS_Lx_factor)
 

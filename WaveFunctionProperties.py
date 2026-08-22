@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.patches import Polygon
 from matplotlib.collections import PatchCollection
-
+from numpy import pi
 
 # ----------------------------------------------------------------------
 # 1) Scalar chirality of a single triangle, <S_i . (S_j x S_k)>
@@ -642,6 +642,8 @@ def plot_structure_factor(ks, Sk, lat, ax=None, cmap='RdBu',
     ax.set_aspect('equal')
     ax.set_xlabel(r'$k_x$')
     ax.set_ylabel(r'$k_y$')
+    ax.set_xlim((-2 * pi, 2 * pi))
+    ax.set_ylim((-2 * pi, 2 * pi))
     plt.colorbar(artist, ax=ax, label=r'$S(\mathbf{k})$')
 
     return ax, artist

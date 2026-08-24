@@ -16,7 +16,6 @@ GutzwillerResults
 LocalGutzwillerResults
 PiFluxGutzwiller_*
 TriangularJ1J2DMRG_*
-*/*.sh
 JobUtilities/*.txt
 Z2_Topological_EE
 LocalJ1J2TriangularDMRGResults/

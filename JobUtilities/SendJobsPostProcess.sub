@@ -1,7 +1,7 @@
 executable = /srv01/technion/yonlin/scripts/Triangular-J1J2/JobUtilities/RunPostProcess.sh
-arguments = --results_dir $(results_dir) --post_process_type $(post_process_type)
+arguments = --results_dirs_file $(results_dirs_file) --post_process_type $(post_process_type) --description $(description)
 root_dir = /storage/ph_keselman/yonlin/TriangularJ1J2
-case_folder = $(results_dir)
+case_folder = $(output_dir)
 log_name = postprocess
 
 log = $(case_folder)/$(log_name).log
@@ -14,4 +14,4 @@ Initialdir = $(case_folder)
 universe = vanilla
 input_file = $(root_dir)/postprocess_condor_cases.txt
 
-queue results_dir, post_process_type from $(input_file)
+queue results_dirs_file, post_process_type, description, output_dir from $(input_file)

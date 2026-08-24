@@ -12,34 +12,38 @@ def _normalize_results_dir(results_dir):
     return Path(results_dir).expanduser()
 
 
-def CalculateCentralBondEntanglementEntropy(results_dir, psi_filename="psi_gs.pkl"):
-    results_path = _normalize_results_dir(results_dir)
-    psi_path = results_path / psi_filename
-    if not psi_path.exists():
-        raise FileNotFoundError(f"Could not find MPS file: {psi_path}")
+def CalculateCentralBondEntanglementEntropy(results_dirs_filename, psi_filename="psi_gs.pkl"):
+    results_dirs_file = open(results_dirs_filename, "rb")
+    lines = results_dirs_file.readlines()
+    for results_dir in lines:
+        results_path = _normalize_results_dir(results_dir)
+        psi_path = results_path / psi_filename
+        if not psi_path.exists():
+            raise FileNotFoundError(f"Could not find MPS file: {psi_path}")
 
-    with open(psi_path, "rb") as f:
-        psi = pickle.load(f)
+        with open(psi_path, "rb") as f:
+            psi = pickle.load(f)
 
-    central_bond = psi.L // 2
-    entanglement_entropy = psi.entanglement_entropy(bonds=[central_bond])[0]
+        # TODO: is this the central bond always?
+        central_bond = psi.L // 2
+        entanglement_entropy = psi.entanglement_entropy(bonds=[central_bond])[0]
+        bond_dimension = psi.chi[central_bond]
 
-    output_path = results_path / "entanglement_entropy_central_bond.txt"
-    np.savetxt(
-        output_path,
-        np.array([[central_bond, entanglement_entropy]]),
-        header="bond entanglement_entropy",
-    )
+        output_path = "EE_central_bond.txt"
+        np.savetxt(
+            output_path,
+            np.array([[central_bond, bond_dimension, entanglement_entropy]]),
+            header="bond entanglement_entropy",
+        )
 
-    print(f"central bond: {central_bond}")
-    print(f"entanglement entropy: {entanglement_entropy}")
-    print(f"saved result to: {output_path}")
-    return entanglement_entropy
+        print(f"central bond: {central_bond}")
+        print(f"entanglement entropy: {entanglement_entropy}")
+        #print(f"saved result to: {output_path}")
 
 
-def PostProcessResults(results_dir, post_process_type):
+def PostProcessResults(results_dirs_file, post_process_type):
     if post_process_type == ENTANGLEMENT_ENTROPY:
-        return CalculateCentralBondEntanglementEntropy(results_dir)
+        CalculateCentralBondEntanglementEntropy(results_dirs_file)
 
     raise ValueError(
         f"Unsupported post process type: {post_process_type}. "

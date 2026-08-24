@@ -13,9 +13,10 @@ def _normalize_results_dir(results_dir):
 
 
 def CalculateCentralBondEntanglementEntropy(results_dirs_filename, psi_filename="psi_gs.pkl"):
-    results_dirs_file = open(results_dirs_filename, "rb")
+    results_dirs_file = open(results_dirs_filename, "r")
     lines = results_dirs_file.readlines()
     for results_dir in lines:
+        results_dir = str(results_dir)
         results_path = _normalize_results_dir(results_dir)
         psi_path = results_path / psi_filename
         if not psi_path.exists():
@@ -33,7 +34,7 @@ def CalculateCentralBondEntanglementEntropy(results_dirs_filename, psi_filename=
         np.savetxt(
             output_path,
             np.array([[central_bond, bond_dimension, entanglement_entropy]]),
-            header="bond entanglement_entropy",
+            header="bond bond_dimension entanglement_entropy",
         )
 
         print(f"central bond: {central_bond}")
@@ -45,7 +46,10 @@ def PostProcessResults(results_dirs_file, post_process_type):
     if post_process_type == ENTANGLEMENT_ENTROPY:
         CalculateCentralBondEntanglementEntropy(results_dirs_file)
 
-    raise ValueError(
-        f"Unsupported post process type: {post_process_type}. "
-        f"Supported types: {sorted(SUPPORTED_POST_PROCESS_TYPES)}"
-    )
+    else:
+        raise ValueError(
+            f"Unsupported post process type: {post_process_type}. "
+            f"Supported types: {sorted(SUPPORTED_POST_PROCESS_TYPES)}"
+        )
+
+PostProcessResults("postprocess_input.txt", ENTANGLEMENT_ENTROPY)

@@ -1,7 +1,7 @@
 executable = /srv01/technion/yonlin/scripts/Triangular-J1J2/JobUtilities/RunPostProcess.sh
 arguments = --results_dirs_file $(results_dirs_file) --post_process_type $(post_process_type) --description $(description)
 root_dir = /storage/ph_keselman/yonlin/TriangularJ1J2
-case_folder = $(output_dir)
+case_folder = $(root_dir)/$(output_dir)
 log_name = postprocess
 
 log = $(case_folder)/$(log_name).log

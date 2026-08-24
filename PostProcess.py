@@ -52,4 +52,3 @@ def PostProcessResults(results_dirs_file, post_process_type):
             f"Supported types: {sorted(SUPPORTED_POST_PROCESS_TYPES)}"
         )
 
-PostProcessResults("postprocess_input.txt", ENTANGLEMENT_ENTROPY)

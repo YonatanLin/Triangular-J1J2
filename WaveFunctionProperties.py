@@ -721,6 +721,109 @@ def ComputeMomentumSpaceStructureFactor(corr_x, lat, assert_realness=True,
     return Kx, Ky, corr_k
 
 
+def _spin_dot_component_terms(site1, site2):
+    return [
+        (0.5, [("Sp", site1), ("Sm", site2)]),
+        (0.5, [("Sm", site1), ("Sp", site2)]),
+        (1.0, [("Sz", site1), ("Sz", site2)]),
+    ]
+
+
+def _site_array_for_correlations(psi, lat, sites, inf_mps_unitcell_fac):
+    if sites is not None:
+        return np.asarray(sites, dtype=int)
+    if psi.bc == "infinite":
+        return np.arange(0, inf_mps_unitcell_fac * psi.L)
+    return np.arange(0, lat.N_sites)
+
+
+def _nearest_neighbor_dimer_bonds_by_site(psi, lat, sites, pair_key="nearest_neighbors"):
+    bonds_by_site = {int(site): [] for site in sites}
+    base_bonds = []
+    for u1, u2, dx in lat.pairs[pair_key]:
+        mps_sites_1, mps_sites_2, _, _ = lat.possible_couplings(u1, u2, dx)
+        for site1, site2 in zip(mps_sites_1, mps_sites_2):
+            site1 = int(site1)
+            site2 = int(site2)
+            base_bonds.append((site1, site2))
+
+    if psi.bc == "infinite":
+        min_requested_site = min(bonds_by_site)
+        max_requested_site = max(bonds_by_site)
+        min_base_site = min(min(bond) for bond in base_bonds)
+        max_base_site = max(max(bond) for bond in base_bonds)
+        min_shift = (min_requested_site - max_base_site) // psi.L - 1
+        max_shift = (max_requested_site - min_base_site) // psi.L + 2
+        shifts = [shift * psi.L for shift in range(min_shift, max_shift)]
+    else:
+        shifts = [0]
+
+    for shift in shifts:
+        for site1, site2 in base_bonds:
+            shifted_bond = (site1 + shift, site2 + shift)
+            if shifted_bond[0] in bonds_by_site:
+                bonds_by_site[shifted_bond[0]].append(shifted_bond)
+            if shifted_bond[1] in bonds_by_site:
+                bonds_by_site[shifted_bond[1]].append(shifted_bond)
+    return bonds_by_site
+
+
+def CalculateDimerDimerCorrelations(psi, lat, sites1=None, sites2=None, inf_mps_unitcell_fac=3,
+                                    pair_key="nearest_neighbors"):
+    """
+    Calculate <D_i D_j>, where D_i = sum_{k nearest neighbor of i} S_i . S_k.
+
+    The result is not connected, matching CalculateSpinSpinCorrelations.
+    """
+    sites1 = _site_array_for_correlations(psi, lat, sites1, inf_mps_unitcell_fac)
+    sites2 = _site_array_for_correlations(psi, lat, sites2, inf_mps_unitcell_fac)
+    if len(sites1) == 0 or len(sites2) == 0:
+        return np.zeros((len(sites1), len(sites2)), dtype=float)
+
+    min_requested_site = min(np.min(sites1), np.min(sites2))
+    max_requested_site = max(np.max(sites1), np.max(sites2))
+    if psi.bc != "infinite" and (min_requested_site < 0 or max_requested_site >= lat.N_sites):
+        raise ValueError("lat.N_sites must cover all requested correlation sites")
+
+    sites = np.unique(np.concatenate([sites1, sites2]))
+    bonds_by_site = _nearest_neighbor_dimer_bonds_by_site(psi, lat, sites, pair_key)
+    dimer_corr = np.zeros((len(sites1), len(sites2)), dtype=complex)
+    for ind1, site1 in enumerate(sites1):
+        for ind2, site2 in enumerate(sites2):
+            if ind2 < ind1: # only consider unique pairs without reagrding order
+                continue
+            corr = 0.0
+            for bond1 in bonds_by_site[int(site1)]:
+                for strength1, term1 in _spin_dot_component_terms(*bond1):
+                    for bond2 in bonds_by_site[int(site2)]:
+                        for strength2, term2 in _spin_dot_component_terms(*bond2):
+                            term1_expec = psi.expectation_value_term(term1)
+                            term2_expec = psi.expectation_value_term(term2)
+                            corr += strength1 * strength2 * (psi.expectation_value_term(term1 + term2))
+            dimer_corr[ind1, ind2] = corr
+            dimer_corr[ind2, ind1] = corr #symmetrize
+
+    if np.max(np.abs(np.imag(dimer_corr))) < 1e-13:
+        return np.real(dimer_corr)
+    return dimer_corr
+
+
+def CalculateSpinSpinCorrelations(psi, sites1=None, sites2=None, inf_mps_unitcell_fac=3, transverse_correlations=False):
+    if psi.bc == "infinite" and sites1 is None and sites2 is None:
+        L = psi.L
+        sites1 = np.arange(0, inf_mps_unitcell_fac*L)
+        sites2 = np.arange(0, inf_mps_unitcell_fac*L)
+
+    pm_corr = psi.correlation_function("Sp", "Sm", sites1=sites1, sites2=sites2)
+    mp_corr = psi.correlation_function("Sm", "Sp", sites1=sites1, sites2=sites2)
+    spin_corr_transverse = 0.5 * (pm_corr + mp_corr)
+    if transverse_correlations:
+        return spin_corr_transverse
+    zz_corr = psi.correlation_function("Sz", "Sz", sites1=sites1, sites2=sites2)
+    spin_corr = spin_corr_transverse + zz_corr
+    return spin_corr
+
+
 def testConeStateChirality():
     import numpy as np
     import matplotlib.pyplot as plt

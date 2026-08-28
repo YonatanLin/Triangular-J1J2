@@ -18,6 +18,14 @@ def optional_int(value):
     else:
         return int(value)
 
+
+def optional_float(value):
+    if value == "None":
+        return None
+    else:
+        return float(value)
+
+
 def optional_str(value):
     if value == "None":
         return None
@@ -57,7 +65,8 @@ gutzwiller_input_params = [
     ("gs_manifold_index", int),
     ("model_type", optional_str),
     ("norm_magz", float),
-    ("monopole_Q", int)
+    ("monopole_Q", int),
+    ("svd_min", optional_float)
 ]
 
 

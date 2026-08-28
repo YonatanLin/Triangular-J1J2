@@ -46,7 +46,11 @@ default_chi_max = 3000
 default_dmrg_params = {'mixer': True, 'max_E_err': 1.0e-10, 'trunc_params': {'chi_max': default_chi_max, 'svd_min': 1.0e-7},
                     'combine': True, 'chi_list': {0: 50, 3: 100, 7: default_chi_max}, 'min_sweeps': 7, 'max_sweeps': 8,
                    'N_sweeps_check': 1}
-code_dir = "C:/Users/yonli/Desktop/Thesis/Triangular J1J2/Code/"
+
+project_dir = "C:/Users/yonli/Desktop/Thesis/Triangular J1J2/"
+code_dir = project_dir + "Code/"
+glob_results_dir = project_dir + "Results/"
+
 meetings_dir = "C:/Users/yonli/Desktop/Thesis/Triangular J1J2/Meetings/"
 
 Lx_short_factor_temfpy_iMPS = 50
@@ -297,7 +301,7 @@ def ChangeChiInDMRGParams(dmrg_params, chi_max):
 
 
 def CreateGutzwillerCaseDir(main_results_dir, Lx, Ly, chi_max, flux, geometry, bc_MPS,
-                            gs_manifold_index, model_type, norm_magz, monopole_Q):
+                            gs_manifold_index, model_type, norm_magz, monopole_Q, svd_min=None):
     Path(main_results_dir).mkdir(parents=True, exist_ok=True)
     case_name = f"{bc_MPS}_Lx_{Lx}_Ly_{Ly}_chi_{chi_max}_flux_{flux}_{geometry}_gsindex_{gs_manifold_index}"
 
@@ -308,6 +312,8 @@ def CreateGutzwillerCaseDir(main_results_dir, Lx, Ly, chi_max, flux, geometry, b
         case_name += f"_magz_{norm_magz_float:.4f}"
     if monopole_Q is not None:
         case_name += f"_monQ_{monopole_Q}"
+    if svd_min is not None and str(svd_min) != "None":
+        case_name += f"_svdmin_{svd_min}"
 
     case_name += "/"
     gutz_dir = main_results_dir + case_name
@@ -402,6 +408,15 @@ def getSpecielBzPoints():
     K = 2 * pi * np.array([1./3., 1./sqrt(3.)])
     K_prime = 2 * pi * np.array([-1./3., 1./sqrt(3.)])
     return {"M1": M1, "M2": M2, "M3": M3, "K": K, "K_prime": K_prime}
+
+
+def getKPointName(k_2D):
+    special_k_points = getSpecielBzPoints()
+    for key in special_k_points.keys():
+        if(np.linalg.norm(k_2D - special_k_points[key]) < 1e-14):
+            return key
+    return None
+
 
 
 def FreeFermionSpinCorrelations(C):
@@ -957,6 +972,17 @@ def SaveSimulationOutput(results_dir, spin_corr_x, ks, spin_corr_k, fig_corr_k, 
             pickle.dump(lattice, f_lat)
 
 
+def calculateStructureFactorAtSpecialPoints(lat, spin_corr_x):
+    special_bz_points = getSpecielBzPoints()
+    special_points_structure_factor = np.zeros((len(special_bz_points.keys()), 3))
+    for ind, key in enumerate(special_bz_points.keys()):
+        k = special_bz_points[key]
+        sf_at_special_point = structure_factor(spin_corr_x, lat, k)
+        special_points_structure_factor[ind, 0:2] = k
+        special_points_structure_factor[ind, 2] = sf_at_special_point
+    return special_points_structure_factor
+
+
 def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, conserve=True, initial_state="Random", J2=0.0, geometry="YC",
                        chi_max=None, initial_psi_dir=None, max_sweeps=None, norm_magz=0.0):
     if isinstance(bc, str):
@@ -1050,13 +1076,7 @@ def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, conserve=True, initial_state="Random"
     YC_lat = BuildTriangularLattice(1, 1, SpinHalfSite(None), "finite", ("open", "open"), "YC")
     YC_lat.plot_brillouin_zone(ax_corr)
 
-    special_bz_points = getSpecielBzPoints()
-    special_points_structure_factor = np.zeros((len(special_bz_points.keys()), 3))
-    for ind, key in enumerate(special_bz_points.keys()):
-        k = special_bz_points[key]
-        sf_at_special_point = structure_factor(spin_corr_x, triangular_lat, k)
-        special_points_structure_factor[ind, 0:2] = k
-        special_points_structure_factor[ind, 2] = sf_at_special_point
+    special_points_structure_factor = calculateStructureFactorAtSpecialPoints(triangular_lat, spin_corr_x)
 
     SaveSimulationOutput(results_dir, spin_corr_x, ks, spin_corr_k, fig_corr, fig_lat,
                          special_points_structure_factor=special_points_structure_factor, lattice=lat_for_corr)
@@ -1668,19 +1688,22 @@ def RescaleMPSForGutzwiller(psi):
 def SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, geometry, bc_MPS, gs_manifold_index, model_type,
                                                          Lx=6, chi_max=3000, flux=0.0, norm_magz=0.0, monopole_Q=0,
                                                          show_transverse_correlations=False,
-                                                         iMPS_Lx_factor=Lx_short_factor_temfpy_iMPS):
+                                                         iMPS_Lx_factor=Lx_short_factor_temfpy_iMPS,
+                                                         svd_min=None):
     
     print(f"norm_magz: {norm_magz}")
     site = FermionSite(conserve='N')
     spin_site = SpinHalfSite(conserve='Sz')
     gutzwiller_results_dir = "MonopoleCondensateGutzwiller/"
+    if local:
+        gutzwiller_results_dir = glob_results_dir + gutzwiller_results_dir
 
     spinfull = True
     particle_hole = spinfull
     debug = False
     if local:
         results_dir = CreateGutzwillerCaseDir(gutzwiller_results_dir, Lx, Ly, chi_max, flux, geometry, bc_MPS,
-                                              gs_manifold_index, model_type, norm_magz, monopole_Q)
+                                              gs_manifold_index, model_type, norm_magz, monopole_Q, svd_min=svd_min)
     else:
         results_dir = "./"
     assert((bc_MPS == "finite") or (bc_MPS == "infinite"))
@@ -1690,7 +1713,9 @@ def SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, geometry, bc_MPS, g
     #PlotLattice(lat, ax_lat)
     #plt.show()
 
-    slater_trunc_par = {"chi_max": chi_max, "svd_min": svd_min_slater_default, "degeneracy_tol": 1e-12}
+    if svd_min is None:
+        svd_min = svd_min_slater_default
+    slater_trunc_par = {"chi_max": chi_max, "svd_min": svd_min, "degeneracy_tol": 1e-12}
     assert (geometry == "XC" or geometry == "YC")
     flavors = 2 if spinfull else 1
     unitcell_width = flavors if geometry == "YC" else 2 * flavors
@@ -1760,7 +1785,10 @@ def SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, geometry, bc_MPS, g
     YC_triangular_lat.plot_brillouin_zone(ax_corr_k)
     ax_corr_k.set_title("Spin Correlations")
 
-    SaveSimulationOutput(results_dir, spin_corr_x, ks, spin_corr_k, fig_corr_k, fig_lat)
+    special_points_structure_factor = calculateStructureFactorAtSpecialPoints(spin_lat, spin_corr_x)
+
+    SaveSimulationOutput(results_dir, spin_corr_x, ks, spin_corr_k, fig_corr_k, fig_lat,
+                         special_points_structure_factor=special_points_structure_factor, lattice=spin_lat)
 
 
 def ComputeCorrelationsFromMPSFile(psi_dir, Lx, Ly, bc, geometry="YC", psi_fname="psi_gs.pkl",
@@ -1955,7 +1983,7 @@ def GutzwillerBondDimensionScaling(gutz_results_dir, Lx, Ly, chis, flux,
 def DMRGCorrelations():
     main_results_dir = "NewTenpyTriangularLatticeResults/"
     case_dir = f"Lx_6_Ly_6_bc_op/finite_init_Random_conserve_1_J2_{0.0}/"
-    PlotCorrelationsFromFiles(code_dir + main_results_dir + case_dir)
+    PlotCorrelationsFromFiles(glob_results_dir + main_results_dir + case_dir)
     if local:
             plt.show()
 
@@ -1963,7 +1991,7 @@ def DMRGCorrelations():
         fig, energy_ax = plt.subplots(figsize=(6, 5))
         for initial_state in ["stripe", "Random"]:
             case_dir = f"Lx_6_Ly_6_bc_op/finite_0.0_init_{initial_state}_conserve_1_J2_{J2}/"
-            PlotCorrelationsFromFiles(code_dir + main_results_dir + case_dir, energy_ax=energy_ax,
+            PlotCorrelationsFromFiles(glob_results_dir + main_results_dir + case_dir, energy_ax=energy_ax,
                                       initial_state=initial_state)
         energy_ax.legend()
         if local:
@@ -2107,7 +2135,7 @@ def DetermineSpinsOccupation(N_spins, H, e):
 
 
 def CompareGutzwillerGroundStateSectorsXC():
-    gutz_dir = code_dir + "LocalGutzwillerResults/Dirac_finite_Lx_40_Ly_2_chi_1000_flux_0.0_XC_gsindex_"
+    gutz_dir = glob_results_dir + "LocalGutzwillerResults/Dirac_finite_Lx_40_Ly_2_chi_1000_flux_0.0_XC_gsindex_"
     for i in range(4):
         i_dir = gutz_dir + f"{i}/"
         PlotCorrelationsFromFiles(i_dir, show_energies=False, output_dir=i_dir)
@@ -2131,7 +2159,7 @@ def CompareGutzwillerGroundStateSectorsXC():
 
 
 def calculateZ2EntanglementEntropy():
-    parent_dir = code_dir + "Z2_Topological_EE/"
+    parent_dir = glob_results_dir + "Z2_Topological_EE/"
     cases = []
     central_bonds = []
     chis = [2000, 3000, 4000, 6000]
@@ -2228,7 +2256,7 @@ def checkXC8SlaterCorrelations():
     flux = 0.0
     gs_manifold_index = 0
     Ly = 4
-    temfpy_dir = (code_dir + f"LocalGutzwillerResults/Dirac_infinite_Lx_2_Ly_{Ly}_" +
+    temfpy_dir = (glob_results_dir + f"LocalGutzwillerResults/Dirac_infinite_Lx_2_Ly_{Ly}_" +
                   "chi_25000_flux_{flux}_{geometry}_gsindex_{gs_manifold_index}/")
     spinfull_fermions = True
 
@@ -2298,7 +2326,7 @@ def calculateMonopoleEnergies(parent_dir, norm_magz, mon_Qs):
 
 def calculateOverlapsFastLocal(Lx, Ly, Q, magz):
     dir_gutz = monopole_dir + f"Dirac_finite_Lx_{Lx}_Ly_{Ly}_chi_2000_flux_0.0_YC_gsindex_0_magz_{magz}_monQ_{Q}/"
-    dir_dmrg = code_dir + (f"TriangularJ1J2DMRG_6_15_e476229/Lx_{Lx}_Ly_{Ly}_bc_op_YC/"
+    dir_dmrg = glob_results_dir + (f"TriangularJ1J2DMRG_6_15_e476229/Lx_{Lx}_Ly_{Ly}_bc_op_YC/"
                        f"finite_init_Random_conserve_1_J2_0.1_chi_3500_maxsweeps_50_magz_{magz}/")
 
     with open(dir_gutz + "psi_gutzwiller.pkl", 'rb') as f:
@@ -2419,10 +2447,64 @@ def DebugMagnetizedIMPS():
     exit(0)
 
 
+def AnalyzeMagnetizedJ1J2Correlations():
+    magz1_dir = glob_results_dir + "PostProcess/StructureFactor_Lx12_Ly6_infinite_special_points_structure_factor/"
+    magz2_dir = glob_results_dir + \
+                "PostProcess/StructureFactor_Lx12_Ly6_infinite_magz2_special_points_structure_factor/"
+    dirs = [magz1_dir, magz2_dir]
+    n_sites_cases = 6 * np.array([12, 14, 16, 18]) # ordered according to case indices
+    special_k_points = getSpecielBzPoints()
+    results_filename = "special_points_structure_factor.txt"
+    fig, axs = plt.subplots(1, 2, figsize=(6, 5))
+
+    sf_dict_magz1 = {k_name:np.zeros((n_sites_cases.shape[0], 2)) for k_name in special_k_points.keys()}
+    sf_dict_magz2 = {k_name:np.zeros((n_sites_cases.shape[0], 2)) for k_name in special_k_points.keys()}
+
+    magzs = [1,2]
+    for i_dir, dir in enumerate(dirs):
+        magz = magzs[i_dir]
+        sf_data = np.loadtxt(dir + results_filename, dtype=np.float64)
+        for j in range(sf_data.shape[0]):
+            case_index = int(sf_data[j, 0])
+            n_sites = n_sites_cases[case_index]
+            k_2D = np.array([sf_data[j, 2], sf_data[j, 3]])
+            k_name = getKPointName(k_2D)
+            sf = sf_data[j, 4]
+            dict = sf_dict_magz1 if magz == 1 else sf_dict_magz2
+            dict[k_name][case_index, :] = [n_sites, sf]
+            special_k_points[k_name] = np.array([n_sites, magz, sf])
+
+    #print(sf_dict_magz1)
+    #print(sf_dict_magz2)
+    colors = ["red", "blue", "green", "cyan", "magenta"]
+    for i_key,key in enumerate(sf_dict_magz1.keys()):
+        if key == "K_prime":
+            continue
+        assert (key in sf_dict_magz2.keys())
+        Ns = sf_dict_magz1[key][:,0]
+        axs[0].plot(1. / Ns**0.5, sf_dict_magz1[key][:,1] / Ns, "o", color=colors[i_key], label=key)
+        axs[1].plot(1. / Ns**0.5, sf_dict_magz2[key][:, 1] / Ns, "o", color=colors[i_key], label=key)
+
+    axs[0].set_xlabel(r"$1/N^{0.5}$")
+    axs[1].set_xlabel(r"$1/N^{0.5}$")
+    axs[0].set_ylabel(r"$S_{tran}(Q)$")
+    axs[1].set_ylabel(r"$S_{tran}(Q)$")
+
+    axs[0].set_xlim([0., 0.2])
+    axs[1].set_xlim([0., 0.2])
+    axs[0].set_ylim([0., 0.03])
+    axs[1].set_ylim([0., 0.03])
+    fig.tight_layout()
+    plt.legend()
+    plt.show()
+
+
 
 if __name__ == "__main__":
+    #AnalyzeMagnetizedJ1J2Correlations()
+
     output_dir = "C:/Users/yonli/Desktop/Thesis/Triangular J1J2/Meetings/4_5_2026/"
-    monopole_dir = code_dir + "MonopoleCondensateGutzwiller/"
+    monopole_dir = glob_results_dir + "MonopoleCondensateGutzwiller/"
 
     gutzwiller_dir = "C:/Users/yonli/Desktop/Thesis/Triangular J1J2/Code/MonopoleCondensateGutzwiller/" + \
                       "Dirac_finite_Lx_6_Ly_6_chi_2000_flux_0.0_YC_gsindex_0_magz_0.333_monQ_6/"
@@ -2431,7 +2513,7 @@ if __name__ == "__main__":
     #                               psi_fname="psi_gutzwiller.pkl", plot_mode="voronoi",
     #                               transverse_correlations=True)
 
-    results_dir = "C:/Users/yonli/Desktop/Thesis/Triangular J1J2/Code/LocalJ1J2TriangularDMRGResults/Lx_3_Ly_3_bc_pp_YC/infinite_init_Random_conserve_True_J2_0.0/"
+    # results_dir = "C:/Users/yonli/Desktop/Thesis/Triangular J1J2/Code/LocalJ1J2TriangularDMRGResults/Lx_3_Ly_3_bc_pp_YC/infinite_init_Random_conserve_True_J2_0.0/"
     #mat = np.loadtxt(results_dir + special_points_structure_factor.csv)
     #print(mat)
     #exit(1)
@@ -2450,21 +2532,21 @@ if __name__ == "__main__":
 
     # TryMonopoleModelHofstadter("./", 18, 18, bc=("open", "periodic"))
 
-    #getEnergyDifferenceBetweenSectors(code_dir + "../Meetings/1_6_2026/XC8/Flux0_Random/",
-    #                                  code_dir + "../Meetings/1_6_2026/XC8/Flux1_Random/", r"Flux 0 vs. Flux $\pi$",
+    #getEnergyDifferenceBetweenSectors(project_dir + "Meetings/1_6_2026/XC8/Flux0_Random/",
+    #                                  project_dir + "Meetings/1_6_2026/XC8/Flux1_Random/", r"Flux 0 vs. Flux $\pi$",
     #                                  False, "ener_diff_XC8_gutz.png")
 
-    #case_dir = "../Meetings/1_6_2026/XC8/Flux0_Random/"
-    #PlotCorrelationsFromFiles(code_dir + case_dir, show_energies=False,
-    #                          output_dir=code_dir + case_dir, fig_title="gutz")
-    #case_dir = "../Meetings/1_6_2026/XC8/Flux1_Random/"
-    #PlotCorrelationsFromFiles(code_dir + case_dir, show_energies=False,
-    #                          output_dir=code_dir + case_dir, fig_title="gutz")
+    #case_dir = "Meetings/1_6_2026/XC8/Flux0_Random/"
+    #PlotCorrelationsFromFiles(project_dir + case_dir, show_energies=False,
+    #                          output_dir=project_dir + case_dir, fig_title="gutz")
+    #case_dir = "Meetings/1_6_2026/XC8/Flux1_Random/"
+    #PlotCorrelationsFromFiles(project_dir + case_dir, show_energies=False,
+    #                          output_dir=results_dir + case_dir, fig_title="gutz")
     # calculateZ2EntanglementEntropy()
     # TestDimerDimerCorrelations()
     # PlotSquareLatticeStructureFactor(Lx=3, Ly=3)
 
-    #dir = code_dir + "/LocalGutzwillerResults/Z2_infinite_Lx_2_Ly_4_chi_500_flux_0.0_YC_gsindex_0_magz_1/"
+    #dir = results_dir + "/LocalGutzwillerResults/Z2_infinite_Lx_2_Ly_4_chi_500_flux_0.0_YC_gsindex_0_magz_1/"
     #with open(dir + "psi_gutzwiller.pkl", 'rb') as f:
     #   psi = pickle.load(f)
     #print(np.sum(psi.expectation_value("Sz")))
@@ -2489,14 +2571,14 @@ if __name__ == "__main__":
     #norm_magz = 2. * k / (Lx * Ly)
     #CheckMegnatizedPiFluxEnergyVsMonopoleDensity(Lx, Ly, norm_magz, ("periodic", "periodic"), ax, fig, color="b")
     #CheckMegnatizedPiFluxEnergyVsMonopoleDensity(Lx, Ly, norm_magz, ("open", "periodic"), ax, fig, color="r",
-    #                                             save_dir = code_dir + "../Meetings/20_6_2026/")
+    #                                             save_dir = project_dir + "Meetings/20_6_2026/")
 
     # fig.savefig(f"{output_dir}ener_vs_mon_dens_magz_{magz}.png", bbox_inches='tight')
     # plt.show()
 
     #CheckOptimalMonopoleStateEnergyVsMagnetization(24, 6)
 
-    #gutz_dir = code_dir + "LocalGutzwillerResults/"
+    #gutz_dir = results_dir + "LocalGutzwillerResults/"
     #Lx, Ly = 2, 6
     #chi_gutz = 2000
     #flux_gutz = 0.0
@@ -2520,28 +2602,27 @@ if __name__ == "__main__":
     # ax.legend()
     # plt.show()
 
-    for norm_magz_fac in [4.]:
-        Lx, Ly = 2, 4
-        norm_magz = norm_magz_fac / (Lx * Ly)
-        iMPS_Lx_factor = 10
-        chi_max = 1000
-        abs_magz = AbsMagzFromNormMagz(norm_magz, Lx * Ly)
+    norm_magz_fac = 0.0
+    Lx, Ly = 2, 4
+    norm_magz = norm_magz_fac / (Lx * Ly)
+    iMPS_Lx_factor = 10
+    chi_max = 1000
+    abs_magz = AbsMagzFromNormMagz(norm_magz, Lx * Ly)
 
-        monopole_Q_opt = int(norm_magz_fac//2)
-        monopole_Q = 0
+    monopole_Q_opt = int(norm_magz_fac // 2)
+    monopole_Q = 1
 
-        flux = 0.001
-        bc_MPS = "infinite"
-        SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, "YC", bc_MPS, 0,
-                                                             model_type_dirac, Lx=Lx, chi_max=chi_max, flux=flux,
-                                                             norm_magz=norm_magz, monopole_Q=monopole_Q,
-                                                             show_transverse_correlations=True,
-                                                             iMPS_Lx_factor=iMPS_Lx_factor)
+    flux = 0.0
+    bc_MPS = "infinite"
+    SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, "YC", bc_MPS, 0, model_type_dirac,
+                                                         Lx=Lx, chi_max=chi_max, flux=flux, norm_magz=norm_magz,
+                                                         monopole_Q=monopole_Q, show_transverse_correlations=True,
+                                                         iMPS_Lx_factor=iMPS_Lx_factor)
 
 
     # calculateOverlapsFastLocal(6, 6, 2, 0.056)
 
-    #ComputeCorrelationsFromMPSFile(code_dir, 6, 6, ("open", "periodic"), "finite", geometry="YC",
+    #ComputeCorrelationsFromMPSFile(results_dir, 6, 6, ("open", "periodic"), "finite", geometry="YC",
     #                               psi_dir="LocalGutzwillerResults/Dirac_finite_Lx_6_Ly_6_chi_1000_flux_0.0_YC_gsindex_0_magz_6_monQ_8/",
     #                               psi_fname="psi_gutzwiller.pkl", transverse_correlations=True)
     #plt.show()
@@ -2562,7 +2643,7 @@ if __name__ == "__main__":
     #fig.savefig(meetings_dir + f"20_6_2026/chirality_magz_{0.056}_J2_0.1_dmrg.png", bbox_inches='tight')
     #plt.show()
 
-    #dir = code_dir + "LocalGutzwillerResults/Dirac_finite_Lx_6_Ly_6_chi_1000_flux_0. 0_YC_gsindex_0_magz_6_monQ_6/"
+    #dir = results_dir + "LocalGutzwillerResults/Dirac_finite_Lx_6_Ly_6_chi_1000_flux_0. 0_YC_gsindex_0_magz_6_monQ_6/"
     #with open(dir + "psi_gutzwiller.pkl", 'rb') as f:
     #  psi = pickle.load(f)
 

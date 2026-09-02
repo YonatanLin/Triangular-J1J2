@@ -9,7 +9,7 @@ import os
 def AddTriangularCaseDirsToCondorCases(main_results_dir, condor_cases_file="condor_cases.txt", chi_input=None,
         max_sweeps_input=None):
     geometry_re = re.compile(r"^Lx_(.+)_Ly_(.+)_bc_([op]{2})_(.+)$")
-    params_re = re.compile(r"^(.+)_init_(.+)_conserve_(.+)_J2_(.+)_chi_(.+)_maxsweeps_(.+)$")
+    params_re = re.compile(r"^(.+)_init_(.+)_conserve_(.+)_J2_([^_]+)(?:_Delz_([^_]+))?_chi_(.+)_maxsweeps_(.+)$")
 
     with open(condor_cases_file, "w") as input_for_condor:
         for geometry_dir in sorted(Path(main_results_dir).iterdir()):
@@ -30,7 +30,9 @@ def AddTriangularCaseDirsToCondorCases(main_results_dir, condor_cases_file="cond
                 if params_match is None:
                     continue
 
-                bc_MPS, _initial_state, conserve, J2, chi, max_sweeps = params_match.groups()
+                bc_MPS, _initial_state, conserve, J2, Delz, chi, max_sweeps = params_match.groups()
+                if Delz is None:
+                    Delz = 1.0
                 if "cont" in _initial_state:
                     continue
 
@@ -60,6 +62,7 @@ def AddTriangularCaseDirsToCondorCases(main_results_dir, condor_cases_file="cond
                     "chi_max": chi,
                     "max_sweeps": max_sweeps,
                     "initial_psi_dir": case_folder_absolute,
+                    "Delz": Delz,
                 }
                 input_for_condor.write(" ".join(str(row[field[0]]) for field in dmrg_input_params) + f" {cont_folder}\n")
 

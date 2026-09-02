@@ -879,7 +879,8 @@ def GetTriangularLatticeInitialState(initial_state, triangular_lat, initial_psi_
     return psi
 
 
-def TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, geometry, chi, max_sweeps, norm_magz):
+def TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, geometry, chi, max_sweeps, norm_magz,
+                              Delz=1.0):
     bc_string = ""
     for bc_ax in bc:
         if bc_ax == "periodic":
@@ -890,6 +891,8 @@ def TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, g
 
     geometry_dir = f"Lx_{Lx}_Ly_{Ly}_bc_{bc_string}_{geometry}/"
     params_dir = f"{bc_MPS}_init_{initial_state}_conserve_{conserve}_J2_{J2}"
+    if Delz is not None and abs(float(Delz) - 1.0) > 1e-15:
+        params_dir += f"_Delz_{Delz}"
     if chi is not None:
         params_dir += f"_chi_{chi}"
     if max_sweeps is not None:
@@ -901,10 +904,10 @@ def TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, g
 
 
 def CreateTriangularCaseDir(main_results_dir, Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, geometry,
-                            chi_max=None, max_sweeps=None, norm_magz=0.0):
+                            chi_max=None, max_sweeps=None, norm_magz=0.0, Delz=1.0):
     Path(main_results_dir).mkdir(parents=True, exist_ok=True)
     geometry_dir, params_dir = TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, geometry,
-                                                         chi_max, max_sweeps, norm_magz)
+                                                         chi_max, max_sweeps, norm_magz, Delz)
     results_dir = main_results_dir + geometry_dir
     Path(results_dir).mkdir(parents=True, exist_ok=True)
     results_dir += params_dir
@@ -912,27 +915,33 @@ def CreateTriangularCaseDir(main_results_dir, Lx, Ly, bc, bc_MPS, initial_state,
     return results_dir
 
 
-def GenerateJ1J2SpinTriangularModel(J2, triangular_lat):
+def GenerateJ1J2SpinTriangularModel(J2, Delz, triangular_lat):
     J1 = 1.0
     assert(len(triangular_lat.pairs["nearest_neighbors"]) > 0 and
            len(triangular_lat.pairs["next_nearest_neighbors"]) > 0)
-    J1J2_model = SpinModel({"lattice": triangular_lat, "Jx": J1, "Jy": J1, "Jz": J1})
+
+    J1_xy = J1
+    J1_z = J1 * Delz
+    J2_xy = J2
+    J2_z = J2 * Delz
+
+    J1J2_model = SpinModel({"lattice": triangular_lat, "Jx": J1_xy, "Jy": J1_xy, "Jz": J1_z})
     J1J2_model.manually_call_init_H = True
 
     nnn_couplings_list = []
     if abs(J2) > 0.0:
         for u1, u2, dx in triangular_lat.pairs['next_nearest_neighbors']:
-            AddAndTrackCoupling(J1J2_model, 0.5 * J2, u1, "Sp", u2, "Sm", dx,
+            AddAndTrackCoupling(J1J2_model, 0.5 * J2_xy, u1, "Sp", u2, "Sm", dx,
                                 nnn_couplings_list)
-            AddAndTrackCoupling(J1J2_model, 0.5 * J2, u1, "Sm", u2, "Sp", dx,
+            AddAndTrackCoupling(J1J2_model, 0.5 * J2_xy, u1, "Sm", u2, "Sp", dx,
                                 nnn_couplings_list)
-            AddAndTrackCoupling(J1J2_model, J2, u1, "Sz", u2, "Sz", dx,
+            AddAndTrackCoupling(J1J2_model, J2_z, u1, "Sz", u2, "Sz", dx,
                                 nnn_couplings_list)
     J1J2_model.init_H_from_terms()
     return J1J2_model, nnn_couplings_list
 
 
-def calculateGutzwillerEnergyTriangularJ1J2(gutz_results_dir, Lx, Ly, chi, flux, bc_MPS, J2, bc, geometry,
+def calculateGutzwillerEnergyTriangularJ1J2(gutz_results_dir, Lx, Ly, chi, flux, bc_MPS, J2, Delz, bc, geometry,
                                             gs_manifold_index, norm_magz, monopole_Q, reorder_lattice=False, model_type=None):
     psi_path = CreateGutzwillerCaseDir(gutz_results_dir, Lx, Ly, chi, flux, geometry,
                                        bc_MPS, gs_manifold_index, model_type, norm_magz, monopole_Q) + "/psi_gutzwiller.pkl"
@@ -945,7 +954,7 @@ def calculateGutzwillerEnergyTriangularJ1J2(gutz_results_dir, Lx, Ly, chi, flux,
     
     finite = (bc_MPS == "finite")
     triangular_lat = BuildTriangularLattice(Lx, Ly, site, bc_MPS, bc, geometry=geometry)
-    J1J2_model, _ = GenerateJ1J2SpinTriangularModel(J2, triangular_lat)
+    J1J2_model, _ = GenerateJ1J2SpinTriangularModel(J2, Delz, triangular_lat)
     if reorder_lattice:
         exit("reorder lattice not supported anymore")
 
@@ -984,15 +993,15 @@ def calculateStructureFactorAtSpecialPoints(lat, spin_corr_x):
 
 
 def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, conserve=True, initial_state="Random", J2=0.0, geometry="YC",
-                       chi_max=None, initial_psi_dir=None, max_sweeps=None, norm_magz=0.0):
+                       chi_max=None, initial_psi_dir=None, max_sweeps=None, norm_magz=0.0, Delz=1.0):
     if isinstance(bc, str):
         bc_parsed = bc.split("-")
         bc = (bc_parsed[0], bc_parsed[1])
 
     if local:
-        main_results_dir = "LocalJ1J2TriangularDMRGResults/"
+        main_results_dir = glob_results_dir + "LocalJ1J2TriangularDMRGResults/"
         results_dir = CreateTriangularCaseDir(main_results_dir, Lx, Ly, bc, bc_MPS, initial_state, conserve, J2,
-                                              geometry)
+                                              geometry, chi_max, max_sweeps, norm_magz, Delz)
     else:
         results_dir = "./"
 
@@ -1006,7 +1015,7 @@ def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, conserve=True, initial_state="Random"
     center_site_mps_index = triangular_lat.lat2mps_idx([Lx // 2, Ly // 2, 0])
     print("center site mps index: ", center_site_mps_index)
 
-    J1J2_model, nnn_couplings_list = GenerateJ1J2SpinTriangularModel(J2, triangular_lat)
+    J1J2_model, nnn_couplings_list = GenerateJ1J2SpinTriangularModel(J2, Delz, triangular_lat)
 
     fig_lat, ax_lat = plt.subplots(figsize=(6, 5))
     PlotLattice(triangular_lat, ax_lat, additional_couplings_to_plot=nnn_couplings_list)
@@ -1872,7 +1881,7 @@ def PlotRealSpaceCorrelations(results_dir):
 
 def GutzwillerDMRGOverlaps(J2s, gutz_parent_dir, Lx, Ly, gutz_chi_max, gutz_flux, gutz_mon_Q,
                            output_dir, dmrg_initial_state, dmrg_parent_dir, geometry, bc_MPS, gutz_gs_manifold_index,
-                           dmrg_chi_max, dmrg_max_sweeps, dmrg_conserve, model_type, norm_magz):
+                           dmrg_chi_max, dmrg_max_sweeps, dmrg_conserve, model_type, norm_magz, Delz=1.0):
     overlaps = []
     dmrg_energies = []
     gutz_energies = []
@@ -1888,7 +1897,8 @@ def GutzwillerDMRGOverlaps(J2s, gutz_parent_dir, Lx, Ly, gutz_chi_max, gutz_flux
 
     for J2 in J2s:
         dmrg_geom_dir, dmrg_params_dir = (
-            TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, dmrg_initial_state, dmrg_conserve, J2, geometry, dmrg_chi_max, dmrg_max_sweeps, norm_magz))
+            TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, dmrg_initial_state, dmrg_conserve, J2, geometry,
+                                      dmrg_chi_max, dmrg_max_sweeps, norm_magz, Delz))
         dmrg_dir = dmrg_parent_dir + dmrg_geom_dir + dmrg_params_dir
         
         unitcell_width = 2 if geometry == "XC" else 1
@@ -1899,8 +1909,9 @@ def GutzwillerDMRGOverlaps(J2s, gutz_parent_dir, Lx, Ly, gutz_chi_max, gutz_flux
             dmrg_energy /= (Lx * Ly * unitcell_width)
         dmrg_energies.append(dmrg_energy)
 
-        gutz_energy = calculateGutzwillerEnergyTriangularJ1J2(gutz_parent_dir, Lx, Ly, gutz_chi_max, gutz_flux, bc_MPS, J2, bc,
-                                                              geometry, gutz_gs_manifold_index, norm_magz, gutz_mon_Q, model_type=model_type)
+        gutz_energy = calculateGutzwillerEnergyTriangularJ1J2(gutz_parent_dir, Lx, Ly, gutz_chi_max, gutz_flux, bc_MPS,
+                                                              J2, Delz, bc, geometry, gutz_gs_manifold_index, norm_magz,
+                                                              gutz_mon_Q, model_type=model_type)
         gutz_energies.append(gutz_energy)
 
         PlotCorrelationsFromFiles(dmrg_dir, show_energies=False, output_dir=output_dir,
@@ -1957,8 +1968,9 @@ def GutzwillerBondDimensionScaling(gutz_results_dir, Lx, Ly, chis, flux,
     bc = ("open", "periodic")
     geometry = "YC"
     gs_manifold_index = 0
+    Delz = 1.0
     for chi in chis:
-        E = calculateGutzwillerEnergyTriangularJ1J2(gutz_results_dir, Lx, Ly, chi, flux, bc_MPS, J2, bc, geometry,
+        E = calculateGutzwillerEnergyTriangularJ1J2(gutz_results_dir, Lx, Ly, chi, flux, bc_MPS, J2, Delz, bc, geometry,
                                                     gs_manifold_index, None, None)
         Es.append(E)
 
@@ -2305,9 +2317,10 @@ def calculateMonopoleEnergies(parent_dir, norm_magz, mon_Qs):
     flux = 0.0
     chi = 2000
     J2 = 0.125
+    Delz = 1.0
     for monopole_Q in mon_Qs:
         E = calculateGutzwillerEnergyTriangularJ1J2(parent_dir, Lx, Ly, chi, flux,
-                                                    "finite", J2, ("open", "periodic"),
+                                                    "finite", J2, Delz, ("open", "periodic"),
                                                     "YC", 0, norm_magz,
                                                     monopole_Q, model_type=model_type_dirac,
                                                     norm_magz=norm_magz, monopole_Q=monopole_Q)
@@ -2447,61 +2460,107 @@ def DebugMagnetizedIMPS():
     exit(0)
 
 
-def AnalyzeMagnetizedJ1J2Correlations():
-    magz1_dir = glob_results_dir + "PostProcess/StructureFactor_Lx12_Ly6_infinite_special_points_structure_factor/"
-    magz2_dir = glob_results_dir + \
-                "PostProcess/StructureFactor_Lx12_Ly6_infinite_magz2_special_points_structure_factor/"
-    dirs = [magz1_dir, magz2_dir]
-    n_sites_cases = 6 * np.array([12, 14, 16, 18]) # ordered according to case indices
-    special_k_points = getSpecielBzPoints()
-    results_filename = "special_points_structure_factor.txt"
-    fig, axs = plt.subplots(1, 2, figsize=(6, 5))
+def getStructureFactorPeaksFromPostProcessDir(results_file, n_sites_cases, dict):
+    sf_data = np.loadtxt(results_file, dtype=np.float64)
+    for j in range(sf_data.shape[0]):
+        case_index = int(sf_data[j, 0])
+        n_sites = n_sites_cases[case_index]
+        k_2D = np.array([sf_data[j, 2], sf_data[j, 3]])
+        k_name = getKPointName(k_2D)
+        sf = sf_data[j, 4]
+        dict[k_name][case_index, :] = [n_sites, sf]
 
-    sf_dict_magz1 = {k_name:np.zeros((n_sites_cases.shape[0], 2)) for k_name in special_k_points.keys()}
-    sf_dict_magz2 = {k_name:np.zeros((n_sites_cases.shape[0], 2)) for k_name in special_k_points.keys()}
 
-    magzs = [1,2]
-    for i_dir, dir in enumerate(dirs):
-        magz = magzs[i_dir]
-        sf_data = np.loadtxt(dir + results_filename, dtype=np.float64)
+def getStructureFactorPeaksFromRunDir(results_file, n_sites_cases, dict, Ly, monQs=None):
+    assert(Ly > 0)
+    Lx_cases = n_sites_cases / Ly
+    for ind, n_sites in enumerate(n_sites_cases):
+        _results_file = results_file.replace("Lx_#", f"Lx_{int(Lx_cases[ind])}")
+        if monQs is not None:
+            _results_file = _results_file.replace("monQ_#", f"monQ_{monQs[ind]}")
+
+        sf_data = np.loadtxt(_results_file, dtype=np.float64)
         for j in range(sf_data.shape[0]):
-            case_index = int(sf_data[j, 0])
-            n_sites = n_sites_cases[case_index]
-            k_2D = np.array([sf_data[j, 2], sf_data[j, 3]])
+            k_2D = np.array([sf_data[j, 0], sf_data[j, 1]])
             k_name = getKPointName(k_2D)
-            sf = sf_data[j, 4]
-            dict = sf_dict_magz1 if magz == 1 else sf_dict_magz2
-            dict[k_name][case_index, :] = [n_sites, sf]
-            special_k_points[k_name] = np.array([n_sites, magz, sf])
+            sf = sf_data[j, 2]
+            dict[k_name][ind, :] = [n_sites, sf]
 
-    #print(sf_dict_magz1)
-    #print(sf_dict_magz2)
+
+def AnalyzeMagnetizedJ1J2Correlations(results_dir, n_sites_cases, postprocess_dir=True, Ly=0, monQs=None):
+    # magz1_dir = glob_results_dir + "PostProcess/StructureFactor_Lx12_Ly6_infinite_special_points_structure_factor/"
+    #magz1_dir = glob_results_dir + \
+    #            "PostProcess/StructureFactorScaling_Gutzwiller_MonQ3_Magz2_special_points_structure_factor/"
+    #magz2_dir = glob_results_dir + \
+    #            "PostProcess/StructureFactor_Lx12_Ly6_infinite_magz2_special_points_structure_factor/"
+    #dirs = [magz1_dir, magz2_dir]
+
+    special_k_points = getSpecielBzPoints()
+    fig, ax = plt.subplots(figsize=(6, 5))
+
+    sf_dict = {k_name:np.zeros((n_sites_cases.shape[0], 2)) for k_name in special_k_points.keys()}
+    if postprocess_dir:
+        sf_filename = "special_points_structure_factor.txt"
+        getStructureFactorPeaksFromPostProcessDir(results_dir + sf_filename, n_sites_cases, sf_dict)
+    else:
+        sf_filename = "special_points_structure_factor.csv"
+        getStructureFactorPeaksFromRunDir(results_dir + sf_filename, n_sites_cases, sf_dict, Ly, monQs)
+
+
     colors = ["red", "blue", "green", "cyan", "magenta"]
-    for i_key,key in enumerate(sf_dict_magz1.keys()):
+    min_sf = np.inf
+    max_sf = -np.inf
+    for i_key,key in enumerate(sf_dict.keys()):
         if key == "K_prime":
             continue
-        assert (key in sf_dict_magz2.keys())
-        Ns = sf_dict_magz1[key][:,0]
-        axs[0].plot(1. / Ns**0.5, sf_dict_magz1[key][:,1] / Ns, "o", color=colors[i_key], label=key)
-        axs[1].plot(1. / Ns**0.5, sf_dict_magz2[key][:, 1] / Ns, "o", color=colors[i_key], label=key)
+        Ns = sf_dict[key][:, 0]
+        scaled_sf = sf_dict[key][:,1] / Ns
+        min_sf = min(np.min(scaled_sf), min_sf)
+        max_sf = max(np.max(scaled_sf), max_sf)
+        N_inv_sqrt = 1. / Ns**0.5
+        ax.plot(N_inv_sqrt, scaled_sf, "o", color=colors[i_key], label=key)
+        lin_fit = FitLinearModel(N_inv_sqrt, scaled_sf)
+        N_inv_sqrt_fit_plot = np.array([0.0, np.max(N_inv_sqrt)])
+        ax.plot(N_inv_sqrt_fit_plot, linear_model(N_inv_sqrt_fit_plot, lin_fit["m"], lin_fit["b"]), "--",
+                color=colors[i_key])
 
-    axs[0].set_xlabel(r"$1/N^{0.5}$")
-    axs[1].set_xlabel(r"$1/N^{0.5}$")
-    axs[0].set_ylabel(r"$S_{tran}(Q)$")
-    axs[1].set_ylabel(r"$S_{tran}(Q)$")
 
-    axs[0].set_xlim([0., 0.2])
-    axs[1].set_xlim([0., 0.2])
-    axs[0].set_ylim([0., 0.03])
-    axs[1].set_ylim([0., 0.03])
+    ax.set_xlabel(r"$1/N^{0.5}$")
+    ax.set_ylabel(r"$S_{tran}(Q)$")
+    ax.set_xlim((0., 0.2))
+    ax.set_ylim((0.0, 1.1*max_sf))
+
     fig.tight_layout()
     plt.legend()
-    plt.show()
 
 
 
 if __name__ == "__main__":
-    #AnalyzeMagnetizedJ1J2Correlations()
+    magz1_dir = glob_results_dir + \
+               "PostProcess/StructureFactorScaling_Gutzwiller_MonQ3_Magz2_special_points_structure_factor/"
+    magz2_dir = glob_results_dir + \
+               "PostProcess/StructureFactor_Lx12_Ly6_infinite_magz2_special_points_structure_factor/"
+    Ly = 6
+    ns = Ly * np.array([12, 14, 16, 18])
+    #AnalyzeMagnetizedJ1J2Correlations(magz1_dir, ns)
+    #AnalyzeMagnetizedJ1J2Correlations(magz2_dir, ns)
+    #plt.show()
+
+    TriangularJ1J2DMRG(8, 3, ("open", "periodic"), "finite", J2=0.0, chi_max=400, max_sweeps=15,
+                       Delz=2.0)
+    exit(0)
+
+    norm_magz_third_dir = glob_results_dir + \
+               "PiFluxGutzwiller_8_28/Dirac_finite_Lx_#_Ly_6_chi_8000_flux_0.0_YC_gsindex_0_magz_0.3330_monQ_#_svdmin_0.002/"
+    AnalyzeMagnetizedJ1J2Correlations(norm_magz_third_dir, ns, postprocess_dir=False, Ly=Ly,
+                                      monQs=(ns/Ly).astype(int))
+    norm_magz_third_dir = glob_results_dir + \
+                          "PiFluxGutzwiller_8_28/Dirac_finite_Lx_#_Ly_6_chi_10000_flux_0.0_YC_gsindex_0_magz_0.3330_monQ_#_svdmin_0.0005/"
+    AnalyzeMagnetizedJ1J2Correlations(norm_magz_third_dir, ns, postprocess_dir=False, Ly=Ly,
+                                      monQs=(ns/Ly).astype(int))
+
+    plt.show()
+    exit(0)
 
     output_dir = "C:/Users/yonli/Desktop/Thesis/Triangular J1J2/Meetings/4_5_2026/"
     monopole_dir = glob_results_dir + "MonopoleCondensateGutzwiller/"
@@ -2585,7 +2644,7 @@ if __name__ == "__main__":
     #geometry = "YC"
     #J2 = 0.125
     #calculateGutzwillerEnergyTriangularJ1J2(gutz_dir, Lx, Ly, chi_gutz, flux_gutz, geometry=geometry,
-    #                                        J2=J2, bc_MPS="infinite", bc=("periodic", "periodic"))
+    #                                        J2=J2, Delz=1.0, bc_MPS="infinite", bc=("periodic", "periodic"))
     #
 
     #arr = np.array([[1+1j, 1-1j], [1-1j, 1-1j]])
@@ -2658,7 +2717,7 @@ if __name__ == "__main__":
     #TriangularPiFluxGutzwiller(8, "YC", "infinite", 0, Lx=2, chi_max=2500, flux=0.0)
 
     #calculateGutzwillerEnergyTriangularJ1J2("LocalGutzwillerResults/", 2, 8, 2500, 0.0,
-    #                                        "infinite", 0.125, ("periodic", "periodic"), "YC",
+    #                                        "infinite", 0.125, , 1.0, ("periodic", "periodic"), "YC",
     #                                        0)
 
     # TriangularPiFluxGutzwiller(3, "XC", "finite", 0, Lx=200, chi_max=1000, flux=1.0)

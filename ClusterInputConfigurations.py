@@ -45,7 +45,8 @@ dmrg_input_params = [
     ("chi_max", int),
     ("max_sweeps", int),
     ("norm_magz", float),
-    ("initial_psi_dir", str)]
+    ("initial_psi_dir", str),
+    ("Delz", optional_float)]
 
 dmrg_params_excluded_from_dirname = ["initial_psi_dir"]
 
@@ -72,17 +73,26 @@ gutzwiller_input_params = [
 
 dmrg_gutz_comp_input_params = [("Lx", int), ("Ly", int), ("geometry", str), ("bc_MPS", str),
                                ("dmrg_initial_state", str), ("dmrg_conserve", int),
-                               ("dmrg_chi_max", optional_int), ("dmrg_max_sweeps", optional_int), ("dmrg_parent_dir", str),
-                               ("gutz_chi_max", int), ("gutz_flux", float), ("gutz_gs_manifold_index", int),
-                               ("gutz_mon_Q", int), ("gutz_parent_dir", str), ("model_type", optional_str),
-                               ("norm_magz", float), ("J2_file", str)]
+                               ("dmrg_chi_max", optional_int), ("dmrg_max_sweeps", optional_int),
+                               ("dmrg_parent_dir", str), ("dmrg_Delz", optional_float, 1.0), ("gutz_chi_max", int), ("gutz_flux", float),
+                               ("gutz_gs_manifold_index", int), ("gutz_mon_Q", int), ("gutz_parent_dir", str),
+                               ("model_type", optional_str), ("norm_magz", float), ("J2_file", str)]
+
+
+def input_param_name(param):
+    return param[0]
+
+
+def input_param_type(param):
+    return param[1]
+
 
 def build_parser(input_params):
     parser = argparse.ArgumentParser(
         description="Run TestTriangularLattice with command line parameters."
     )
-    for param, param_type in input_params:
-        parser.add_argument("--" + param, type=param_type, required=True)
+    for param in input_params:
+        parser.add_argument("--" + input_param_name(param), type=input_param_type(param), required=True)
 
     return parser
 
@@ -92,18 +102,19 @@ def CreateTriangularCaseDirFromInputFile(main_results_dir, input_file, input_par
     with open(input_file, "r") as file:
         input_file_lines = file.readlines()
     params_names = input_file_lines[0].strip().split(" ")
-    expected_params = [param_data[0] for param_data in input_params]
-    assert params_names == expected_params, f"Bad input header: got {params_names}, expected {expected_params}"
+    expected_params = [input_param_name(param_data) for param_data in input_params]
+    assert (params_names == expected_params), f"Bad input header: got {params_names}, expected {expected_params}"
 
     input_for_condor = open(condor_cases_filename, 'w')
     for line in input_file_lines[1:]:
         params = line.strip().split(" ")
         n_tokens = len(line.split(" "))
-        expected_n_tokens = len(expected_params)
+        expected_n_tokens = len(params_names)
         assert(n_tokens == expected_n_tokens), f"line has {n_tokens} tokens, expected {expected_n_tokens} tokens"
         
-        kwargs = {param[0]: params[i_param] for i_param, param in enumerate(input_params)
-                  if (param[0] not in excluded_params)}
+        parsed_params = dict(zip(params_names, params))
+        kwargs = {input_param_name(param): parsed_params[input_param_name(param)] for param in input_params
+                  if (input_param_name(param) not in excluded_params)}
         if "bc" in kwargs:
             kwargs["bc"] = kwargs["bc"].split("-")
         

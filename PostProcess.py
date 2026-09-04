@@ -75,9 +75,16 @@ def CalculateSpecialPointsStructureFactor(results_dirs_filename):
         if not spin_corr_path.exists():
             raise FileNotFoundError(f"Could not find spin correlation file: {spin_corr_path}")
         if not lattice_path.exists():
-            raise FileNotFoundError(f"Could not find lattice file: {lattice_path}")
+            results_dir_split = results_dir.split("/")
+            print(f"results dir split {results_dir_split}")
+            results_dir_split[-2] = "pklFiles_" + results_dir_split[-2]
+            results_dir = "/".join(results_dir_split)
+            print(f"results dir {results_dir}")
+            lattice_path = _result_file_path(results_dir, "lattice.pkl")
+            if not lattice_path.exists():
+                raise FileNotFoundError(f"Could not find lattice file: {lattice_path}")
 
-        spin_corr_x = np.loadtxt(spin_corr_path)
+        spin_corr_x = np.loadtxt(spin_corr_path, dtype=np.complex128)
         with open(lattice_path, "rb") as f:
             lattice = pickle.load(f)
 

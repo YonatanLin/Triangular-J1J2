@@ -74,9 +74,10 @@ gutzwiller_input_params = [
 dmrg_gutz_comp_input_params = [("Lx", int), ("Ly", int), ("geometry", str), ("bc_MPS", str),
                                ("dmrg_initial_state", str), ("dmrg_conserve", int),
                                ("dmrg_chi_max", optional_int), ("dmrg_max_sweeps", optional_int),
-                               ("dmrg_parent_dir", str), ("dmrg_Delz", optional_float, 1.0), ("gutz_chi_max", int), ("gutz_flux", float),
+                               ("dmrg_parent_dir", str), ("J2", optional_float, None),
+                               ("Delz", optional_float, 1.0), ("gutz_chi_max", int), ("gutz_flux", float),
                                ("gutz_gs_manifold_index", int), ("gutz_mon_Q", int), ("gutz_parent_dir", str),
-                               ("model_type", optional_str), ("norm_magz", float), ("J2_file", str)]
+                               ("model_type", optional_str), ("norm_magz", float), ("parameter_file", str)]
 
 
 def input_param_name(param):
@@ -87,12 +88,18 @@ def input_param_type(param):
     return param[1]
 
 
+def input_param_default(param):
+    return param[2] if len(param) > 2 else None
+
+
 def build_parser(input_params):
     parser = argparse.ArgumentParser(
         description="Run TestTriangularLattice with command line parameters."
     )
     for param in input_params:
-        parser.add_argument("--" + input_param_name(param), type=input_param_type(param), required=True)
+        has_default = len(param) > 2
+        parser.add_argument("--" + input_param_name(param), type=input_param_type(param),
+                            required=not has_default, default=input_param_default(param))
 
     return parser
 

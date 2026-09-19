@@ -1,5 +1,5 @@
 executable = /srv01/technion/yonlin/scripts/Triangular-J1J2/JobUtilities/RunDMRGGutzwillerComparison.sh
-arguments = --Lx $(Lx) --Ly $(Ly) --geometry $(geometry) --bc_MPS $(bc_MPS) --dmrg_initial_state $(dmrg_initial_state) --dmrg_conserve $(dmrg_conserve) --dmrg_chi_max $(dmrg_chi_max) --dmrg_max_sweeps $(dmrg_max_sweeps) --dmrg_parent_dir $(dmrg_parent_dir) --gutz_chi_max $(gutz_chi_max) --gutz_flux $(gutz_flux) --gutz_gs_manifold_index $(gutz_gs_manifold_index) --gutz_mon_Q $(gutz_mon_Q) --gutz_parent_dir $(gutz_parent_dir) --model_type $(model_type) --norm_magz $(norm_magz) --J2_file $(J2_file)
+arguments = --Lx $(Lx) --Ly $(Ly) --geometry $(geometry) --bc_MPS $(bc_MPS) --dmrg_initial_state $(dmrg_initial_state) --dmrg_conserve $(dmrg_conserve) --dmrg_chi_max $(dmrg_chi_max) --dmrg_max_sweeps $(dmrg_max_sweeps) --dmrg_parent_dir $(dmrg_parent_dir) --J2 $(J2) --Delz $(Delz) --gutz_chi_max $(gutz_chi_max) --gutz_flux $(gutz_flux) --gutz_gs_manifold_index $(gutz_gs_manifold_index) --gutz_mon_Q $(gutz_mon_Q) --gutz_parent_dir $(gutz_parent_dir) --model_type $(model_type) --norm_magz $(norm_magz) --parameter_file $(parameter_file)
 
 root_dir = /storage/ph_keselman/yonlin/TriangularJ1J2
 case_folder = $(root_dir)/$(case_folder_name)
@@ -17,4 +17,4 @@ Initialdir = $(case_folder)
 universe = vanilla
 input_file = $(root_dir)/overlaps_condor_cases.txt
 
-queue Lx, Ly, geometry, bc_MPS, dmrg_initial_state, dmrg_conserve, dmrg_chi_max, dmrg_max_sweeps, dmrg_parent_dir, gutz_chi_max, gutz_flux, gutz_gs_manifold_index, gutz_mon_Q, gutz_parent_dir, model_type, norm_magz, J2_file, case_folder_name from $(input_file)
+queue Lx, Ly, geometry, bc_MPS, dmrg_initial_state, dmrg_conserve, dmrg_chi_max, dmrg_max_sweeps, dmrg_parent_dir, J2, Delz, gutz_chi_max, gutz_flux, gutz_gs_manifold_index, gutz_mon_Q, gutz_parent_dir, model_type, norm_magz, parameter_file, case_folder_name from $(input_file)

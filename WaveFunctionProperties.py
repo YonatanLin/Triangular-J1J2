@@ -677,9 +677,12 @@ def StructureFactorPairPhases(coor_i, coor_j, bc_MPS, bcs, Ls, basis_vectors, un
 
 def ComputeMomentumSpaceStructureFactor(corr_x, lat, assert_realness=True,
                                         transform_expectation_value=False, Kx=None, Ky=None,
-                                        new_implementation=True):
+                                        new_implementation=True, n1=None, n2=None):
+    # n1, n2: k-grid resolution along the two reciprocal basis vectors (new implementation only);
+    # default lat.Ls. For an infinite cylinder with a one-column unit cell (Ls[0] = 1) the default
+    # grid only contains kx = 0, -2pi, so pass e.g. n1 = 4 to sample kx = pi.
     if new_implementation:
-        return compute_structure_factor_grid(corr_x, lat, wrap_displacements=True)
+        return compute_structure_factor_grid(corr_x, lat, n1=n1, n2=n2, wrap_displacements=True)
     print("Warning: using legacy implementation in ComputeMomentumSpaceStructureFactor")
     if transform_expectation_value:
         assert (corr_x.ndim == 1)

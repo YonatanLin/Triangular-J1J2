@@ -5,8 +5,8 @@ from numpy import sin, cos, sqrt, pi
 import numpy as np
 from tenpy.networks.site import FermionSite, SpinHalfSite
 from Main import (BuildTriangularLattice, Generate120DegOrderedState, GenerateStripeOrderedState,
-                  CreateHamiltonianMatrixFromCouplingsList, PrintCouplings, PlotLattice,
-                  CalculateExactCMatrixForPiFlux, model_type_dirac, ImshowMatrix)
+                  PrintCouplings, PlotLattice, model_type_dirac, ImshowMatrix)
+from Gutzwiller import CreateHamiltonianMatrixFromCouplingsList, CalculateExactCMatrixForPiFlux
 from tenpy.networks.mps import MPS
 import matplotlib.pyplot as plt
 from TryingTemfpy import local
@@ -152,7 +152,7 @@ def TestCorrelationsWithNontrivialUnitCell(Lx, Ly, state="120", geometry="YC"):
 
 
 def TestZ2MeanFieldModel():
-    from Main import Z2MeanFieldModel, AddCouplingsToZ2ModelDict, TestDictsAreCompatible
+    from Gutzwiller import Z2MeanFieldModel, AddCouplingsToZ2ModelDict, TestDictsAreCompatible
 
     triangular_lat = BuildTriangularLattice(3, 5, FermionSite(conserve="N"), "finite",
                                             bc=("open", "open"), spinfull_fermions=True)
@@ -193,7 +193,7 @@ def TestZ2MeanFieldModel():
 
 
 def TestFreeFermionsSpinCorrelations():
-    from Main import FreeFermionSpinCorrelations
+    from Gutzwiller import FreeFermionSpinCorrelations
 
     Lx, Ly = 6, 6
     spinfull_fermions = True

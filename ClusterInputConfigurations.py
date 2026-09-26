@@ -70,6 +70,13 @@ gutzwiller_input_params = [
     ("svd_min", optional_float)
 ]
 
+afm_dispersion_input_params = [
+    ("Ly", int),
+    ("chi_max", int),
+    ("kx", float),
+    ("ky", float)
+]
+
 
 dmrg_gutz_comp_input_params = [("Lx", int), ("Ly", int), ("geometry", str), ("bc_MPS", str),
                                ("dmrg_initial_state", str), ("dmrg_conserve", int),

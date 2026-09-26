@@ -1,5 +1,5 @@
 executable = /srv01/technion/yonlin/scripts/Triangular-J1J2/JobUtilities/RunAFMDispersion.sh
-arguments = --Ly $(Ly) --chi_max $(chi_max) --kx $(kx) --ky $(ky)
+arguments = --Ly $(Ly) --chi_max $(chi_max) --kx $(kx) --ky $(ky) --gs_path $(gs_path)
 root_dir = /storage/ph_keselman/yonlin/TriangularJ1J2
 case_folder = $(root_dir)/$(case_folder_name)
 log_name = run
@@ -14,4 +14,4 @@ Initialdir = $(case_folder)
 universe = vanilla
 input_file = $(root_dir)/afm_dispersion_condor_cases.txt
 
-queue Ly, chi_max, kx, ky, case_folder_name from $(input_file)
+queue Ly, chi_max, kx, ky, gs_path, case_folder_name from $(input_file)

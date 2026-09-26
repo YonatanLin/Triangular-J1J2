@@ -354,10 +354,11 @@ def test_targeting_selects_sector():
     print('penalty selects the requested ky sector (sign of e^{i ky} T_eff consistent)  [ok]')
 
 
-def _afm_neel_ground_state(Ly, chi, nwin=12, trunc_tol=1.e-3):
+def _afm_neel_ground_state(Ly, chi, nwin=12, trunc_tol=1.e-3, save_path=None):
     """Square-lattice J1 Heisenberg AFM, Sz_tot = 0, one-column unit cell. Returns (uni, M) after
     checking that the DMRG truncation error is small and that the static structure factor
-    (WaveFunctionProperties) has its Neel peak at M = (pi, pi)."""
+    (WaveFunctionProperties) has its Neel peak at M = (pi, pi). If `save_path` is given, the
+    converged iDMRG MPS is pickled there (after the checks)."""
     import logging
     logging.getLogger().setLevel(logging.ERROR)
     import QuasiparticleAnsatz as QA
@@ -376,6 +377,11 @@ def _afm_neel_ground_state(Ly, chi, nwin=12, trunc_tol=1.e-3):
           f'argmax S(k) = ({kfold[np.argmax(Sk)][0]:+.3f}, {kfold[np.argmax(Sk)][1]:+.3f})')
     assert at_M[np.argmax(Sk)], 'static structure factor does not peak at (pi, pi)'
     assert Sk[at_M].max() > 3 * Sk[~at_M].max(), 'Neel peak at M not pronounced'
+    if save_path is not None:
+        import pickle
+        with open(save_path, 'wb') as f:
+            pickle.dump(info['psi'], f)
+        print(f'ground state saved to {save_path}')
     return uni, M
 
 
@@ -387,11 +393,23 @@ def _magnon_energy(uni, M, kx, ky, alpha=1.0):
     return float(E[0, 0])
 
 
-def afm_excitation_energy(Ly, chi, kx, ky, trunc_tol=5.e-3):
+def compute_and_save_afm_groundstate(Ly, chi, gs_path, trunc_tol=5.e-3):
+    """iDMRG ground state of the square-lattice Heisenberg AFM (with the convergence and Neel-peak
+    checks of _afm_neel_ground_state), pickled to gs_path."""
+    _afm_neel_ground_state(Ly, chi, trunc_tol=trunc_tol, save_path=gs_path)
+
+
+def afm_excitation_energy(Ly, kx, ky, gs_path):
     """Sz = +1 excitation energy at (kx, ky) of the square-lattice Heisenberg AFM on a
-    circumference-Ly cylinder with bond dimension chi (ground state recomputed on every call)."""
-    uni, M = _afm_neel_ground_state(Ly, chi, trunc_tol=trunc_tol)
-    return _magnon_energy(uni, M, kx, ky)
+    circumference-Ly cylinder, on the ground state pickled at gs_path (see
+    compute_and_save_afm_groundstate)."""
+    import pickle
+    import QuasiparticleAnsatz as QA
+    from tenpy.networks.uniform_mps import UniformMPS
+    with open(gs_path, 'rb') as f:
+        psi = pickle.load(f)
+    M = QA.make_spin_model(Ly=Ly, Lx=1, Jxy=1.0, Jz=1.0, conserve='Sz', chain=False)
+    return _magnon_energy(UniformMPS.from_MPS(psi), M, kx, ky)
 
 
 def test_afm_square_goldstone(Ly=4, chi=30, nwin=12, trunc_tol=1.e-3, gap_tol=0.3):

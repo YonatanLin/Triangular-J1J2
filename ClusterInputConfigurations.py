@@ -73,8 +73,9 @@ gutzwiller_input_params = [
 afm_dispersion_input_params = [
     ("Ly", int),
     ("chi_max", int),
-    ("kx", float),
-    ("ky", float)
+    ("kx", optional_float),
+    ("ky", optional_float),
+    ("gs_path", str)
 ]
 
 

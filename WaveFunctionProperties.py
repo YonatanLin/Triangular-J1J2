@@ -451,7 +451,8 @@ def _structure_factor_reciprocal_basis(lattice):
 
 
 def compute_structure_factor_grid(C, lattice, n1=None, n2=None,
-                                  ops=('Sx', 'Sy', 'Sz'), centered=True, wrap_displacements=True):
+                                  ops=('Sx', 'Sy', 'Sz'), centered=True, wrap_displacements=True,
+                                  ks=None):
     """Evaluate S(k) on a regular grid of momenta.
 
     Parameters
@@ -471,11 +472,12 @@ def compute_structure_factor_grid(C, lattice, n1=None, n2=None,
         S(k) evaluated at each momentum in `ks`.
     """
 
-    # b1, b2 = _structure_factor_reciprocal_basis(lattice)
-    b1, b2 = lattice.reciprocal_basis
-    if n1 is None or n2 is None:
-        n1, n2 = lattice.Ls
-    ks = k_grid(lattice, n1, n2, b1, b2)
+    if ks is None:
+        # b1, b2 = _structure_factor_reciprocal_basis(lattice)
+        b1, b2 = lattice.reciprocal_basis
+        if n1 is None or n2 is None:
+            n1, n2 = lattice.Ls
+        ks = k_grid(lattice, n1, n2, b1, b2)
 
     # Precompute C and the minimum-image displacements once and reuse
     # across all k (much cheaper than calling `structure_factor`
@@ -682,7 +684,12 @@ def ComputeMomentumSpaceStructureFactor(corr_x, lat, assert_realness=True,
     # default lat.Ls. For an infinite cylinder with a one-column unit cell (Ls[0] = 1) the default
     # grid only contains kx = 0, -2pi, so pass e.g. n1 = 4 to sample kx = pi.
     if new_implementation:
-        return compute_structure_factor_grid(corr_x, lat, n1=n1, n2=n2, wrap_displacements=True)
+        ks = None
+        if Kx is not None:
+            assert(Ky is not None)
+            ks = np.array([[Kx, Ky]])
+        return compute_structure_factor_grid(corr_x, lat, n1=n1, n2=n2, wrap_displacements=True,
+                                             ks=ks)
     print("Warning: using legacy implementation in ComputeMomentumSpaceStructureFactor")
     if transform_expectation_value:
         assert (corr_x.ndim == 1)
@@ -693,8 +700,7 @@ def ComputeMomentumSpaceStructureFactor(corr_x, lat, assert_realness=True,
     Ls = lat.Ls
     if Kx is None:
         assert (Ky is None), "need to specify momentum along both axes"
-        # kx = ky = np.linspace(-2 * np.pi, 2 * np.pi, 100)
-        kx = np.linspace(-2 * np.pi, 2 * np.pi, 2 * Ls[0] + 1)
+        kx = np.linspace(-2 * np.pi, 2 * np.pi, 100)
         ky = np.linspace(-2 * np.pi, 2 * np.pi, 100)
         Kx, Ky = np.meshgrid(kx, ky)
     bcs = lat.boundary_conditions
@@ -811,20 +817,56 @@ def CalculateDimerDimerCorrelations(psi, lat, sites1=None, sites2=None, inf_mps_
     return dimer_corr
 
 
-def CalculateSpinSpinCorrelations(psi, sites1=None, sites2=None, inf_mps_unitcell_fac=3, transverse_correlations=False):
+SPIN_CORRELATION_COMPONENTS = ("total", "transverse", "xx", "longitudinal")
+def CalculateSpinSpinCorrelations(psi, sites1=None, sites2=None, inf_mps_unitcell_fac=3, transverse_correlations=False,
+                                  component=None):
+    """
+    Spin-spin correlation matrix <S_i . S_j> or one of its components.
+
+    component (default "total", or "transverse" if transverse_correlations=True):
+        "total":        <S_i.S_j> = 0.5(<S+S-> + <S-S+>) + <SzSz>
+        "transverse":   0.5(<S+S-> + <S-S+>) = <SxSx> + <SySy>
+        "xx":           0.25(<S+S-> + <S-S+>) = <SxSx>; equals <SySy> when U(1) (Sz conservation) is a symmetry
+        "longitudinal": <SzSz>
+    """
+    if component is None:
+        component = "transverse" if transverse_correlations else "total"
+    assert component in SPIN_CORRELATION_COMPONENTS, f"component must be one of {SPIN_CORRELATION_COMPONENTS}"
+
     if psi.bc == "infinite" and sites1 is None and sites2 is None:
         L = psi.L
         sites1 = np.arange(0, inf_mps_unitcell_fac*L)
         sites2 = np.arange(0, inf_mps_unitcell_fac*L)
 
+    if component == "longitudinal":
+        return psi.correlation_function("Sz", "Sz", sites1=sites1, sites2=sites2)
+
     pm_corr = psi.correlation_function("Sp", "Sm", sites1=sites1, sites2=sites2)
     mp_corr = psi.correlation_function("Sm", "Sp", sites1=sites1, sites2=sites2)
     spin_corr_transverse = 0.5 * (pm_corr + mp_corr)
-    if transverse_correlations:
+    if component == "transverse":
         return spin_corr_transverse
+    if component == "xx":
+        return 0.5 * spin_corr_transverse
     zz_corr = psi.correlation_function("Sz", "Sz", sites1=sites1, sites2=sites2)
     spin_corr = spin_corr_transverse + zz_corr
     return spin_corr
+
+
+def CalculateSpinSpinCorrelationComponents(psi, lat, sites1=None, sites2=None):
+    """Dict with the "total", "transverse", "xx" and "longitudinal" correlation matrices, computing each
+    expectation value once.
+
+    For an infinite MPS the default sites are the first lat.N_sites MPS sites, i.e. the lattice the structure
+    factor is later evaluated on; for a finite MPS all sites are used."""
+    if psi.bc == "infinite" and sites1 is None and sites2 is None:
+        sites1 = sites2 = np.arange(0, lat.N_sites)
+    pm_corr = psi.correlation_function("Sp", "Sm", sites1=sites1, sites2=sites2)
+    mp_corr = psi.correlation_function("Sm", "Sp", sites1=sites1, sites2=sites2)
+    zz_corr = psi.correlation_function("Sz", "Sz", sites1=sites1, sites2=sites2)
+    transverse = 0.5 * (pm_corr + mp_corr)
+    return {"total": transverse + zz_corr, "transverse": transverse, "xx": 0.5 * transverse,
+            "longitudinal": zz_corr}
 
 
 def testConeStateChirality():

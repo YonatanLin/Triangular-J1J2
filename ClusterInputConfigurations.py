@@ -51,9 +51,8 @@ dmrg_input_params = [
 dmrg_params_excluded_from_dirname = ["initial_psi_dir"]
 
 postprocess_input_params = [
-    ("results_dirs_file", str),
-    ("post_process_type", str),
-    ("description", str)
+    ("results_dir", str),
+    ("post_process_type", str)
 ]
 
 gutzwiller_input_params = [

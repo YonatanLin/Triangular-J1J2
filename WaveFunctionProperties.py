@@ -869,6 +869,72 @@ def CalculateSpinSpinCorrelationComponents(psi, lat, sites1=None, sites2=None):
             "longitudinal": zz_corr}
 
 
+def _site_positions(lattice, n_sites):
+    return np.array([lattice.position(lattice.mps2lat_idx(i)) for i in range(n_sites)])
+
+
+def _reference_site_index(lattice, n_sites):
+    """MPS index of the site closest to the geometric center of the first n_sites sites."""
+    positions = _site_positions(lattice, n_sites)
+    return int(np.argmin(np.linalg.norm(positions - positions.mean(axis=0), axis=1)))
+
+
+def SpinComponentsOutput(psi, lattice, special_bz_points, i0=None, save_full_grid=True, n1=None, n2=None):
+    """
+    The transverse (<SxSx> = 1/4(<S+S-> + <S-S+>), using U(1) symmetry) and longitudinal (<SzSz>) spin
+    correlations of psi, and their structure factors, as in Fig. 7 of Gallegos et al., PRL 134, 196702 (2025).
+    Used both by the DMRG run (Main.py) and by the post-process (PostProcess.py); save with SaveSpinComponentsOutput.
+
+    Returns a dict:
+      corr:           {"total", "xx", "longitudinal"}: real-space <S_i.S_j>, <SxSx>, <SzSz> matrices
+      point_names, special_points:  names of special_bz_points and array (n_points, 5): kx ky S_total S_xx S_zz
+      ks, S_xx, S_zz: full-grid structure factors (only if save_full_grid; n1, n2 are the grid resolution)
+      reference_site, vs_distance:  site i0 (default: closest to the lattice center) and array (n_sites, 5):
+                      site, distance from i0, <S_i0.S_j>, <SxSx>, <SzSz>, sorted by distance
+    """
+    components = ("total", "xx", "longitudinal")
+    corrs = CalculateSpinSpinCorrelationComponents(psi, lattice)
+    corrs = {name: np.real_if_close(corrs[name], tol=1e6) for name in components}
+
+    point_names = list(special_bz_points.keys())
+    special_points = np.zeros((len(point_names), 5))
+    for ind_point, point_name in enumerate(point_names):
+        k = special_bz_points[point_name]
+        sf = [structure_factor(corrs[name], lattice, k) for name in components]
+        special_points[ind_point] = [k[0], k[1], *sf]
+    output = {"corr": corrs, "point_names": point_names, "special_points": special_points}
+
+    if save_full_grid:
+        for name, key in (("xx", "S_xx"), ("longitudinal", "S_zz")):
+            ks, output[key] = ComputeMomentumSpaceStructureFactor(corrs[name], lattice, n1=n1, n2=n2)
+        output["ks"] = ks
+
+    n_sites = corrs["total"].shape[0]
+    ref = _reference_site_index(lattice, n_sites) if i0 is None else i0
+    positions = _site_positions(lattice, n_sites)
+    distances = np.linalg.norm(positions - positions[ref], axis=1)
+    order = np.argsort(distances, kind="stable")
+    output["reference_site"] = ref
+    output["vs_distance"] = np.column_stack([order, distances[order], corrs["total"][ref, order],
+                                             corrs["xx"][ref, order], corrs["longitudinal"][ref, order]])
+    return output
+
+
+def SaveSpinComponentsOutput(results_dir, output):
+    """Save the SpinComponentsOutput of a run in results_dir."""
+    from pathlib import Path
+    results_dir = Path(results_dir)
+    np.savetxt(results_dir / "spin_corr_xx_x.csv", output["corr"]["xx"])
+    np.savetxt(results_dir / "spin_corr_zz_x.csv", output["corr"]["longitudinal"])
+    np.savetxt(results_dir / "spin_components_structure_factor.csv", output["special_points"],
+               header="kx ky S_total S_xx S_zz; point_names=" + ",".join(output["point_names"]))
+    if "ks" in output:
+        for key, fname in (("S_xx", "ks_xx.csv"), ("S_zz", "ks_zz.csv")):
+            np.savetxt(results_dir / fname, np.column_stack([output["ks"], output[key]]), header="kx ky S(k)")
+    np.savetxt(results_dir / "spin_components_vs_distance.csv", output["vs_distance"],
+               header=f"reference_site={output['reference_site']}; columns: site distance S_total S_xx S_zz")
+
+
 def testConeStateChirality():
     import numpy as np
     import matplotlib.pyplot as plt

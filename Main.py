@@ -28,7 +28,7 @@ import threading
 import time
 from WaveFunctionProperties import (plot_scalar_spin_chirality, compute_structure_factor_grid,
                                     plot_structure_factor, structure_factor, ComputeMomentumSpaceStructureFactor,
-                                    CalculateSpinSpinCorrelations)
+                                    CalculateSpinSpinCorrelations, SpinComponentsOutput, SaveSpinComponentsOutput)
 
 setup_logging(to_stdout="INFO")
 if not local:
@@ -608,7 +608,9 @@ def calculateGutzwillerEnergyTriangularJ1J2(gutz_results_dir, Lx, Ly, chi, flux,
 
 
 def SaveSimulationOutput(results_dir, spin_corr_x, ks, spin_corr_k, fig_corr_k, fig_lat,
-                         special_points_structure_factor=None, lattice=None):
+                         special_points_structure_factor=None, lattice=None, spin_components_output=None):
+    if spin_components_output is not None:
+        SaveSpinComponentsOutput(results_dir, spin_components_output)
     np.savetxt(results_dir + "spin_corr_x.csv", spin_corr_x)
     np.savetxt(results_dir + "spin_corr_k.csv", spin_corr_k)
     np.savetxt(results_dir + "ks.csv", ks)
@@ -709,16 +711,18 @@ def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, conserve=True, initial_state="Random"
     with open(results_dir + 'psi_gs' + ".pkl", 'wb') as f:
         pickle.dump(psi, f)
 
-    sites1, sites2 = None, None
     lat_for_corr = triangular_lat
     if bc_MPS == "infinite":
         Lx_large = LxInfiniteMPSCorrelations(Lx, Ly)
-        sites1 = np.arange(0, Ly * Lx_large)
-        sites2 = np.arange(0, Ly * Lx_large)
         lat_for_corr = BuildTriangularLattice(Lx_large, Ly, site, bc_MPS, bc=bc, geometry=geometry)
 
-    spin_corr_x = CalculateSpinSpinCorrelations(psi, sites1, sites2)
-    ks, spin_corr_k = ComputeMomentumSpaceStructureFactor(spin_corr_x, lat_for_corr, assert_realness=False)
+    # the total, transverse (xx) and longitudinal (zz) correlations and structure factors; all structure factors
+    # are on the same, doubled-resolution k grid
+    n1, n2 = 2 * lat_for_corr.Ls[0], 2 * lat_for_corr.Ls[1]
+    spin_components_output = SpinComponentsOutput(psi, lat_for_corr, getSpecielBzPoints(), n1=n1, n2=n2)
+    spin_corr_x = spin_components_output["corr"]["total"]
+    ks, spin_corr_k = ComputeMomentumSpaceStructureFactor(spin_corr_x, lat_for_corr, assert_realness=False,
+                                                          n1=n1, n2=n2)
 
     fig_corr, ax_corr = plt.subplots(figsize=(6, 5))
     plot_structure_factor(ks, spin_corr_k, triangular_lat, ax_corr)
@@ -726,10 +730,11 @@ def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, conserve=True, initial_state="Random"
     YC_lat = BuildTriangularLattice(1, 1, SpinHalfSite(None), "finite", ("open", "open"), "YC")
     YC_lat.plot_brillouin_zone(ax_corr)
 
-    special_points_structure_factor = calculateStructureFactorAtSpecialPoints(triangular_lat, spin_corr_x)
+    special_points_structure_factor = calculateStructureFactorAtSpecialPoints(lat_for_corr, spin_corr_x)
 
     SaveSimulationOutput(results_dir, spin_corr_x, ks, spin_corr_k, fig_corr, fig_lat,
-                         special_points_structure_factor=special_points_structure_factor, lattice=lat_for_corr)
+                         special_points_structure_factor=special_points_structure_factor, lattice=lat_for_corr,
+                         spin_components_output=spin_components_output)
 
 
 def ExplicitMPSNorm(mps):

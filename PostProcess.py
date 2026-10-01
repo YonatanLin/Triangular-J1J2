@@ -115,34 +115,14 @@ def CalculateSpecialPointsStructureFactor(results_dir):
     )
 
 
-def _reference_site_index(lattice, n_sites):
-    """MPS index of the site closest to the geometric center of the first n_sites sites."""
-    positions = _site_positions(lattice, n_sites)
-    return int(np.argmin(np.linalg.norm(positions - positions.mean(axis=0), axis=1)))
-
-
-def _site_positions(lattice, n_sites):
-    return np.array([lattice.position(lattice.mps2lat_idx(i)) for i in range(n_sites)])
-
-
 def CalculateSpinComponentsStructureFactor(results_dir, psi_filename="psi_gs.pkl", i0=None,
                                            save_full_grid=True, n1=None, n2=None):
     """
-    Calculate the transverse (<SxSx> = 1/4(<S+S-> + <S-S+>), using U(1) symmetry) and longitudinal (<SzSz>)
-    spin correlations of results_dir, and their structure factors, as in Fig. 7 of Gallegos et al.,
-    PRL 134, 196702 (2025).
-
-    Saves in results_dir: spin_corr_{xx,zz}_x.csv (real-space matrices), spin_components_structure_factor.csv
-    (special BZ points), spin_components_vs_distance.csv (<S_i0.S_j>, <SxSx>, <SzSz> vs distance from site i0;
-    default i0 = site closest to the lattice center) and optionally the full-grid S(q) of each component.
+    Calculate the transverse (<SxSx>) and longitudinal (<SzSz>) spin correlations of results_dir and their structure
+    factors (see WaveFunctionProperties.SpinComponentsOutput) and save them in results_dir.
     """
     from Main import getSpecielBzPoints
-    from WaveFunctionProperties import (CalculateSpinSpinCorrelationComponents, structure_factor,
-                                        ComputeMomentumSpaceStructureFactor)
-
-    special_bz_points = getSpecielBzPoints()
-    point_names = list(special_bz_points.keys())
-    components = ("total", "xx", "longitudinal")
+    from WaveFunctionProperties import SpinComponentsOutput, SaveSpinComponentsOutput
 
     print(results_dir)
     psi_path = _result_file_path(results_dir, psi_filename)
@@ -152,38 +132,14 @@ def CalculateSpinComponentsStructureFactor(results_dir, psi_filename="psi_gs.pkl
     with open(lattice_path, "rb") as f:
         lattice = pickle.load(f)
 
-    corrs = CalculateSpinSpinCorrelationComponents(psi, lattice)
-    corrs = {name: np.real_if_close(corrs[name], tol=1e6) for name in components}
-    for name, fname in (("xx", "spin_corr_xx_x.csv"), ("longitudinal", "spin_corr_zz_x.csv")):
-        np.savetxt(_result_file_path(results_dir, fname, assert_exist=False), corrs[name])
-
-    # structure factor at the special BZ points
-    points_data = np.zeros((len(point_names), 5))
-    for ind_point, point_name in enumerate(point_names):
-        k = special_bz_points[point_name]
-        sf = [structure_factor(corrs[name], lattice, k) for name in components]
-        points_data[ind_point] = [k[0], k[1], *sf]
-        print(f"{point_name}: total={sf[0]}, xx={sf[1]}, zz={sf[2]}")
-    np.savetxt(_result_file_path(results_dir, SPIN_COMPONENTS_FILE, assert_exist=False),
-               points_data, header="kx ky S_total S_xx S_zz; point_names=" + ",".join(point_names))
-
-    # full-grid structure factors
-    if save_full_grid:
-        for name, fname in (("xx", "ks_xx.csv"), ("longitudinal", "ks_zz.csv")):
-            ks, Sk = ComputeMomentumSpaceStructureFactor(corrs[name], lattice, n1=n1, n2=n2)
-            np.savetxt(_result_file_path(results_dir, fname, assert_exist=False),
-                       np.column_stack([ks, Sk]), header="kx ky S(k)")
-
-    # real-space correlations vs distance from the reference site (Fig. 7(b))
-    n_sites = corrs["total"].shape[0]
-    ref = _reference_site_index(lattice, n_sites) if i0 is None else i0
-    positions = _site_positions(lattice, n_sites)
-    distances = np.linalg.norm(positions - positions[ref], axis=1)
-    order = np.argsort(distances, kind="stable")
-    vs_distance = np.column_stack([order, distances[order], corrs["total"][ref, order],
-                                   corrs["xx"][ref, order], corrs["longitudinal"][ref, order]])
-    np.savetxt(_result_file_path(results_dir, "spin_components_vs_distance.csv", assert_exist=False),
-               vs_distance, header=f"reference_site={ref}; columns: site distance S_total S_xx S_zz")
+    # default k-grid resolution: the same as the DMRG run (Main.TriangularJ1J2DMRG)
+    n1 = 2 * lattice.Ls[0] if n1 is None else n1
+    n2 = 2 * lattice.Ls[1] if n2 is None else n2
+    output = SpinComponentsOutput(psi, lattice, getSpecielBzPoints(), i0=i0, save_full_grid=save_full_grid,
+                                  n1=n1, n2=n2)
+    for point_name, row in zip(output["point_names"], output["special_points"]):
+        print(f"{point_name}: total={row[2]}, xx={row[3]}, zz={row[4]}")
+    SaveSpinComponentsOutput(results_dir, output)
 
 
 # ----------------------------------------------------------------------

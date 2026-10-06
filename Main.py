@@ -67,7 +67,8 @@ def ChangeChiInDMRGParams(dmrg_params, chi_max):
 
 
 def CreateGutzwillerCaseDir(main_results_dir, Lx, Ly, chi_max, flux, geometry, bc_MPS,
-                            gs_manifold_index, model_type, norm_magz, monopole_Q, svd_min=None):
+                            gs_manifold_index, model_type, norm_magz, monopole_Q, svd_min=None,
+                            jastrow_nn_zz=0.0, jastrow_chi_max=None):
     Path(main_results_dir).mkdir(parents=True, exist_ok=True)
     case_name = f"{bc_MPS}_Lx_{Lx}_Ly_{Ly}_chi_{chi_max}_flux_{flux}_{geometry}_gsindex_{gs_manifold_index}"
 
@@ -80,6 +81,10 @@ def CreateGutzwillerCaseDir(main_results_dir, Lx, Ly, chi_max, flux, geometry, b
         case_name += f"_monQ_{monopole_Q}"
     if svd_min is not None and str(svd_min) != "None":
         case_name += f"_svdmin_{svd_min}"
+    if float(jastrow_nn_zz) != 0.0:
+        case_name += f"_jasNNzz_{float(jastrow_nn_zz)}"
+        if jastrow_chi_max is not None and str(jastrow_chi_max) != "None":
+            case_name += f"_jaschi_{jastrow_chi_max}"
 
     case_name += "/"
     gutz_dir = main_results_dir + case_name
@@ -463,13 +468,15 @@ def BuildTriangularLattice(Lx, Ly, site, bc_MPS, bc = ('periodic', 'periodic'), 
     else:
         raise ValueError("unrecognized geometry")
 
-def LxInfiniteMPSCorrelations(Lx, Ly):
-    return Lx * max(1, Ly//Lx) # integer multiple of the unitcell, taking Lx_large, Ly to be close
+def LxInfiniteMPSCorrelations(Lx, Ly, geometry):
+    assert(geometry == "YC" or geometry == "XC")
+    geometry_factor = 1 if (geometry == "YC") else 2
+    return geometry_factor * Lx * max(1, Ly//Lx) # integer multiple of the unitcell, taking Lx_large, Ly to be close
 
 def BuildSpinTriangularLatticeWrap(Lx, Ly, bc_MPS, conserve, bc, geometry):
     Lx_correlations = Lx
     if bc_MPS == "infinite":
-        Lx_correlations = LxInfiniteMPSCorrelations(Lx, Ly)
+        Lx_correlations = LxInfiniteMPSCorrelations(Lx, Ly, geometry)
     site = SpinHalfSite(conserve=conserve)
     return BuildTriangularLattice(Lx_correlations, Ly, site, bc_MPS, bc=bc, geometry=geometry)
 
@@ -713,7 +720,7 @@ def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, conserve=True, initial_state="Random"
 
     lat_for_corr = triangular_lat
     if bc_MPS == "infinite":
-        Lx_large = LxInfiniteMPSCorrelations(Lx, Ly)
+        Lx_large = LxInfiniteMPSCorrelations(Lx, Ly, geometry)
         lat_for_corr = BuildTriangularLattice(Lx_large, Ly, site, bc_MPS, bc=bc, geometry=geometry)
 
     # the total, transverse (xx) and longitudinal (zz) correlations and structure factors; all structure factors
@@ -1243,36 +1250,35 @@ def AnalyzeMagnetizedJ1J2Correlations(results_dir, n_sites_cases, postprocess_di
 
 
 if __name__ == "__main__":
-    magz1_dir = glob_results_dir + \
-               "PostProcess/StructureFactorScaling_Gutzwiller_MonQ3_Magz2_special_points_structure_factor/"
-    magz2_dir = glob_results_dir + \
-               "PostProcess/StructureFactor_Lx12_Ly6_infinite_magz2_special_points_structure_factor/"
-    Ly = 6
-    ns = Ly * np.array([12, 14, 16, 18])
+    #magz1_dir = glob_results_dir + \
+    #           "PostProcess/StructureFactorScaling_Gutzwiller_MonQ3_Magz2_special_points_structure_factor/"
+    #magz2_dir = glob_results_dir + \
+    #           "PostProcess/StructureFactor_Lx12_Ly6_infinite_magz2_special_points_structure_factor/"
+    #Ly = 6
+    #ns = Ly * np.array([12, 14, 16, 18])
     #AnalyzeMagnetizedJ1J2Correlations(magz1_dir, ns)
     #AnalyzeMagnetizedJ1J2Correlations(magz2_dir, ns)
     #plt.show()
 
+    TriangularJ1J2DMRG(8, 4, ("open", "periodic"), "finite", J2=0.1, chi_max=400, max_sweeps=15,
+                       Delz=1.5)
+    # norm_magz_third_dir = glob_results_dir + \
+    #                       "PiFluxGutzwiller_8_28/Dirac_finite_Lx_#_Ly_6_chi_8000_flux_0.0_YC_gsindex_0_magz_0.3330_monQ_#_svdmin_0.002/"
+    # AnalyzeMagnetizedJ1J2Correlations(norm_magz_third_dir, ns, postprocess_dir=False, Ly=Ly,
+    #                                   monQs=(ns / Ly).astype(int))
+    # norm_magz_third_dir = glob_results_dir + \
+    #                       "PiFluxGutzwiller_8_28/Dirac_finite_Lx_#_Ly_6_chi_10000_flux_0.0_YC_gsindex_0_magz_0.3330_monQ_#_svdmin_0.0005/"
+    # AnalyzeMagnetizedJ1J2Correlations(norm_magz_third_dir, ns, postprocess_dir=False, Ly=Ly,
+    #                                   monQs=(ns / Ly).astype(int))
+    #
+    # plt.show()
+    # exit(0)
 
-    #TriangularJ1J2DMRG(8, 3, ("open", "periodic"), "finite", J2=0.0, chi_max=400, max_sweeps=15,
-    #                   Delz=2.0)
-    norm_magz_third_dir = glob_results_dir + \
-               "PiFluxGutzwiller_8_28/Dirac_finite_Lx_#_Ly_6_chi_8000_flux_0.0_YC_gsindex_0_magz_0.3330_monQ_#_svdmin_0.002/"
-    AnalyzeMagnetizedJ1J2Correlations(norm_magz_third_dir, ns, postprocess_dir=False, Ly=Ly,
-                                      monQs=(ns/Ly).astype(int))
-    norm_magz_third_dir = glob_results_dir + \
-                          "PiFluxGutzwiller_8_28/Dirac_finite_Lx_#_Ly_6_chi_10000_flux_0.0_YC_gsindex_0_magz_0.3330_monQ_#_svdmin_0.0005/"
-    AnalyzeMagnetizedJ1J2Correlations(norm_magz_third_dir, ns, postprocess_dir=False, Ly=Ly,
-                                      monQs=(ns/Ly).astype(int))
+    #output_dir = "C:/Users/yonli/Desktop/Thesis/Triangular J1J2/Meetings/4_5_2026/"
+    #monopole_dir = glob_results_dir + "MonopoleCondensateGutzwiller/"
 
-    plt.show()
-    exit(0)
-
-    output_dir = "C:/Users/yonli/Desktop/Thesis/Triangular J1J2/Meetings/4_5_2026/"
-    monopole_dir = glob_results_dir + "MonopoleCondensateGutzwiller/"
-
-    gutzwiller_dir = "C:/Users/yonli/Desktop/Thesis/Triangular J1J2/Code/MonopoleCondensateGutzwiller/" + \
-                      "Dirac_finite_Lx_6_Ly_6_chi_2000_flux_0.0_YC_gsindex_0_magz_0.333_monQ_6/"
+    #gutzwiller_dir = "C:/Users/yonli/Desktop/Thesis/Triangular J1J2/Code/MonopoleCondensateGutzwiller/" + \
+    #                  "Dirac_finite_Lx_6_Ly_6_chi_2000_flux_0.0_YC_gsindex_0_magz_0.333_monQ_6/"
 
     #ComputeCorrelationsFromMPSFile(gutzwiller_dir, 6, 6, ("open", "periodic"),
     #                               psi_fname="psi_gutzwiller.pkl", plot_mode="voronoi",

@@ -1019,24 +1019,79 @@ def NearestNeighborMPSBonds(lat):
     return sorted(bonds)
 
 
-def GroupBondsIntoMPOLayers(bonds, L, finite):
+def GroupBondsIntoMPOLayers(bonds, L, finite, site_disjoint=False):
     """
         Greedily groups two-site gates into layers whose identity strings cross disjoint sets of MPS cuts
-        (cut c sits between sites c and c+1, mod L for infinite MPS), so every layer is a bond dimension 2 MPO.
+        (cut c sits between sites c and c+1, mod L for infinite MPS), so every layer is an MPO whose bond dimension
+        is the operator rank of a single gate.
+        site_disjoint: also forbid two gates of a layer (including unit cell translates) from sharing a site, so the
+        gates of a layer commute even if gates on overlapping bonds don't.
     """
-    layers = []  # [(bonds, occupied cuts)]
+    layers = []  # [(bonds, occupied cuts, occupied sites)]
     for i, j in sorted(bonds):
         if not finite and j - i > L:
             raise ValueError(f"bond {(i, j)} is longer than the MPS unit cell L={L}, its translates overlap")
+        if site_disjoint and not finite and (j - i) % L == 0:
+            raise ValueError(f"bond {(i, j)} connects a site to its own translate, it can't be site disjoint")
         cuts = {c % L for c in range(i, j)}
-        for layer_bonds, occupied in layers:
-            if not (cuts & occupied):
+        sites = {i % L, j % L} if site_disjoint else set()
+        for layer_bonds, occupied_cuts, occupied_sites in layers:
+            if not (cuts & occupied_cuts) and not (sites & occupied_sites):
                 layer_bonds.append((i, j))
-                occupied |= cuts
+                occupied_cuts |= cuts
+                occupied_sites |= sites
                 break
         else:
-            layers.append(([(i, j)], cuts))
-    return [layer_bonds for layer_bonds, _ in layers]
+            layers.append(([(i, j)], cuts, sites))
+    return [layer_bonds for layer_bonds, _, _ in layers]
+
+
+def TwoSiteGateLayerMPO(sites, layer_bonds, bc, gate_start, gate_end):
+    """
+        Exact MPO of the product of the gate sum_a gate_start[a]_i gate_end[a]_j over (i,j) in layer_bonds (for
+        bc='infinite', also over all unit cell translates). gate_start and gate_end are lists of onsite npc operators;
+        channel a carries the charge of gate_start[a] across the cuts of the gate's identity string, so the MPO has
+        bond dimension len(gate_start) on the cuts crossed by a gate's string and 1 elsewhere.
+        A site that ends one gate and starts another gets gate_end[a] @ gate_start[b], i.e. the gate on its left acts
+        after the gate on its right; this ordering only matters for non-commuting gates.
+    """
+    L = len(sites)
+    site = sites[0]
+    chinfo = site.leg.chinfo
+    rank = len(gate_start)
+    Id = site.get_op("Id").to_ndarray()
+    start_ops = [op.to_ndarray() for op in gate_start]
+    end_ops = [op.to_ndarray() for op in gate_end]
+    string_leg = npc.LegCharge.from_qflat(chinfo, [op.qtotal for op in gate_start], qconj=+1)
+    trivial_leg = npc.LegCharge.from_trivial(1, chinfo, qconj=+1)
+
+    starts = {i % L for i, _ in layer_bonds}
+    ends = {j % L for _, j in layer_bonds}
+    occupied_cuts = {c % L for i, j in layer_bonds for c in range(i, j)}
+    dtype = np.result_type(*start_ops, *end_ops)
+
+    Ws = []
+    for k in range(L):
+        # for finite MPS cut L-1 is never occupied, so dL = 1 at k = 0
+        leg_L = string_leg if (k - 1) % L in occupied_cuts else trivial_leg
+        leg_R = string_leg if k in occupied_cuts else trivial_leg
+        dL, dR = leg_L.ind_len, leg_R.ind_len
+        W = np.zeros((dL, dR) + Id.shape, dtype=dtype)
+        if k in starts and k in ends:
+            for a in range(rank):
+                for b in range(rank):
+                    W[a, b] = end_ops[a] @ start_ops[b]
+        elif k in starts:
+            W[0, :] = start_ops
+        elif k in ends:
+            W[:, 0] = end_ops
+        else:  # inside a gate's string (dL = dR = rank) or untouched (dL = dR = 1)
+            for a in range(dL):
+                W[a, a] = Id
+        legs = [leg_L, leg_R.conj(), site.leg, site.leg.conj()]
+        Ws.append(npc.Array.from_ndarray(W, legs, labels=["wL", "wR", "p", "p*"]))
+
+    return MPO(sites, Ws, bc, IdL=0, IdR=0)
 
 
 def SzSzJastrowLayerMPO(sites, layer_bonds, bc, v):
@@ -1045,61 +1100,65 @@ def SzSzJastrowLayerMPO(sites, layer_bonds, bc, v):
         translates). Each gate is rank 2, exp(-v Sz_i Sz_j) = cosh(v/4) - sinh(v/4) (2Sz_i)(2Sz_j), so the MPO has
         bond dimension 2 on the cuts crossed by a gate's string and 1 elsewhere.
     """
-    L = len(sites)
     site = sites[0]
-    Id = site.get_op("Id").to_ndarray()
-    twoSz = 2 * site.get_op("Sz").to_ndarray()
-    gate_start = [np.cosh(v / 4) * Id, -np.sinh(v / 4) * twoSz]
+    Id = site.get_op("Id")
+    twoSz = 2 * site.get_op("Sz")
+    gate_start = [float(np.cosh(v / 4)) * Id, float(-np.sinh(v / 4)) * twoSz]
     gate_end = [Id, twoSz]
-
-    starts = {i % L for i, _ in layer_bonds}
-    ends = {j % L for _, j in layer_bonds}
-    occupied_cuts = {c % L for i, j in layer_bonds for c in range(i, j)}
-    chinfo = site.leg.chinfo
-
-    Ws = []
-    for k in range(L):
-        # for finite MPS cut L-1 is never occupied, so dL = 1 at k = 0
-        dL = 2 if (k - 1) % L in occupied_cuts else 1
-        dR = 2 if k in occupied_cuts else 1
-        W = np.zeros((dL, dR) + Id.shape, dtype=np.float64)
-        if k in starts and k in ends:
-            for a in range(2):
-                for b in range(2):
-                    W[a, b] = gate_end[a] @ gate_start[b]
-        elif k in starts:
-            W[0, :] = gate_start
-        elif k in ends:
-            W[:, 0] = gate_end
-        else:  # inside a gate's string (dL = dR = 2) or untouched (dL = dR = 1)
-            for a in range(dL):
-                W[a, a] = Id
-        legs = [npc.LegCharge.from_trivial(dL, chinfo, qconj=+1), npc.LegCharge.from_trivial(dR, chinfo, qconj=-1),
-                site.leg, site.leg.conj()]
-        Ws.append(npc.Array.from_ndarray(W, legs, labels=["wL", "wR", "p", "p*"]))
-
-    return MPO(sites, Ws, bc, IdL=0, IdR=0)
+    return TwoSiteGateLayerMPO(sites, layer_bonds, bc, gate_start, gate_end)
 
 
-def ApplyNNSzSzJastrow(psi, spin_lat, v, trunc_par):
+def XYJastrowLayerMPO(sites, layer_bonds, bc, v):
     """
-        psi -> exp(-v sum_<ij> Sz_i Sz_j) psi / norm, in place, with <ij> the nearest neighbors of `spin_lat`, whose
-        MPS ordering must match psi. v > 0 suppresses aligned neighbors.
-        The S^z terms commute, so the exponential is an exact product of two-site gates, applied in layers of
-        bond dimension 2 MPOs; the only approximation is truncating with trunc_par after each layer.
-        For infinite MPS, the canonical form is recomputed (transfer matrix) before truncating, since a
-        non-unitary gate applied in every unit cell breaks it everywhere.
-        Returns the accumulated TruncationError.
+        Exact MPO of prod_{(i,j) in layer_bonds} exp(-v (Sx_i Sx_j + Sy_i Sy_j)) (for bc='infinite', the product over
+        all unit cell translates). With Sx Sx + Sy Sy = (S+ S- + S- S+)/2, each gate is the rank 4, Sz conserving
+            cosh^2(v/4) - sinh^2(v/4) (2Sz_i)(2Sz_j) - sinh(v/2) (S+_i S-_j + S-_i S+_j),
+        so the MPO has bond dimension 4 on the cuts crossed by a gate's string and 1 elsewhere. The gates of
+        different bonds sharing a site don't commute, so layer_bonds should be site disjoint.
+    """
+    site = sites[0]
+    Id = site.get_op("Id")
+    twoSz = 2 * site.get_op("Sz")
+    Sp = site.get_op("Sp")
+    Sm = site.get_op("Sm")
+    # python floats: a numpy scalar on the left of an npc.Array would make numpy broadcast over it
+    a, b, c = float(np.cosh(v / 4) ** 2), float(-np.sinh(v / 4) ** 2), float(-np.sinh(v / 2))
+    gate_start = [a * Id, b * twoSz, c * Sp, c * Sm]
+    gate_end = [Id, twoSz, Sm, Sp]
+    return TwoSiteGateLayerMPO(sites, layer_bonds, bc, gate_start, gate_end)
+
+
+def StrangLayerSequence(n_layers, n_steps):
+    """
+        [(layer, weight)] of the second order Trotter (Strang) product of exp(-sum_l H_l) in n_steps steps of size
+        delta = 1/n_steps, in order of application to the state:
+            [L_0(delta/2) ... L_{n-2}(delta/2) L_{n-1}(delta) L_{n-2}(delta/2) ... L_0(delta/2)]^n_steps,
+        where weight is the coefficient of H_l in the exponent of L_l. Adjacent applications of the same layer are
+        merged (their exponents commute), so the weights of each layer sum to 1.
+    """
+    assert n_layers >= 1 and n_steps >= 1
+    delta = 1. / n_steps
+    step = ([(l, delta / 2) for l in range(n_layers - 1)] + [(n_layers - 1, delta)]
+            + [(l, delta / 2) for l in reversed(range(n_layers - 1))])
+    sequence = []
+    for layer, weight in step * n_steps:
+        if sequence and sequence[-1][0] == layer:
+            sequence[-1] = (layer, sequence[-1][1] + weight)
+        else:
+            sequence.append((layer, weight))
+    return sequence
+
+
+def ApplyMPOsWithTruncation(psi, mpos, trunc_par):
+    """
+        Applies the (non-unitary) MPOs to psi in order, in place, truncating with trunc_par after each one and keeping
+        psi normalized. For infinite MPS, the canonical form is recomputed (transfer matrix) before truncating, since
+        a non-unitary MPO breaks it everywhere. Returns the accumulated TruncationError.
     """
     trunc_err = TruncationError()
-    if v == 0:
-        return trunc_err
-    assert spin_lat.N_sites == psi.L and spin_lat.bc_MPS == psi.bc, "lattice doesn't match the MPS"
     trunc_par = asConfig(trunc_par, "truncation")  # parse once, not in every compress_svd
-
-    layers = GroupBondsIntoMPOLayers(NearestNeighborMPSBonds(spin_lat), psi.L, psi.finite)
-    for layer_bonds in layers:
-        SzSzJastrowLayerMPO(psi.sites, layer_bonds, psi.bc, v).apply_naively(psi)
+    for mpo in mpos:
+        mpo.apply_naively(psi)
         if not psi.finite:
             # the naive application leaves linearly dependent bond states; canonical_form_infinite2 alone stalls on
             # the resulting rank-deficient fixed point, infinite1 projects them out (at ~1e-7 precision in S) and
@@ -1115,14 +1174,60 @@ def ApplyNNSzSzJastrow(psi, spin_lat, v, trunc_par):
     return trunc_err
 
 
+def ApplyNNSzSzJastrow(psi, spin_lat, v, trunc_par):
+    """
+        psi -> exp(-v sum_<ij> Sz_i Sz_j) psi / norm, in place, with <ij> the nearest neighbors of `spin_lat`, whose
+        MPS ordering must match psi. v > 0 suppresses aligned neighbors.
+        The S^z terms commute, so the exponential is an exact product of two-site gates, applied in layers of
+        bond dimension 2 MPOs; the only approximation is truncating with trunc_par after each layer.
+        Returns the accumulated TruncationError.
+    """
+    if v == 0:
+        return TruncationError()
+    assert spin_lat.N_sites == psi.L and spin_lat.bc_MPS == psi.bc, "lattice doesn't match the MPS"
+
+    layers = GroupBondsIntoMPOLayers(NearestNeighborMPSBonds(spin_lat), psi.L, psi.finite)
+    mpos = (SzSzJastrowLayerMPO(psi.sites, layer_bonds, psi.bc, v) for layer_bonds in layers)
+    return ApplyMPOsWithTruncation(psi, mpos, trunc_par)
+
+
+def ApplyNNXYJastrow(psi, spin_lat, v, n_trotter, trunc_par):
+    """
+        psi -> exp(-v sum_<ij> (Sx_i Sx_j + Sy_i Sy_j)) psi / norm, in place, with <ij> the nearest neighbors of
+        `spin_lat`, whose MPS ordering must match psi. v > 0 suppresses in-plane aligned neighbors.
+        The bond terms on bonds sharing a site don't commute, so the bonds are grouped into site disjoint layers
+        (each an exact bond dimension 4 MPO) and the exponential is approximated by the second order Trotter
+        (Strang) product over the layers with n_trotter steps, with an error O(v^3 / n_trotter^2). Each gate
+        conserves Sz, and the Trotterized Jastrow factor stays real, symmetric and positive.
+        Returns the accumulated TruncationError.
+    """
+    if v == 0:
+        return TruncationError()
+    assert spin_lat.N_sites == psi.L and spin_lat.bc_MPS == psi.bc, "lattice doesn't match the MPS"
+
+    layers = GroupBondsIntoMPOLayers(NearestNeighborMPSBonds(spin_lat), psi.L, psi.finite, site_disjoint=True)
+    sequence = StrangLayerSequence(len(layers), n_trotter)
+    print(f"XY Jastrow: {len(layers)} layers, {len(sequence)} layer applications")
+    layer_mpos = {}
+    for key in set(sequence):
+        layer, weight = key
+        layer_mpos[key] = XYJastrowLayerMPO(psi.sites, layers[layer], psi.bc, weight * v)
+    return ApplyMPOsWithTruncation(psi, (layer_mpos[key] for key in sequence), trunc_par)
+
+
 def SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, geometry, bc_MPS, gs_manifold_index, model_type,
                                                          Lx=6, chi_max=3000, flux=0.0, norm_magz=0.0, monopole_Q=0,
                                                          iMPS_Lx_factor=Lx_short_factor_temfpy_iMPS,
-                                                         svd_min=None, jastrow_nn_zz=0.0, jastrow_chi_max=None):
+                                                         svd_min=None, jastrow_nn_zz=0.0, jastrow_chi_max=None,
+                                                         jastrow_nn_xy=0.0, jastrow_trotter_steps=4):
     """
         jastrow_nn_zz: v of the Jastrow factor exp(-v sum_<ij> Sz_i Sz_j) applied after the projection (0 = none).
-        jastrow_chi_max: bond dimension cap while applying it, defaults to chi_max.
+        jastrow_nn_xy: v of the Jastrow factor exp(-v sum_<ij> (Sx_i Sx_j + Sy_i Sy_j)) applied after the projection
+                       (0 = none), Trotterized with jastrow_trotter_steps second order steps. Only one of
+                       jastrow_nn_zz, jastrow_nn_xy may be nonzero.
+        jastrow_chi_max: bond dimension cap while applying the Jastrow factor, defaults to chi_max.
     """
+    assert jastrow_nn_zz == 0.0 or jastrow_nn_xy == 0.0, "only one of the zz and xy Jastrow factors is supported"
 
     print(f"norm_magz: {norm_magz}")
     site = FermionSite(conserve='N')
@@ -1137,7 +1242,8 @@ def SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, geometry, bc_MPS, g
     if local:
         results_dir = CreateGutzwillerCaseDir(gutzwiller_results_dir, Lx, Ly, chi_max, flux, geometry, bc_MPS,
                                               gs_manifold_index, model_type, norm_magz, monopole_Q, svd_min=svd_min,
-                                              jastrow_nn_zz=jastrow_nn_zz, jastrow_chi_max=jastrow_chi_max)
+                                              jastrow_nn_zz=jastrow_nn_zz, jastrow_chi_max=jastrow_chi_max,
+                                              jastrow_nn_xy=jastrow_nn_xy, jastrow_trotter_steps=jastrow_trotter_steps)
     else:
         results_dir = "./"
     assert((bc_MPS == "finite") or (bc_MPS == "infinite"))
@@ -1195,11 +1301,17 @@ def SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, geometry, bc_MPS, g
     bc = triangular_lat.boundary_conditions
     spin_lat = BuildTriangularLattice(Lx, Ly, spin_site, bc_MPS, bc=bc, geometry=geometry)
 
-    if jastrow_nn_zz != 0.0:
+    if jastrow_nn_zz != 0.0 or jastrow_nn_xy != 0.0:
         assert particle_hole, "Jastrow factor needs the spin MPS of the particle-hole projection"
         jastrow_trunc_par = {"chi_max": chi_max if jastrow_chi_max is None else jastrow_chi_max, "svd_min": svd_min}
-        jastrow_trunc_err = ApplyNNSzSzJastrow(psi_pi_flux, spin_lat, jastrow_nn_zz, jastrow_trunc_par)
-        print(f"Jastrow v={jastrow_nn_zz}: truncation error {jastrow_trunc_err.eps}, chi {max(psi_pi_flux.chi)}")
+        if jastrow_nn_zz != 0.0:
+            jastrow_trunc_err = ApplyNNSzSzJastrow(psi_pi_flux, spin_lat, jastrow_nn_zz, jastrow_trunc_par)
+            print(f"zz Jastrow v={jastrow_nn_zz}: truncation error {jastrow_trunc_err.eps}, chi {max(psi_pi_flux.chi)}")
+        else:
+            jastrow_trunc_err = ApplyNNXYJastrow(psi_pi_flux, spin_lat, jastrow_nn_xy, jastrow_trotter_steps,
+                                                 jastrow_trunc_par)
+            print(f"xy Jastrow v={jastrow_nn_xy}, {jastrow_trotter_steps} Trotter steps: truncation error "
+                  f"{jastrow_trunc_err.eps}, chi {max(psi_pi_flux.chi)}")
 
     with open(results_dir + 'psi_gutzwiller' + ".pkl", 'wb') as f:
         pickle.dump(psi_pi_flux, f)
@@ -1529,8 +1641,8 @@ def DebugMagnetizedIMPS():
 
 if __name__ == "__main__":
     SpinonTriangularLatticeMeanFieldGutzwillerProjection(6, "YC", "infinite", 0,
-                                                         model_type_dirac, Lx=2, chi_max=600, flux=0.0,
-                                                         norm_magz=0.0, monopole_Q=0, jastrow_nn_zz=0.5)
+                                                         model_type_dirac, Lx=2, chi_max=600, flux=1.0,
+                                                         norm_magz=0.0, monopole_Q=0, jastrow_nn_zz=0.0)
     exit(0)
 
     # TestFreeFermionsSpinCorrelations()

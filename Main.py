@@ -68,7 +68,7 @@ def ChangeChiInDMRGParams(dmrg_params, chi_max):
 
 def CreateGutzwillerCaseDir(main_results_dir, Lx, Ly, chi_max, flux, geometry, bc_MPS,
                             gs_manifold_index, model_type, norm_magz, monopole_Q, svd_min=None,
-                            jastrow_nn_zz=0.0, jastrow_chi_max=None):
+                            jastrow_nn_zz=0.0, jastrow_chi_max=None, jastrow_nn_xy=0.0, jastrow_trotter_steps=4):
     Path(main_results_dir).mkdir(parents=True, exist_ok=True)
     case_name = f"{bc_MPS}_Lx_{Lx}_Ly_{Ly}_chi_{chi_max}_flux_{flux}_{geometry}_gsindex_{gs_manifold_index}"
 
@@ -83,6 +83,9 @@ def CreateGutzwillerCaseDir(main_results_dir, Lx, Ly, chi_max, flux, geometry, b
         case_name += f"_svdmin_{svd_min}"
     if float(jastrow_nn_zz) != 0.0:
         case_name += f"_jasNNzz_{float(jastrow_nn_zz)}"
+    if float(jastrow_nn_xy) != 0.0:
+        case_name += f"_jasNNxy_{float(jastrow_nn_xy)}_jasN_{int(jastrow_trotter_steps)}"
+    if float(jastrow_nn_zz) != 0.0 or float(jastrow_nn_xy) != 0.0:
         if jastrow_chi_max is not None and str(jastrow_chi_max) != "None":
             case_name += f"_jaschi_{jastrow_chi_max}"
 
@@ -109,6 +112,8 @@ def CreateOverlapsCaseDir(main_results_dir, **kwargs):
     parameter_file = kwargs.get("parameter_file")
     jastrow_nn_zz = kwargs.get("jastrow_nn_zz")
     jastrow_chi_max = kwargs.get("jastrow_chi_max")
+    jastrow_nn_xy = kwargs.get("jastrow_nn_xy")
+    jastrow_trotter_steps = kwargs.get("jastrow_trotter_steps")
 
     Path(main_results_dir).mkdir(parents=True, exist_ok=True)
     geometry_case_dir = f"{bc_MPS}_Lx_{Lx}_Ly_{Ly}_{geometry}/"
@@ -127,6 +132,12 @@ def CreateOverlapsCaseDir(main_results_dir, **kwargs):
         fixed_params_dir += f"Delz_{Delz}_"
     if scanned_parameter_name != "jastrow_nn_zz" and jastrow_nn_zz is not None and float(jastrow_nn_zz) != 0.0:
         fixed_params_dir += f"jasNNzz_{float(jastrow_nn_zz)}_"
+    xy_jastrow = (scanned_parameter_name == "jastrow_nn_xy"
+                  or (jastrow_nn_xy is not None and float(jastrow_nn_xy) != 0.0))
+    if scanned_parameter_name != "jastrow_nn_xy" and xy_jastrow:
+        fixed_params_dir += f"jasNNxy_{float(jastrow_nn_xy)}_"
+    if xy_jastrow and jastrow_trotter_steps is not None:
+        fixed_params_dir += f"jasN_{int(jastrow_trotter_steps)}_"
     if jastrow_chi_max is not None and str(jastrow_chi_max) != "None":
         fixed_params_dir += f"jaschi_{jastrow_chi_max}_"
     hamiltonian_case_dir = (f"chiGutz_{gutz_chi_max}_flux_{gutz_flux}_monQ_{gutz_mon_Q}_"
@@ -597,11 +608,13 @@ def GenerateJ1J2SpinTriangularModel(J2, Delz, triangular_lat):
 
 def calculateGutzwillerEnergyTriangularJ1J2(gutz_results_dir, Lx, Ly, chi, flux, bc_MPS, J2, Delz, bc, geometry,
                                             gs_manifold_index, norm_magz, monopole_Q, reorder_lattice=False, model_type=None,
-                                            svd_min=None, jastrow_nn_zz=0.0, jastrow_chi_max=None):
+                                            svd_min=None, jastrow_nn_zz=0.0, jastrow_chi_max=None, jastrow_nn_xy=0.0,
+                                            jastrow_trotter_steps=4):
     psi_path = CreateGutzwillerCaseDir(gutz_results_dir, Lx, Ly, chi, flux, geometry,
                                        bc_MPS, gs_manifold_index, model_type, norm_magz, monopole_Q, svd_min=svd_min,
-                                       jastrow_nn_zz=jastrow_nn_zz,
-                                       jastrow_chi_max=jastrow_chi_max) + "/psi_gutzwiller.pkl"
+                                       jastrow_nn_zz=jastrow_nn_zz, jastrow_chi_max=jastrow_chi_max,
+                                       jastrow_nn_xy=jastrow_nn_xy,
+                                       jastrow_trotter_steps=jastrow_trotter_steps) + "/psi_gutzwiller.pkl"
 
     print(f"calculating energy for MPS in path {psi_path} with triangular J1J2 model for J2={J2}")
     site = SpinHalfSite(conserve="Sz")
@@ -877,19 +890,21 @@ def _parameter_plot_label(parameter_name):
         "J2": r"$J_2$",
         "Delz": r"$\Delta_z$",
         "jastrow_nn_zz": r"$v$",
+        "jastrow_nn_xy": r"$v_{xy}$",
     }
     return parameter_labels.get(parameter_name, parameter_name)
 
 
 # parameters which change the DMRG ground state vs. parameters which change the Gutzwiller wavefunction
 HAMILTONIAN_SCAN_PARAMS = {"J2", "Delz"}
-GUTZWILLER_SCAN_PARAMS = {"jastrow_nn_zz"}
+GUTZWILLER_SCAN_PARAMS = {"jastrow_nn_zz", "jastrow_nn_xy"}
 
 
 def GutzwillerDMRGOverlaps(scanned_parameter_name, scanned_parameter_values, gutz_parent_dir, Lx, Ly, gutz_chi_max,
                            gutz_flux, gutz_mon_Q, output_dir, dmrg_initial_state, dmrg_parent_dir, geometry, bc_MPS,
                            gutz_gs_manifold_index, dmrg_chi_max, dmrg_max_sweeps, dmrg_conserve, model_type, norm_magz,
-                           jastrow_nn_zz=0.0, jastrow_chi_max=None, **kwargs):
+                           jastrow_nn_zz=0.0, jastrow_chi_max=None, jastrow_nn_xy=0.0, jastrow_trotter_steps=4,
+                           **kwargs):
     if scanned_parameter_name not in HAMILTONIAN_SCAN_PARAMS | GUTZWILLER_SCAN_PARAMS:
         raise ValueError(f"Scanning {scanned_parameter_name} is not supported")
     gutzwiller_scan = scanned_parameter_name in GUTZWILLER_SCAN_PARAMS
@@ -909,7 +924,8 @@ def GutzwillerDMRGOverlaps(scanned_parameter_name, scanned_parameter_values, gut
     previous_dmrg_dir = None
     for parameter_value in scanned_parameter_values:
         hamiltonian_params = dict(kwargs)
-        gutz_params = {"jastrow_nn_zz": jastrow_nn_zz, "jastrow_chi_max": jastrow_chi_max}
+        gutz_params = {"jastrow_nn_zz": jastrow_nn_zz, "jastrow_chi_max": jastrow_chi_max,
+                       "jastrow_nn_xy": jastrow_nn_xy, "jastrow_trotter_steps": jastrow_trotter_steps}
         if gutzwiller_scan:
             gutz_params[scanned_parameter_name] = parameter_value
         else:

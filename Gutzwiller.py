@@ -6,8 +6,12 @@ from numpy.linalg import eigh
 import matplotlib.pyplot as plt
 
 import tenpy
+import tenpy.linalg.np_conserved as npc
 from tenpy import networks
+from tenpy.linalg.truncation import TruncationError
 from tenpy.models.model import CouplingMPOModel
+from tenpy.networks.mpo import MPO
+from tenpy.tools.params import asConfig
 from tenpy.networks.site import FermionSite, SpinHalfSite
 
 from temfpy import slater
@@ -17,7 +21,7 @@ from temfpy.utils import HT
 from TryingTemfpy import local
 from Noninteracting import PiFluxBandStructure
 from WaveFunctionProperties import (plot_structure_factor, ComputeMomentumSpaceStructureFactor,
-                                    CalculateSpinSpinCorrelations, plot_scalar_spin_chirality)
+                                    CalculateSpinSpinCorrelations, plot_scalar_spin_chirality, SpinComponentsOutput)
 from Main import (AbsMagzFromNormMagz, BuildTriangularLattice, TriangularXC, LxInfiniteMPSCorrelations,
                   CreateGutzwillerCaseDir, PlotLattice, PrintCouplings, ImshowMatrix, SaveSimulationOutput,
                   calculateStructureFactorAtSpecialPoints, getSpecielBzPoints, glob_results_dir, code_dir, meetings_dir,
@@ -26,6 +30,11 @@ from Main import (AbsMagzFromNormMagz, BuildTriangularLattice, TriangularXC, LxI
 svd_min_slater_default = 5e-7
 
 Lx_short_factor_temfpy_iMPS = 50
+
+# convergence tolerance of tenpy's canonical_form_infinite2 fixed point iteration (default 1e-15). The iteration
+# error has a floating point floor that grows with chi (~1e-15 at chi ~1000), so the default can be unreachable and
+# the loop then runs its 10^4 iterations; it otherwise converges within a few iterations, far below this tolerance
+iMPS_canonical_form_tol = 1e-12
 
 paulis = np.asarray([pauli_x, pauli_y, pauli_z])
 
@@ -992,12 +1001,129 @@ def RescaleMPSForGutzwiller(psi):
         psi._B[i] = Bi.scale_axis(1.5 * np.ones(physical_axis_shape), axis=1)
 
 
+def NearestNeighborMPSBonds(lat):
+    """
+        Nearest-neighbor bonds of `lat` as sorted MPS index pairs (i, j) with i < j.
+        For an infinite MPS each translation class of the MPS unit cell appears once, with 0 <= i < L and
+        j = i + range NOT reduced mod L (j >= L means the bond crosses into the next unit cell).
+    """
+    L = lat.N_sites
+    finite = (lat.bc_MPS == "finite")
+    bonds = set()
+    for u1, u2, dx in lat.pairs["nearest_neighbors"]:
+        mps_i, mps_j, _, _ = lat.possible_couplings(u1, u2, dx)
+        for i, j in zip(mps_i, mps_j):
+            i, j = sorted((int(i), int(j)))
+            shift = 0 if finite else (i // L) * L
+            bonds.add((i - shift, j - shift))
+    return sorted(bonds)
+
+
+def GroupBondsIntoMPOLayers(bonds, L, finite):
+    """
+        Greedily groups two-site gates into layers whose identity strings cross disjoint sets of MPS cuts
+        (cut c sits between sites c and c+1, mod L for infinite MPS), so every layer is a bond dimension 2 MPO.
+    """
+    layers = []  # [(bonds, occupied cuts)]
+    for i, j in sorted(bonds):
+        if not finite and j - i > L:
+            raise ValueError(f"bond {(i, j)} is longer than the MPS unit cell L={L}, its translates overlap")
+        cuts = {c % L for c in range(i, j)}
+        for layer_bonds, occupied in layers:
+            if not (cuts & occupied):
+                layer_bonds.append((i, j))
+                occupied |= cuts
+                break
+        else:
+            layers.append(([(i, j)], cuts))
+    return [layer_bonds for layer_bonds, _ in layers]
+
+
+def SzSzJastrowLayerMPO(sites, layer_bonds, bc, v):
+    """
+        Exact MPO of prod_{(i,j) in layer_bonds} exp(-v Sz_i Sz_j) (for bc='infinite', the product over all unit cell
+        translates). Each gate is rank 2, exp(-v Sz_i Sz_j) = cosh(v/4) - sinh(v/4) (2Sz_i)(2Sz_j), so the MPO has
+        bond dimension 2 on the cuts crossed by a gate's string and 1 elsewhere.
+    """
+    L = len(sites)
+    site = sites[0]
+    Id = site.get_op("Id").to_ndarray()
+    twoSz = 2 * site.get_op("Sz").to_ndarray()
+    gate_start = [np.cosh(v / 4) * Id, -np.sinh(v / 4) * twoSz]
+    gate_end = [Id, twoSz]
+
+    starts = {i % L for i, _ in layer_bonds}
+    ends = {j % L for _, j in layer_bonds}
+    occupied_cuts = {c % L for i, j in layer_bonds for c in range(i, j)}
+    chinfo = site.leg.chinfo
+
+    Ws = []
+    for k in range(L):
+        # for finite MPS cut L-1 is never occupied, so dL = 1 at k = 0
+        dL = 2 if (k - 1) % L in occupied_cuts else 1
+        dR = 2 if k in occupied_cuts else 1
+        W = np.zeros((dL, dR) + Id.shape, dtype=np.float64)
+        if k in starts and k in ends:
+            for a in range(2):
+                for b in range(2):
+                    W[a, b] = gate_end[a] @ gate_start[b]
+        elif k in starts:
+            W[0, :] = gate_start
+        elif k in ends:
+            W[:, 0] = gate_end
+        else:  # inside a gate's string (dL = dR = 2) or untouched (dL = dR = 1)
+            for a in range(dL):
+                W[a, a] = Id
+        legs = [npc.LegCharge.from_trivial(dL, chinfo, qconj=+1), npc.LegCharge.from_trivial(dR, chinfo, qconj=-1),
+                site.leg, site.leg.conj()]
+        Ws.append(npc.Array.from_ndarray(W, legs, labels=["wL", "wR", "p", "p*"]))
+
+    return MPO(sites, Ws, bc, IdL=0, IdR=0)
+
+
+def ApplyNNSzSzJastrow(psi, spin_lat, v, trunc_par):
+    """
+        psi -> exp(-v sum_<ij> Sz_i Sz_j) psi / norm, in place, with <ij> the nearest neighbors of `spin_lat`, whose
+        MPS ordering must match psi. v > 0 suppresses aligned neighbors.
+        The S^z terms commute, so the exponential is an exact product of two-site gates, applied in layers of
+        bond dimension 2 MPOs; the only approximation is truncating with trunc_par after each layer.
+        For infinite MPS, the canonical form is recomputed (transfer matrix) before truncating, since a
+        non-unitary gate applied in every unit cell breaks it everywhere.
+        Returns the accumulated TruncationError.
+    """
+    trunc_err = TruncationError()
+    if v == 0:
+        return trunc_err
+    assert spin_lat.N_sites == psi.L and spin_lat.bc_MPS == psi.bc, "lattice doesn't match the MPS"
+    trunc_par = asConfig(trunc_par, "truncation")  # parse once, not in every compress_svd
+
+    layers = GroupBondsIntoMPOLayers(NearestNeighborMPSBonds(spin_lat), psi.L, psi.finite)
+    for layer_bonds in layers:
+        SzSzJastrowLayerMPO(psi.sites, layer_bonds, psi.bc, v).apply_naively(psi)
+        if not psi.finite:
+            # the naive application leaves linearly dependent bond states; canonical_form_infinite2 alone stalls on
+            # the resulting rank-deficient fixed point, infinite1 projects them out (at ~1e-7 precision in S) and
+            # infinite2 then restores machine precision
+            psi.canonical_form_infinite1()
+            psi.canonical_form_infinite2(tol=iMPS_canonical_form_tol)
+        trunc_err += psi.compress_svd(trunc_par)
+        psi.norm = 1.
+    if psi.finite:
+        psi.canonical_form()
+    else:
+        psi.canonical_form_infinite2(tol=iMPS_canonical_form_tol)
+    return trunc_err
+
+
 def SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, geometry, bc_MPS, gs_manifold_index, model_type,
                                                          Lx=6, chi_max=3000, flux=0.0, norm_magz=0.0, monopole_Q=0,
-                                                         show_transverse_correlations=False,
                                                          iMPS_Lx_factor=Lx_short_factor_temfpy_iMPS,
-                                                         svd_min=None):
-    
+                                                         svd_min=None, jastrow_nn_zz=0.0, jastrow_chi_max=None):
+    """
+        jastrow_nn_zz: v of the Jastrow factor exp(-v sum_<ij> Sz_i Sz_j) applied after the projection (0 = none).
+        jastrow_chi_max: bond dimension cap while applying it, defaults to chi_max.
+    """
+
     print(f"norm_magz: {norm_magz}")
     site = FermionSite(conserve='N')
     spin_site = SpinHalfSite(conserve='Sz')
@@ -1010,7 +1136,8 @@ def SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, geometry, bc_MPS, g
     debug = False
     if local:
         results_dir = CreateGutzwillerCaseDir(gutzwiller_results_dir, Lx, Ly, chi_max, flux, geometry, bc_MPS,
-                                              gs_manifold_index, model_type, norm_magz, monopole_Q, svd_min=svd_min)
+                                              gs_manifold_index, model_type, norm_magz, monopole_Q, svd_min=svd_min,
+                                              jastrow_nn_zz=jastrow_nn_zz, jastrow_chi_max=jastrow_chi_max)
     else:
         results_dir = "./"
     assert((bc_MPS == "finite") or (bc_MPS == "infinite"))
@@ -1062,30 +1189,41 @@ def SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, geometry, bc_MPS, g
         assert(finite)
         gutz.abrikosov(psi_pi_flux, inplace=True)
 
+    # the spin lattice of the projected MPS: same geometry and bc as the fermion lattice, grouping its (up, down)
+    # site pairs gives this ordering
+    Lx, Ly = triangular_lat.Ls
+    bc = triangular_lat.boundary_conditions
+    spin_lat = BuildTriangularLattice(Lx, Ly, spin_site, bc_MPS, bc=bc, geometry=geometry)
+
+    if jastrow_nn_zz != 0.0:
+        assert particle_hole, "Jastrow factor needs the spin MPS of the particle-hole projection"
+        jastrow_trunc_par = {"chi_max": chi_max if jastrow_chi_max is None else jastrow_chi_max, "svd_min": svd_min}
+        jastrow_trunc_err = ApplyNNSzSzJastrow(psi_pi_flux, spin_lat, jastrow_nn_zz, jastrow_trunc_par)
+        print(f"Jastrow v={jastrow_nn_zz}: truncation error {jastrow_trunc_err.eps}, chi {max(psi_pi_flux.chi)}")
+
     with open(results_dir + 'psi_gutzwiller' + ".pkl", 'wb') as f:
         pickle.dump(psi_pi_flux, f)
 
     assert(abs(psi_pi_flux.overlap(psi_pi_flux) - 1.0) < 1e-7)
 
-    Lx, Ly = triangular_lat.Ls
-    Lx_for_corr = Lx if finite else LxInfiniteMPSCorrelations(Lx, Ly, geometry)
-    Ly_for_corr = Ly
-    Nsites_for_iMPS_corr = Lx_for_corr * Ly_for_corr * (unitcell_width // flavors)
     if not particle_hole:
         return
-    if finite:
-        spin_corr_x = CalculateSpinSpinCorrelations(psi_pi_flux, transverse_correlations=show_transverse_correlations)
-    else:
-        spin_corr_x = CalculateSpinSpinCorrelations(psi_pi_flux, np.arange(0, Nsites_for_iMPS_corr),
-                                                    np.arange(0, Nsites_for_iMPS_corr),
-                                                    transverse_correlations=show_transverse_correlations)
 
-    spin_lat = BuildTriangularLattice(Lx_for_corr, Ly_for_corr, spin_site, bc_MPS, geometry=geometry)
+    # correlations and their saving as in TriangularJ1J2DMRG (Main.py)
+    lat_for_corr = spin_lat
+    if not finite:
+        Lx_large = LxInfiniteMPSCorrelations(Lx, Ly, geometry)
+        lat_for_corr = BuildTriangularLattice(Lx_large, Ly, spin_site, bc_MPS, bc=bc, geometry=geometry)
     fig_lat, ax_lat = plt.subplots(figsize=(6, 5))
-    PlotLattice(spin_lat, ax_lat)
+    PlotLattice(lat_for_corr, ax_lat)
 
-    n1, n2 = 2 * spin_lat.Ls[0], 2 * spin_lat.Ls[1]
-    ks, spin_corr_k = ComputeMomentumSpaceStructureFactor(spin_corr_x, spin_lat, n1=n1, n2=n2)
+    # the total, transverse (xx) and longitudinal (zz) correlations and structure factors; all structure factors
+    # are on the same, doubled-resolution k grid
+    n1, n2 = 2 * lat_for_corr.Ls[0], 2 * lat_for_corr.Ls[1]
+    spin_components_output = SpinComponentsOutput(psi_pi_flux, lat_for_corr, getSpecielBzPoints(), n1=n1, n2=n2)
+    spin_corr_x = spin_components_output["corr"]["total"]
+    ks, spin_corr_k = ComputeMomentumSpaceStructureFactor(spin_corr_x, lat_for_corr, assert_realness=False,
+                                                          n1=n1, n2=n2)
 
     fig_corr_k, ax_corr_k = plt.subplots(figsize=(6, 5))
     plot_structure_factor(ks, spin_corr_k, triangular_lat, ax_corr_k, mode='voronoi')
@@ -1093,10 +1231,11 @@ def SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, geometry, bc_MPS, g
     YC_triangular_lat.plot_brillouin_zone(ax_corr_k)
     ax_corr_k.set_title("Spin Correlations")
 
-    special_points_structure_factor = calculateStructureFactorAtSpecialPoints(spin_lat, spin_corr_x)
+    special_points_structure_factor = calculateStructureFactorAtSpecialPoints(lat_for_corr, spin_corr_x)
 
     SaveSimulationOutput(results_dir, spin_corr_x, ks, spin_corr_k, fig_corr_k, fig_lat,
-                         special_points_structure_factor=special_points_structure_factor, lattice=spin_lat)
+                         special_points_structure_factor=special_points_structure_factor, lattice=lat_for_corr,
+                         spin_components_output=spin_components_output)
 
 
 def TryMonopoleModelHofstadter(output_dir, Lx, Ly, plot=True,
@@ -1389,15 +1528,15 @@ def DebugMagnetizedIMPS():
 
 
 if __name__ == "__main__":
-    #SpinonTriangularLatticeMeanFieldGutzwillerProjection(6, "YC", "infinite", 0, model_type_dirac,
-    #                                                     Lx=12, chi_max=100, flux=0.001, norm_magz=0.0277,
-    #                                                     monopole_Q=0, show_transverse_correlations=True)
-    #exit(0)
+    SpinonTriangularLatticeMeanFieldGutzwillerProjection(6, "YC", "infinite", 0,
+                                                         model_type_dirac, Lx=2, chi_max=600, flux=0.0,
+                                                         norm_magz=0.0, monopole_Q=0, jastrow_nn_zz=0.5)
+    exit(0)
 
     # TestFreeFermionsSpinCorrelations()
     # checkXC8SlaterCorrelations()
-    checkPiFluxFreeSpinCorrelations()
-    exit(0)
+    # checkPiFluxFreeSpinCorrelations()
+    # exit(0)
 
     # DebugMagnetizedIMPS()
 
@@ -1446,8 +1585,7 @@ if __name__ == "__main__":
     bc_MPS = "infinite"
     SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, "YC", bc_MPS, 0, model_type_dirac,
                                                          Lx=Lx, chi_max=chi_max, flux=flux, norm_magz=norm_magz,
-                                                         monopole_Q=monopole_Q, show_transverse_correlations=True,
-                                                         iMPS_Lx_factor=iMPS_Lx_factor)
+                                                         monopole_Q=monopole_Q, iMPS_Lx_factor=iMPS_Lx_factor)
     #####################
     # i = 1
     #for i in range(4):

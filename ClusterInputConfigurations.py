@@ -66,7 +66,9 @@ gutzwiller_input_params = [
     ("model_type", optional_str),
     ("norm_magz", float),
     ("monopole_Q", int),
-    ("svd_min", optional_float)
+    ("svd_min", optional_float),
+    ("jastrow_nn_zz", float, 0.0),
+    ("jastrow_chi_max", optional_int, None)
 ]
 
 afm_dispersion_input_params = [
@@ -117,7 +119,11 @@ def CreateTriangularCaseDirFromInputFile(main_results_dir, input_file, input_par
         input_file_lines = file.readlines()
     params_names = input_file_lines[0].strip().split(" ")
     expected_params = [input_param_name(param_data) for param_data in input_params]
-    assert (params_names == expected_params), f"Bad input header: got {params_names}, expected {expected_params}"
+    # params with a default may be left out of the header (e.g. input files from before they were added)
+    expected_params_in_header = [input_param_name(param) for param in input_params
+                                 if len(param) <= 2 or input_param_name(param) in params_names]
+    assert (params_names == expected_params_in_header), \
+        f"Bad input header: got {params_names}, expected {expected_params} (params with defaults are optional)"
 
     input_for_condor = open(condor_cases_filename, 'w')
     for line in input_file_lines[1:]:
@@ -127,8 +133,8 @@ def CreateTriangularCaseDirFromInputFile(main_results_dir, input_file, input_par
         assert(n_tokens == expected_n_tokens), f"line has {n_tokens} tokens, expected {expected_n_tokens} tokens"
         
         parsed_params = dict(zip(params_names, params))
-        kwargs = {input_param_name(param): parsed_params[input_param_name(param)] for param in input_params
-                  if (input_param_name(param) not in excluded_params)}
+        kwargs = {input_param_name(param): parsed_params.get(input_param_name(param), input_param_default(param))
+                  for param in input_params if (input_param_name(param) not in excluded_params)}
         if "bc" in kwargs:
             kwargs["bc"] = kwargs["bc"].split("-")
         

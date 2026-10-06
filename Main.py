@@ -725,7 +725,7 @@ def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, conserve=True, initial_state="Random"
                                                           n1=n1, n2=n2)
 
     fig_corr, ax_corr = plt.subplots(figsize=(6, 5))
-    plot_structure_factor(ks, spin_corr_k, triangular_lat, ax_corr)
+    plot_structure_factor(ks, spin_corr_k, triangular_lat, ax_corr, mode='voronoi')
 
     YC_lat = BuildTriangularLattice(1, 1, SpinHalfSite(None), "finite", ("open", "open"), "YC")
     YC_lat.plot_brillouin_zone(ax_corr)
@@ -769,7 +769,7 @@ def calculateOverlapBetweenGutzwillerAndDMRG(dmrg_dir, gutzwiller_dir,
     print(f"calculating overlap between dmrg wavefunction in {dmrg_dir} and gutzwiller wavefunction in {gutzwiller_dir}")
     overlap = psi_dmrg.overlap(psi_gutz)
     print(f"overlap is {overlap}, |overlap| is {abs(overlap)}")
-    return overlap
+    return abs(overlap)
 
 
 def ComputeCorrelationsFromMPSFile(psi_dir, Lx, Ly, bc, geometry="YC", psi_fname="psi_gs.pkl",

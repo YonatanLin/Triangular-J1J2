@@ -884,7 +884,7 @@ def GetTriangularFluxSlaterMPS(Lx, Ly, spinfull, site, geometry, slater_trunc_pa
             offset = 0
 
         psi_from_slater, error = slater.C_to_iMPS(C_short, C_long, slater_trunc_par, sites_per_cell=imps_unitcell,
-                                                  cut=middle_site_mps_ind_short, offset=offset)
+                                                  cut=middle_site_mps_ind_short)
 
         infinite_bc = ("periodic", "periodic")
         triangular_lattice = BuildTriangularLattice(Lx, Ly, site, bc_MPS, infinite_bc,

@@ -86,7 +86,8 @@ dmrg_gutz_comp_input_params = [("Lx", int), ("Ly", int), ("geometry", str), ("bc
                                ("dmrg_parent_dir", str), ("J2", optional_float, None),
                                ("Delz", optional_float, 1.0), ("gutz_chi_max", int), ("gutz_flux", float),
                                ("gutz_gs_manifold_index", int), ("gutz_mon_Q", int), ("gutz_parent_dir", str),
-                               ("model_type", optional_str), ("norm_magz", float), ("parameter_file", str)]
+                               ("model_type", optional_str), ("norm_magz", float), ("parameter_file", str),
+                               ("jastrow_nn_zz", float, 0.0), ("jastrow_chi_max", optional_int, None)]
 
 
 def input_param_name(param):

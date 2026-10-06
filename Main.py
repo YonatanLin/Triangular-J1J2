@@ -107,6 +107,8 @@ def CreateOverlapsCaseDir(main_results_dir, **kwargs):
     J2 = kwargs.get("J2")
     Delz = kwargs.get("Delz")
     parameter_file = kwargs.get("parameter_file")
+    jastrow_nn_zz = kwargs.get("jastrow_nn_zz")
+    jastrow_chi_max = kwargs.get("jastrow_chi_max")
 
     Path(main_results_dir).mkdir(parents=True, exist_ok=True)
     geometry_case_dir = f"{bc_MPS}_Lx_{Lx}_Ly_{Ly}_{geometry}/"
@@ -123,6 +125,10 @@ def CreateOverlapsCaseDir(main_results_dir, **kwargs):
         fixed_params_dir += f"J2_{J2}_"
     if scanned_parameter_name != "Delz" and Delz is not None and abs(float(Delz) - 1.0) > 1e-15:
         fixed_params_dir += f"Delz_{Delz}_"
+    if scanned_parameter_name != "jastrow_nn_zz" and jastrow_nn_zz is not None and float(jastrow_nn_zz) != 0.0:
+        fixed_params_dir += f"jasNNzz_{float(jastrow_nn_zz)}_"
+    if jastrow_chi_max is not None and str(jastrow_chi_max) != "None":
+        fixed_params_dir += f"jaschi_{jastrow_chi_max}_"
     hamiltonian_case_dir = (f"chiGutz_{gutz_chi_max}_flux_{gutz_flux}_monQ_{gutz_mon_Q}_"
                               f"{scan_dir}{fixed_params_dir}"
                               f"initDMRG_{dmrg_initial_state}_chiDMRG_{dmrg_chi_max}_sweeps_{dmrg_max_sweeps}_"
@@ -590,9 +596,12 @@ def GenerateJ1J2SpinTriangularModel(J2, Delz, triangular_lat):
 
 
 def calculateGutzwillerEnergyTriangularJ1J2(gutz_results_dir, Lx, Ly, chi, flux, bc_MPS, J2, Delz, bc, geometry,
-                                            gs_manifold_index, norm_magz, monopole_Q, reorder_lattice=False, model_type=None):
+                                            gs_manifold_index, norm_magz, monopole_Q, reorder_lattice=False, model_type=None,
+                                            svd_min=None, jastrow_nn_zz=0.0, jastrow_chi_max=None):
     psi_path = CreateGutzwillerCaseDir(gutz_results_dir, Lx, Ly, chi, flux, geometry,
-                                       bc_MPS, gs_manifold_index, model_type, norm_magz, monopole_Q) + "/psi_gutzwiller.pkl"
+                                       bc_MPS, gs_manifold_index, model_type, norm_magz, monopole_Q, svd_min=svd_min,
+                                       jastrow_nn_zz=jastrow_nn_zz,
+                                       jastrow_chi_max=jastrow_chi_max) + "/psi_gutzwiller.pkl"
 
     print(f"calculating energy for MPS in path {psi_path} with triangular J1J2 model for J2={J2}")
     site = SpinHalfSite(conserve="Sz")
@@ -759,11 +768,16 @@ def ExplicitMPSNorm(mps):
     return norm_transfer
 
 
-def calculateOverlapBetweenGutzwillerAndDMRG(dmrg_dir, gutzwiller_dir,
-                                             psi_gutz_fname='psi_gutzwiller.pkl'):
-
+def LoadDMRGGroundState(dmrg_dir):
     with open(dmrg_dir + 'psi_gs.pkl', 'rb') as f_dmrg:
-        psi_dmrg = pickle.load(f_dmrg)
+        return pickle.load(f_dmrg)
+
+
+def calculateOverlapBetweenGutzwillerAndDMRG(dmrg_dir, gutzwiller_dir,
+                                             psi_gutz_fname='psi_gutzwiller.pkl', psi_dmrg=None):
+
+    if psi_dmrg is None:
+        psi_dmrg = LoadDMRGGroundState(dmrg_dir)
     with open(gutzwiller_dir + psi_gutz_fname, 'rb') as f_gutz:
         psi_gutz = pickle.load(f_gutz)
     
@@ -862,30 +876,44 @@ def _parameter_plot_label(parameter_name):
     parameter_labels = {
         "J2": r"$J_2$",
         "Delz": r"$\Delta_z$",
+        "jastrow_nn_zz": r"$v$",
     }
     return parameter_labels.get(parameter_name, parameter_name)
+
+
+# parameters which change the DMRG ground state vs. parameters which change the Gutzwiller wavefunction
+HAMILTONIAN_SCAN_PARAMS = {"J2", "Delz"}
+GUTZWILLER_SCAN_PARAMS = {"jastrow_nn_zz"}
 
 
 def GutzwillerDMRGOverlaps(scanned_parameter_name, scanned_parameter_values, gutz_parent_dir, Lx, Ly, gutz_chi_max,
                            gutz_flux, gutz_mon_Q, output_dir, dmrg_initial_state, dmrg_parent_dir, geometry, bc_MPS,
                            gutz_gs_manifold_index, dmrg_chi_max, dmrg_max_sweeps, dmrg_conserve, model_type, norm_magz,
-                           **kwargs):
+                           jastrow_nn_zz=0.0, jastrow_chi_max=None, **kwargs):
+    if scanned_parameter_name not in HAMILTONIAN_SCAN_PARAMS | GUTZWILLER_SCAN_PARAMS:
+        raise ValueError(f"Scanning {scanned_parameter_name} is not supported")
+    gutzwiller_scan = scanned_parameter_name in GUTZWILLER_SCAN_PARAMS
+
     overlaps = []
     dmrg_energies = []
     gutz_energies = []
-    gutz_case_dir = CreateGutzwillerCaseDir(gutz_parent_dir, Lx, Ly, gutz_chi_max, gutz_flux, geometry,
-                                            bc_MPS, gutz_gs_manifold_index, model_type=model_type, norm_magz=norm_magz,
-                                            monopole_Q=gutz_mon_Q)
     finite = (bc_MPS == "finite")
     bc = ("open", "periodic") if finite else ("periodic", "periodic")
-    
+    unitcell_width = 2 if geometry == "XC" else 1
+
     with open(output_dir + "parent_directories.txt", 'w') as f:
         f.write(f"dmrg parent dir: {dmrg_parent_dir}\n")
         f.write(f"gutzwiller parent dir: {gutz_parent_dir}\n")
 
+    psi_dmrg = None
+    previous_dmrg_dir = None
     for parameter_value in scanned_parameter_values:
         hamiltonian_params = dict(kwargs)
-        hamiltonian_params[scanned_parameter_name] = parameter_value
+        gutz_params = {"jastrow_nn_zz": jastrow_nn_zz, "jastrow_chi_max": jastrow_chi_max}
+        if gutzwiller_scan:
+            gutz_params[scanned_parameter_name] = parameter_value
+        else:
+            hamiltonian_params[scanned_parameter_name] = parameter_value
         J2 = hamiltonian_params.get("J2")
         Delz = hamiltonian_params.get("Delz", 1.0)
         if J2 is None:
@@ -893,29 +921,34 @@ def GutzwillerDMRGOverlaps(scanned_parameter_name, scanned_parameter_values, gut
         if Delz is None:
             raise ValueError("Delz must be supplied directly or scanned through the parameter file")
 
+        gutz_case_dir = CreateGutzwillerCaseDir(gutz_parent_dir, Lx, Ly, gutz_chi_max, gutz_flux, geometry,
+                                                bc_MPS, gutz_gs_manifold_index, model_type=model_type,
+                                                norm_magz=norm_magz, monopole_Q=gutz_mon_Q, **gutz_params)
+
         dmrg_geom_dir, dmrg_params_dir = (
             TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, dmrg_initial_state, dmrg_conserve, J2, geometry,
                                       dmrg_chi_max, dmrg_max_sweeps, norm_magz, Delz))
         dmrg_dir = dmrg_parent_dir + dmrg_geom_dir + dmrg_params_dir
-        
-        unitcell_width = 2 if geometry == "XC" else 1
-        
-        sweep_energies = np.loadtxt(dmrg_dir + "Energies.txt", dtype=np.float64)
-        dmrg_energy = sweep_energies[-1]
-        if finite:
-            dmrg_energy /= (Lx * Ly * unitcell_width)
+
+        # in a gutzwiller parameter scan the dmrg state is fixed, so it is loaded and plotted only once
+        if dmrg_dir != previous_dmrg_dir:
+            sweep_energies = np.loadtxt(dmrg_dir + "Energies.txt", dtype=np.float64)
+            dmrg_energy = sweep_energies[-1]
+            if finite:
+                dmrg_energy /= (Lx * Ly * unitcell_width)
+            fig_title = "dmrg" if gutzwiller_scan else f"dmrg_{scanned_parameter_name}_{parameter_value}"
+            PlotCorrelationsFromFiles(dmrg_dir, show_energies=False, output_dir=output_dir, fig_title=fig_title)
+            psi_dmrg = LoadDMRGGroundState(dmrg_dir)
+            previous_dmrg_dir = dmrg_dir
         dmrg_energies.append(dmrg_energy)
 
         gutz_energy = calculateGutzwillerEnergyTriangularJ1J2(gutz_parent_dir, Lx, Ly, gutz_chi_max, gutz_flux, bc_MPS,
                                                               J2, Delz, bc, geometry, gutz_gs_manifold_index, norm_magz,
-                                                              gutz_mon_Q, model_type=model_type)
+                                                              gutz_mon_Q, model_type=model_type, **gutz_params)
         gutz_energies.append(gutz_energy)
 
-        PlotCorrelationsFromFiles(dmrg_dir, show_energies=False, output_dir=output_dir,
-                                  fig_title=f"dmrg_{scanned_parameter_name}_{parameter_value}")
-
-        overlap_J2 = calculateOverlapBetweenGutzwillerAndDMRG(dmrg_dir, gutz_case_dir)
-        overlaps.append(overlap_J2)
+        overlap = calculateOverlapBetweenGutzwillerAndDMRG(dmrg_dir, gutz_case_dir, psi_dmrg=psi_dmrg)
+        overlaps.append(overlap)
 
 
     scanned_parameter_values = np.array(scanned_parameter_values)
@@ -926,13 +959,16 @@ def GutzwillerDMRGOverlaps(scanned_parameter_name, scanned_parameter_values, gut
     np.savetxt(output_dir + "data.txt", data, header=f'{scanned_parameter_name} overlap E_DMRG E_Gutzwiller')
 
     fig, ax = plt.subplots(figsize=(6, 5))
-    ax.plot(scanned_parameter_values, overlaps, "o")
+    ax.plot(scanned_parameter_values, np.abs(overlaps), "o")
     ax.set_xlabel(_parameter_plot_label(scanned_parameter_name))
-    ax.set_ylabel("overlap")
+    ax.set_ylabel("|overlap|")
     fig.savefig(output_dir + f"overlaps_initial_state_{dmrg_initial_state}.png", bbox_inches='tight')
-    
+
     fig, ax = plt.subplots(figsize=(6, 5))
-    ax.plot(scanned_parameter_values, dmrg_energies, "ro", label="dmrg")
+    if gutzwiller_scan:
+        ax.axhline(dmrg_energies[0], color="r", label="dmrg")
+    else:
+        ax.plot(scanned_parameter_values, dmrg_energies, "ro", label="dmrg")
     ax.plot(scanned_parameter_values, gutz_energies, "bo", label="Gutzwiller")
     ax.set_xlabel(_parameter_plot_label(scanned_parameter_name))
     ax.set_ylabel(r"$E$")

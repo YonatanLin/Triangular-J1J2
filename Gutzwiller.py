@@ -1215,16 +1215,25 @@ def ApplyNNXYJastrow(psi, spin_lat, v, n_trotter, trunc_par):
     return ApplyMPOsWithTruncation(psi, (layer_mpos[key] for key in sequence), trunc_par)
 
 
+def XYJastrowTrotterSteps(v, trotter_res):
+    """
+        number of Trotter steps for the xy Jastrow factor of strength v, such that each step has strength at most
+        trotter_res: ceil(|v| / trotter_res), with a tolerance so that e.g. v=0.1, trotter_res=0.02 gives 5, not 6.
+    """
+    assert trotter_res > 0, "jastrow_trotter_res must be positive"
+    return max(1, int(np.ceil(abs(v) / trotter_res - 1e-9)))
+
+
 def SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, geometry, bc_MPS, gs_manifold_index, model_type,
                                                          Lx=6, chi_max=3000, flux=0.0, norm_magz=0.0, monopole_Q=0,
                                                          iMPS_Lx_factor=Lx_short_factor_temfpy_iMPS,
                                                          svd_min=None, jastrow_nn_zz=0.0, jastrow_chi_max=None,
-                                                         jastrow_nn_xy=0.0, jastrow_trotter_steps=4):
+                                                         jastrow_nn_xy=0.0, jastrow_trotter_res=0.02):
     """
         jastrow_nn_zz: v of the Jastrow factor exp(-v sum_<ij> Sz_i Sz_j) applied after the projection (0 = none).
         jastrow_nn_xy: v of the Jastrow factor exp(-v sum_<ij> (Sx_i Sx_j + Sy_i Sy_j)) applied after the projection
-                       (0 = none), Trotterized with jastrow_trotter_steps second order steps. Only one of
-                       jastrow_nn_zz, jastrow_nn_xy may be nonzero.
+                       (0 = none), Trotterized with ceil(|jastrow_nn_xy| / jastrow_trotter_res) second order steps.
+                       Only one of jastrow_nn_zz, jastrow_nn_xy may be nonzero.
         jastrow_chi_max: bond dimension cap while applying the Jastrow factor, defaults to chi_max.
     """
     assert jastrow_nn_zz == 0.0 or jastrow_nn_xy == 0.0, "only one of the zz and xy Jastrow factors is supported"
@@ -1243,7 +1252,7 @@ def SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, geometry, bc_MPS, g
         results_dir = CreateGutzwillerCaseDir(gutzwiller_results_dir, Lx, Ly, chi_max, flux, geometry, bc_MPS,
                                               gs_manifold_index, model_type, norm_magz, monopole_Q, svd_min=svd_min,
                                               jastrow_nn_zz=jastrow_nn_zz, jastrow_chi_max=jastrow_chi_max,
-                                              jastrow_nn_xy=jastrow_nn_xy, jastrow_trotter_steps=jastrow_trotter_steps)
+                                              jastrow_nn_xy=jastrow_nn_xy, jastrow_trotter_res=jastrow_trotter_res)
     else:
         results_dir = "./"
     assert((bc_MPS == "finite") or (bc_MPS == "infinite"))
@@ -1308,9 +1317,11 @@ def SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, geometry, bc_MPS, g
             jastrow_trunc_err = ApplyNNSzSzJastrow(psi_pi_flux, spin_lat, jastrow_nn_zz, jastrow_trunc_par)
             print(f"zz Jastrow v={jastrow_nn_zz}: truncation error {jastrow_trunc_err.eps}, chi {max(psi_pi_flux.chi)}")
         else:
+            jastrow_trotter_steps = XYJastrowTrotterSteps(jastrow_nn_xy, jastrow_trotter_res)
             jastrow_trunc_err = ApplyNNXYJastrow(psi_pi_flux, spin_lat, jastrow_nn_xy, jastrow_trotter_steps,
                                                  jastrow_trunc_par)
-            print(f"xy Jastrow v={jastrow_nn_xy}, {jastrow_trotter_steps} Trotter steps: truncation error "
+            print(f"xy Jastrow v={jastrow_nn_xy}, {jastrow_trotter_steps} Trotter steps (resolution "
+                  f"{jastrow_trotter_res}): truncation error "
                   f"{jastrow_trunc_err.eps}, chi {max(psi_pi_flux.chi)}")
 
     with open(results_dir + 'psi_gutzwiller' + ".pkl", 'wb') as f:

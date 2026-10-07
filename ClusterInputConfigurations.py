@@ -70,7 +70,7 @@ gutzwiller_input_params = [
     ("jastrow_nn_zz", float, 0.0),
     ("jastrow_chi_max", optional_int, None),
     ("jastrow_nn_xy", float, 0.0),
-    ("jastrow_trotter_steps", int, 4)
+    ("jastrow_trotter_res", float, 0.02)
 ]
 
 afm_dispersion_input_params = [
@@ -90,7 +90,7 @@ dmrg_gutz_comp_input_params = [("Lx", int), ("Ly", int), ("geometry", str), ("bc
                                ("gutz_gs_manifold_index", int), ("gutz_mon_Q", int), ("gutz_parent_dir", str),
                                ("model_type", optional_str), ("norm_magz", float), ("parameter_file", str),
                                ("jastrow_nn_zz", float, 0.0), ("jastrow_chi_max", optional_int, None),
-                               ("jastrow_nn_xy", float, 0.0), ("jastrow_trotter_steps", int, 4)]
+                               ("jastrow_nn_xy", float, 0.0), ("jastrow_trotter_res", float, 0.02)]
 
 
 def input_param_name(param):

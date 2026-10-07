@@ -1218,7 +1218,7 @@ def ApplyNNXYJastrow(psi, spin_lat, v, n_trotter, trunc_par):
 def XYJastrowTrotterSteps(v, trotter_res):
     """
         number of Trotter steps for the xy Jastrow factor of strength v, such that each step has strength at most
-        trotter_res: ceil(|v| / trotter_res), with a tolerance so that e.g. v=0.1, trotter_res=0.02 gives 5, not 6.
+        trotter_res: ceil(|v| / trotter_res), with a tolerance so that e.g. v=0.1, trotter_res=0.0125 gives 5, not 6.
     """
     assert trotter_res > 0, "jastrow_trotter_res must be positive"
     return max(1, int(np.ceil(abs(v) / trotter_res - 1e-9)))
@@ -1228,7 +1228,7 @@ def SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, geometry, bc_MPS, g
                                                          Lx=6, chi_max=3000, flux=0.0, norm_magz=0.0, monopole_Q=0,
                                                          iMPS_Lx_factor=Lx_short_factor_temfpy_iMPS,
                                                          svd_min=None, jastrow_nn_zz=0.0, jastrow_chi_max=None,
-                                                         jastrow_nn_xy=0.0, jastrow_trotter_res=0.02):
+                                                         jastrow_nn_xy=0.0, jastrow_trotter_res=0.0125):
     """
         jastrow_nn_zz: v of the Jastrow factor exp(-v sum_<ij> Sz_i Sz_j) applied after the projection (0 = none).
         jastrow_nn_xy: v of the Jastrow factor exp(-v sum_<ij> (Sx_i Sx_j + Sy_i Sy_j)) applied after the projection

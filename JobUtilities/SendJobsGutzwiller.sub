@@ -1,5 +1,5 @@
 executable = /srv01/technion/yonlin/scripts/Triangular-J1J2/JobUtilities/RunGutzwiller.sh
-arguments = --Lx $(Lx) --Ly $(Ly) --chi $(chi) --flux $(flux) --geometry $(geometry) --bc_MPS $(bc_MPS) --gs_manifold_index $(gs_manifold_index) --model_type $(model_type) --norm_magz $(norm_magz)
+arguments = --Lx $(Lx) --Ly $(Ly) --chi $(chi) --flux $(flux) --geometry $(geometry) --bc_MPS $(bc_MPS) --gs_manifold_index $(gs_manifold_index) --model_type $(model_type) --norm_magz $(norm_magz) --monopole_Q $(monopole_Q) --svd_min $(svd_min) --jastrow_nn_zz $(jastrow_nn_zz) --jastrow_chi_max $(jastrow_chi_max) --jastrow_nn_xy $(jastrow_nn_xy) --jastrow_trotter_res $(jastrow_trotter_res)
 root_dir = /storage/ph_keselman/yonlin/TriangularJ1J2
 case_folder = $(root_dir)/$(case_folder_name)
 log_name = run
@@ -9,7 +9,7 @@ output = $(case_folder)/$(log_name).out
 error = $(case_folder)/$(log_name).err
 
 request_cpus = 10
-#RequestMemory = 2 * (12 * $(Lx) * $(Ly) * $(chi) * $(chi) / 648000000) * 1024
+RequestMemory = 12083.199999999999
 
 chi_factor = real(7E-08) * real($(chi) * $(chi))
 #chi_factor = (real($(chi)) / 20000.0) * (real($(chi)) / 20000.0)
@@ -17,12 +17,10 @@ base_memory = (real($(Lx) * $(Ly) * $(chi_factor)) + 1) * 1024
 memory = ifThenElse( "$(geometry)" == "XC", \
                       2 * $(base_memory), \
                       $(base_memory) )
-#RequestMemory = ifThenElse("$(bc_MPS)" == "finite", \ 
 #			    $(memory), \
 #			    $(memory))
-RequestMemory = $(memory)
 Initialdir = $(case_folder)
 universe = vanilla
 input_file = $(root_dir)/gutz_condor_cases.txt
 
-queue Lx, Ly, chi, flux, geometry, bc_MPS, gs_manifold_index, model_type, norm_magz, case_folder_name from $(input_file)
+queue Lx, Ly, chi, flux, geometry, bc_MPS, gs_manifold_index, model_type, norm_magz, monopole_Q, svd_min, jastrow_nn_zz, jastrow_chi_max, jastrow_nn_xy, jastrow_trotter_res, case_folder_name from $(input_file)

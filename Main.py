@@ -41,7 +41,7 @@ default_dmrg_params = {'mixer': True, 'max_E_err': 1.0e-10, 'trunc_params': {'ch
                    'N_sweeps_check': 1}
 
 # resolution (maximal strength per Trotter step) of the Trotterized xy Jastrow factor
-default_jastrow_trotter_res = 0.02
+default_jastrow_trotter_res = 0.0125
 
 project_dir = "C:/Users/yonli/Desktop/Thesis/Triangular J1J2/"
 code_dir = project_dir + "Code/"
@@ -986,7 +986,7 @@ def GutzwillerDMRGOverlaps(scanned_parameter_name, scanned_parameter_values, gut
     ax.plot(scanned_parameter_values, np.abs(overlaps), "o")
     ax.set_xlabel(_parameter_plot_label(scanned_parameter_name))
     ax.set_ylabel("|overlap|")
-    fig.savefig(output_dir + f"overlaps_initial_state_{dmrg_initial_state}.png", bbox_inches='tight')
+    fig.savefig(output_dir + f"overlaps.png", bbox_inches='tight')
 
     fig, ax = plt.subplots(figsize=(6, 5))
     if gutzwiller_scan:
@@ -997,7 +997,7 @@ def GutzwillerDMRGOverlaps(scanned_parameter_name, scanned_parameter_values, gut
     ax.set_xlabel(_parameter_plot_label(scanned_parameter_name))
     ax.set_ylabel(r"$E$")
     ax.legend()
-    fig.savefig(output_dir + f"energies_initial_state_{dmrg_initial_state}.png", bbox_inches='tight')
+    fig.savefig(output_dir + f"energies.png", bbox_inches='tight')
 
 
 def linear_model(x, m, b):

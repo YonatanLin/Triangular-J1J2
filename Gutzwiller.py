@@ -25,7 +25,7 @@ from WaveFunctionProperties import (plot_structure_factor, ComputeMomentumSpaceS
 from Main import (AbsMagzFromNormMagz, BuildTriangularLattice, TriangularXC, LxInfiniteMPSCorrelations,
                   CreateGutzwillerCaseDir, PlotLattice, PrintCouplings, ImshowMatrix, SaveSimulationOutput,
                   calculateStructureFactorAtSpecialPoints, getSpecielBzPoints, glob_results_dir, code_dir, meetings_dir,
-                  model_type_dirac, model_type_Z2, pauli_x, pauli_y, pauli_z)
+                  model_type_dirac, model_type_Z2, pauli_x, pauli_y, pauli_z, ResolveJastrowTrotterRes)
 
 svd_min_slater_default = 5e-7
 
@@ -1228,15 +1228,17 @@ def SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, geometry, bc_MPS, g
                                                          Lx=6, chi_max=3000, flux=0.0, norm_magz=0.0, monopole_Q=0,
                                                          iMPS_Lx_factor=Lx_short_factor_temfpy_iMPS,
                                                          svd_min=None, jastrow_nn_zz=0.0, jastrow_chi_max=None,
-                                                         jastrow_nn_xy=0.0, jastrow_trotter_res=0.02):
+                                                         jastrow_nn_xy=0.0, jastrow_trotter_res=None):
     """
         jastrow_nn_zz: v of the Jastrow factor exp(-v sum_<ij> Sz_i Sz_j) applied after the projection (0 = none).
         jastrow_nn_xy: v of the Jastrow factor exp(-v sum_<ij> (Sx_i Sx_j + Sy_i Sy_j)) applied after the projection
                        (0 = none), Trotterized with ceil(|jastrow_nn_xy| / jastrow_trotter_res) second order steps.
                        Only one of jastrow_nn_zz, jastrow_nn_xy may be nonzero.
+        jastrow_trotter_res: None means default_jastrow_trotter_res.
         jastrow_chi_max: bond dimension cap while applying the Jastrow factor, defaults to chi_max.
     """
     assert jastrow_nn_zz == 0.0 or jastrow_nn_xy == 0.0, "only one of the zz and xy Jastrow factors is supported"
+    jastrow_trotter_res = ResolveJastrowTrotterRes(jastrow_trotter_res)
 
     print(f"norm_magz: {norm_magz}")
     site = FermionSite(conserve='N')

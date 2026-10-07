@@ -68,7 +68,7 @@ def ChangeChiInDMRGParams(dmrg_params, chi_max):
 
 def GutzwillerCaseDirName(main_results_dir, Lx, Ly, chi_max, flux, geometry, bc_MPS,
                           gs_manifold_index, model_type, norm_magz, monopole_Q, svd_min=None,
-                          jastrow_nn_zz=0.0, jastrow_chi_max=None, jastrow_nn_xy=0.0, jastrow_trotter_res=0.0125):
+                          jastrow_nn_zz=0.0, jastrow_chi_max=None, jastrow_nn_xy=0.0, jastrow_trotter_res=0.02):
     case_name = f"{bc_MPS}_Lx_{Lx}_Ly_{Ly}_chi_{chi_max}_flux_{flux}_{geometry}_gsindex_{gs_manifold_index}"
 
     if model_type is not None:
@@ -890,7 +890,7 @@ GUTZWILLER_SCAN_PARAMS = {"jastrow_nn_zz", "jastrow_nn_xy"}
 def GutzwillerDMRGOverlaps(scanned_parameter_name, scanned_parameter_values, gutz_parent_dir, Lx, Ly, gutz_chi_max,
                            gutz_flux, gutz_mon_Q, output_dir, dmrg_initial_state, dmrg_parent_dir, geometry, bc_MPS,
                            gutz_gs_manifold_index, dmrg_chi_max, dmrg_max_sweeps, dmrg_conserve, model_type, norm_magz,
-                           jastrow_nn_zz=0.0, jastrow_chi_max=None, jastrow_nn_xy=0.0, jastrow_trotter_res=0.0125,
+                           jastrow_nn_zz=0.0, jastrow_chi_max=None, jastrow_nn_xy=0.0, jastrow_trotter_res=0.02,
                            **kwargs):
     if scanned_parameter_name not in HAMILTONIAN_SCAN_PARAMS | GUTZWILLER_SCAN_PARAMS:
         raise ValueError(f"Scanning {scanned_parameter_name} is not supported")

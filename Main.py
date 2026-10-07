@@ -86,7 +86,8 @@ def ChangeChiInDMRGParams(dmrg_params, chi_max):
 
 def GutzwillerCaseDirName(main_results_dir, Lx, Ly, chi_max, flux, geometry, bc_MPS,
                           gs_manifold_index, model_type, norm_magz, monopole_Q, svd_min=None,
-                          jastrow_nn_zz=0.0, jastrow_chi_max=None, jastrow_nn_xy=0.0, jastrow_trotter_res=None):
+                          jastrow_nn_zz=0.0, jastrow_chi_max=None, jastrow_nn_xy=0.0, jastrow_trotter_res=None,
+                          z2_bond_sign=None):
     case_name = f"{bc_MPS}_Lx_{Lx}_Ly_{Ly}_chi_{chi_max}_flux_{flux}_{geometry}_gsindex_{gs_manifold_index}"
 
     if model_type is not None:
@@ -106,6 +107,8 @@ def GutzwillerCaseDirName(main_results_dir, Lx, Ly, chi_max, flux, geometry, bc_
     if float(jastrow_nn_zz) != 0.0 or float(jastrow_nn_xy) != 0.0:
         if jastrow_chi_max is not None and str(jastrow_chi_max) != "None":
             case_name += f"_jaschi_{jastrow_chi_max}"
+    if z2_bond_sign is not None and int(z2_bond_sign) != 1:
+        case_name += f"_bondsign_{int(z2_bond_sign)}"
 
     case_name += "/"
     return main_results_dir + case_name

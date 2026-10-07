@@ -271,16 +271,17 @@ def CreateHamiltonianMatrixFromCouplingsList(model, N_sites, dtype=np.float64):
         strength = coupling[1]
         site1 = coupling[0][0][1]
         site2 = coupling[0][1][1]
+        # accumulate: on narrow cylinders different bonds can connect the same pair of sites
         if "Cd" in coupling[0][0][0]:
-            H[site1, site2] = strength
+            H[site1, site2] += strength
         else:
-            H[site2, site1] = strength
+            H[site2, site1] += strength
     for onsite_term in onsite_list:
         site = onsite_term[0][0][1]
         op = onsite_term[0][0][0]
         assert(op == 'N')
         strength = onsite_term[1]
-        H[site, site] = strength
+        H[site, site] += strength
     assert (np.abs(H - np.conj(np.transpose(H))) < 1e-15).all()
     return H
 
@@ -528,24 +529,25 @@ class MonopoleCondensatePiFluxModel(MeanFieldSpinonModel):
 
 
 class Z2MeanFieldModel(MeanFieldSpinonModel):
+    """
+        Translation invariant (1x1 unit cell, zero flux) Z2 mean field ansatz, Eq. (6) of Iqbal et al. PRB 93, 144411:
+            sum_ij chi_ij c^dag_i c_j + Delta_ij (c^dag_i,up c^dag_j,down + h.c.) + sum_i mu n_i + zeta (c^dag c^dag + h.c.)
+        with real amplitudes per bond direction, in the particle-hole representation f_down -> h_down^dag.
+        bond_sign multiplies all bond amplitudes (hoppings and pairings) relative to mu and zeta: +1 is Eq. (6) as written,
+        -1 the opposite convention; the two are not gauge equivalent.
+    """
     def init_terms(self, model_params):
         mu = model_params["mu"] # chemical potential
         zeta = model_params["zeta"] # onsite pairing
         hoppings = model_params["hoppings"] # dict with hopping per direction
         pairings = model_params["pairings"] # dict with pairing per direction
+        bond_sign = model_params["bond_sign"]
         init_MPO = model_params["init_H_MPO"]
         self.init_MPO = init_MPO
         lat = self.lat
-        bc = lat.boundary_conditions
         geometry = "XC" if isinstance(lat, TriangularXC) else "YC"
-        YC = (geometry == "YC")
-        assert(YC)
-        Lx, Ly = lat.Ls[0], lat.Ls[1]
-        nys, nxs = np.arange(0, Ly), np.arange(0, Lx)
-        y_coors, x_coors = np.meshgrid(nys, nxs) # first coordinate of the matrix (row) is the x coordinate
-
-        y_parity_signs = 1 - 2 * (y_coors % 2)
-        constant_signs = np.ones(x_coors.shape)
+        assert(geometry == "YC")
+        assert(bond_sign in (1, -1))
 
         unitcell_length = len(lat.unit_cell_positions)
         # on site terms - chemical potential and pairing
@@ -564,28 +566,13 @@ class Z2MeanFieldModel(MeanFieldSpinonModel):
                 assert(u1 % 2 == u2 % 2)
                 ph_sgn = getParticleHoleHoppingSign(u1)
                 dr_tuple = (int(dr[0]), int(dr[1]))
-                dx, dy = getPhysicalVectorFromLatticeVector(lat, u1, u2, dr)
+                assert (dr_tuple in hoppings) and (dr_tuple in pairings), f"missing amplitude for bond {dr_tuple}"
 
-                if neighbor_range == "nearest_neighbors":
-                    if (abs(dy) > 1e-15) and (np.sign(dx) == np.sign(dy)):
-                        signs = y_parity_signs
-                    else:
-                        signs = (-1) * constant_signs
-                else:
-                    if abs(dx) < 1e-15:
-                        signs = y_parity_signs
-                    else:
-                        signs = (-1) * constant_signs
-
-                couplings_shape = self.lat.coupling_shape(dr)[0]
-                signs = signs[0:couplings_shape[0], 0:couplings_shape[1]]
-
-                if dr_tuple in hoppings:
-                    hopping = hoppings[dr_tuple]
-                    self.add_coupling(ph_sgn * signs * hopping, u1, "Cd", u2, "C", dr, plus_hc=True)
-                if dr_tuple in pairings:
-                    pairing = pairings[dr_tuple]
-                    self.add_coupling(signs * pairing, u1, "Cd", (u2 + 1)%2, "C", dr, plus_hc=True)
+                hopping = bond_sign * hoppings[dr_tuple]
+                self.add_coupling(ph_sgn * hopping, u1, "Cd", u2, "C", dr, plus_hc=True)
+                # singlet pairing Delta (c^dag_i,up h_j + c^dag_j,up h_i): the u1 = 1 term is the h.c. of the second
+                pairing = bond_sign * pairings[dr_tuple]
+                self.add_coupling(pairing, u1, "Cd", (u2 + 1) % 2, "C", dr, plus_hc=True)
 
 
 def AddTermToFermionCouplingsDict(couplings_dict, i, j, strength):
@@ -631,32 +618,40 @@ def TestDictsAreCompatible(couplings_dict, expected_couplings_dict):
             exit(1)
 
 
-def GetZ2CouplingDictFromStrengths(x_nn_strength, y_nn_strength, nnn_strength_y,
-                                   nnn_strength_diag):
-    return {(1, 0): x_nn_strength, (0, 1): y_nn_strength, (-1, 1): x_nn_strength,
-     (-1, 2): nnn_strength_y, (1, 1): nnn_strength_diag}
+def GetZ2CouplingDictFromStrengths(nn_10, nn_11, nnn_21, nnn_1m1):
+    """
+        Nematic bond classes of Iqbal et al. (labels in their basis a1 = (1, 0), a2 = (-1/2, sqrt(3)/2), Fig. 3a)
+        mapped to the YC lattice basis a1 = (1, 0), a2 = (1/2, sqrt(3)/2):
+            NN  (1,0) [0 deg], (0,1) [120 deg]  -> (1,0), (-1,1)
+            NN  (1,1) [60 deg]                  -> (0,1)
+            NNN (2,1) [30 deg], (1,2) [90 deg]  -> (1,1), (-1,2)
+            NNN (1,-1) [-30 deg]                -> (-2,1)
+        the classes are related by the reflection about the 60 degree axis, which the nematic ansatz keeps.
+    """
+    return {(1, 0): nn_10, (-1, 1): nn_10, (0, 1): nn_11,
+            (1, 1): nnn_21, (-1, 2): nnn_21, (-2, 1): nnn_1m1}
 
 
-
-def Z2MeanFieldModelOptimalQSL():
+def Z2MeanFieldModelOptimalQSL(bond_sign=1):
+    """ Z2{0}A nematic spin liquid, final SR parameters of Fig. 6a of Iqbal et al. (J2 = J1 / 8, chi_(1,0) = 1) """
     zeta = -0.8
     mu = 0.8
 
-    x_nn_hopping = 1.0
-    y_nn_hopping = -2.6
-    nnn_hopping_y = 0.25
-    nnn_hopping_diag = -0.1
+    nn_10_hopping = 1.0
+    nn_11_hopping = -2.6
+    nnn_21_hopping = 0.25
+    nnn_1m1_hopping = -0.1
 
-    x_nn_pairing = 1.25
-    y_nn_pairing = 1.5
-    nnn_pairing_y = 0.0
-    nnn_pairing_diag = 0.0
+    nn_10_pairing = 1.25
+    nn_11_pairing = 1.5
+    nnn_21_pairing = 0.0
+    nnn_1m1_pairing = 0.05
 
-    model_params = {"mu": mu, "zeta": zeta, "init_H_MPO": False}
-    model_params["hoppings"] = GetZ2CouplingDictFromStrengths(x_nn_hopping, y_nn_hopping, nnn_hopping_y,
-                                                              nnn_hopping_diag)
-    model_params["pairings"] = GetZ2CouplingDictFromStrengths(x_nn_pairing, y_nn_pairing, nnn_pairing_y,
-                                                              nnn_pairing_diag)
+    model_params = {"mu": mu, "zeta": zeta, "init_H_MPO": False, "bond_sign": bond_sign}
+    model_params["hoppings"] = GetZ2CouplingDictFromStrengths(nn_10_hopping, nn_11_hopping, nnn_21_hopping,
+                                                              nnn_1m1_hopping)
+    model_params["pairings"] = GetZ2CouplingDictFromStrengths(nn_10_pairing, nn_11_pairing, nnn_21_pairing,
+                                                              nnn_1m1_pairing)
     return model_params
 
 
@@ -819,7 +814,8 @@ def CalculateExactCMatrixForPiFlux(gs_manifold_index, model_params, model_type,
 
 def GetTriangularFluxSlaterMPS(Lx, Ly, spinfull, site, geometry, slater_trunc_par, unitcell_width,
                                bc_MPS, gs_manifold_index, model_type, flux=0.0, particle_hole=True,
-                               norm_magz=0., monopole_Q=0, iMPS_Lx_factor=Lx_short_factor_temfpy_iMPS, results_dir=None):
+                               norm_magz=0., monopole_Q=0, iMPS_Lx_factor=Lx_short_factor_temfpy_iMPS, results_dir=None,
+                               z2_bond_sign=1):
     zero_energy_tol = 1e3 * slater_trunc_par["degeneracy_tol"]
     assert(Lx % 2 == 0), "pi-flux model requires even-sized unitcell"
     imps_unitcell = unitcell_width * Lx * Ly
@@ -832,7 +828,9 @@ def GetTriangularFluxSlaterMPS(Lx, Ly, spinfull, site, geometry, slater_trunc_pa
         model_params = {"init_H_MPO": False, "monopole_Q": monopole_Q, "flux": flux,
                         "particle_hole": particle_hole}
     elif model_type == model_type_Z2:
-        model_params = Z2MeanFieldModelOptimalQSL()
+        assert particle_hole, "Z2 ansatz with pairing needs the particle-hole representation"
+        model_params = Z2MeanFieldModelOptimalQSL(z2_bond_sign)
+        model_params["particle_hole"] = particle_hole
     else:
         raise ValueError("inrecognized model type")
         model_params = None
@@ -849,14 +847,17 @@ def GetTriangularFluxSlaterMPS(Lx, Ly, spinfull, site, geometry, slater_trunc_pa
         psi_from_slater = slater.C_to_MPS(C, trunc_par=slater_trunc_par)
     else:
         abs_magz_unitcell = AbsMagzFromNormMagz(norm_magz, triangular_lat_finite.N_sites // 2)
-        Q_unitcell = model_params["monopole_Q"]
+        if model_type != model_type_Z2:
+            assert ("monopole_Q" in model_params), ("Should specify monopole Q for models other than Z2.")
+        Q_unitcell = model_params.get("monopole_Q", 0)
 
         Lx_short, Lx_long = iMPS_Lx_factor * Lx, (iMPS_Lx_factor + 1) * Lx
 
         model_params_short = model_params.copy()
         triangular_lat_short = GetPiFluxTriangularLattice(site, Lx_short, Ly, spinfull, finite_bc_MPS, geometry)
         model_params_short["lattice"] = triangular_lat_short
-        model_params_short["monopole_Q"] = Q_unitcell * (Lx_short // Lx)
+        if model_type == model_type_dirac:
+            model_params_short["monopole_Q"] = Q_unitcell * (Lx_short // Lx)
         abs_magz_short = AbsMagzFromNormMagz(norm_magz, triangular_lat_short.N_sites // 2)
 
         C_short, triangular_lat_short = CalculateExactCMatrixForPiFlux(gs_manifold_index, model_params_short, model_type,
@@ -866,7 +867,8 @@ def GetTriangularFluxSlaterMPS(Lx, Ly, spinfull, site, geometry, slater_trunc_pa
         model_params_long = model_params.copy()
         triangular_lat_long = GetPiFluxTriangularLattice(site, Lx_long, Ly, spinfull, finite_bc_MPS, geometry)
         model_params_long["lattice"] = triangular_lat_long
-        model_params_long["monopole_Q"] = Q_unitcell * (Lx_long // Lx)
+        if model_type == model_type_dirac:
+            model_params_long["monopole_Q"] = Q_unitcell * (Lx_long // Lx)
         abs_magz_long = AbsMagzFromNormMagz(norm_magz, triangular_lat_long.N_sites // 2)
 
         assert (abs_magz_short + abs_magz_unitcell == abs_magz_long), \
@@ -1228,7 +1230,7 @@ def SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, geometry, bc_MPS, g
                                                          Lx=6, chi_max=3000, flux=0.0, norm_magz=0.0, monopole_Q=0,
                                                          iMPS_Lx_factor=Lx_short_factor_temfpy_iMPS,
                                                          svd_min=None, jastrow_nn_zz=0.0, jastrow_chi_max=None,
-                                                         jastrow_nn_xy=0.0, jastrow_trotter_res=None):
+                                                         jastrow_nn_xy=0.0, jastrow_trotter_res=None, z2_bond_sign=1):
     """
         jastrow_nn_zz: v of the Jastrow factor exp(-v sum_<ij> Sz_i Sz_j) applied after the projection (0 = none).
         jastrow_nn_xy: v of the Jastrow factor exp(-v sum_<ij> (Sx_i Sx_j + Sy_i Sy_j)) applied after the projection
@@ -1236,6 +1238,7 @@ def SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, geometry, bc_MPS, g
                        Only one of jastrow_nn_zz, jastrow_nn_xy may be nonzero.
         jastrow_trotter_res: None means default_jastrow_trotter_res.
         jastrow_chi_max: bond dimension cap while applying the Jastrow factor, defaults to chi_max.
+        z2_bond_sign: sign of the bond amplitudes relative to mu, zeta in the Z2 ansatz (see Z2MeanFieldModel).
     """
     assert jastrow_nn_zz == 0.0 or jastrow_nn_xy == 0.0, "only one of the zz and xy Jastrow factors is supported"
     jastrow_trotter_res = ResolveJastrowTrotterRes(jastrow_trotter_res)
@@ -1254,7 +1257,8 @@ def SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, geometry, bc_MPS, g
         results_dir = CreateGutzwillerCaseDir(gutzwiller_results_dir, Lx, Ly, chi_max, flux, geometry, bc_MPS,
                                               gs_manifold_index, model_type, norm_magz, monopole_Q, svd_min=svd_min,
                                               jastrow_nn_zz=jastrow_nn_zz, jastrow_chi_max=jastrow_chi_max,
-                                              jastrow_nn_xy=jastrow_nn_xy, jastrow_trotter_res=jastrow_trotter_res)
+                                              jastrow_nn_xy=jastrow_nn_xy, jastrow_trotter_res=jastrow_trotter_res,
+                                              z2_bond_sign=z2_bond_sign if model_type == model_type_Z2 else None)
     else:
         results_dir = "./"
     assert((bc_MPS == "finite") or (bc_MPS == "infinite"))
@@ -1275,7 +1279,8 @@ def SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, geometry, bc_MPS, g
                                                                 unitcell_width, bc_MPS, gs_manifold_index,
                                                                 model_type, flux=flux, particle_hole=particle_hole,
                                                                 norm_magz=norm_magz, monopole_Q=monopole_Q,
-                                                                iMPS_Lx_factor=iMPS_Lx_factor, results_dir=results_dir)
+                                                                iMPS_Lx_factor=iMPS_Lx_factor, results_dir=results_dir,
+                                                                z2_bond_sign=z2_bond_sign)
     # np.savetxt(results_dir + "C_slater.csv", C)
 
     if debug and finite:
@@ -1654,8 +1659,7 @@ def DebugMagnetizedIMPS():
 
 if __name__ == "__main__":
     SpinonTriangularLatticeMeanFieldGutzwillerProjection(6, "YC", "infinite", 0,
-                                                         model_type_dirac, Lx=2, chi_max=600, flux=1.0,
-                                                         norm_magz=0.0, monopole_Q=0, jastrow_nn_zz=0.0)
+                                                         model_type_Z2, Lx=2, chi_max=600, flux=0.0)
     exit(0)
 
     # TestFreeFermionsSpinCorrelations()

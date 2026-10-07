@@ -70,7 +70,8 @@ gutzwiller_input_params = [
     ("jastrow_nn_zz", float, 0.0),
     ("jastrow_chi_max", optional_int, None),
     ("jastrow_nn_xy", float, 0.0),
-    ("jastrow_trotter_res", optional_float, None)
+    ("jastrow_trotter_res", optional_float, None),
+    ("z2_bond_sign", int, 1)
 ]
 
 afm_dispersion_input_params = [

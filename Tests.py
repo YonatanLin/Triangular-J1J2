@@ -160,27 +160,31 @@ def TestZ2MeanFieldModel():
     x_nn_hopping = 1.0
     y_nn_hopping = 2.0
     nnn_hopping = 3.0
-    model_params = {"mu": 1.0, "zeta": 5.0, "init_H_MPO": False, "lattice": triangular_lat}
+    bond_sign = -1
+    model_params = {"mu": 1.0, "zeta": 5.0, "init_H_MPO": False, "lattice": triangular_lat, "bond_sign": bond_sign}
     model_params["hoppings"] = {(1, 0) : x_nn_hopping, (0, 1) : y_nn_hopping, (-1, 1) : x_nn_hopping,
-                                (-1, 2): nnn_hopping, (1, 1): nnn_hopping}
+                                (-1, 2): nnn_hopping, (1, 1): nnn_hopping, (-2, 1): nnn_hopping}
     model_params["pairings"] = model_params["hoppings"]
     z2_model = Z2MeanFieldModel(model_params)
 
     center_sites = [14, 15]
     couplings_dict = PrintCouplings(z2_model, include_sites=center_sites)
-    spindown_sites_coupled_to_spindown_center = [(13, (-1)*y_nn_hopping), (17, y_nn_hopping),
-                                                 (5, -1.0*x_nn_hopping), (25, -1.0*x_nn_hopping), (7, -1.0*x_nn_hopping),
-                                                 (23, -1.0*x_nn_hopping), (9, nnn_hopping), (21, nnn_hopping),
-                                                 (3, (-1) * nnn_hopping), (27, (-1)*nnn_hopping)]
+    # uniform (zero flux) ansatz: every bond has amplitude bond_sign * strength
+    spindown_sites_coupled_to_spindown_center = [(13, bond_sign * y_nn_hopping), (17, bond_sign * y_nn_hopping),
+                                                 (5, bond_sign * x_nn_hopping), (25, bond_sign * x_nn_hopping),
+                                                 (7, bond_sign * x_nn_hopping), (23, bond_sign * x_nn_hopping),
+                                                 (9, bond_sign * nnn_hopping), (21, bond_sign * nnn_hopping),
+                                                 (3, bond_sign * nnn_hopping), (27, bond_sign * nnn_hopping)]
 
     expected_couplings_dict = AddCouplingsToZ2ModelDict(center_sites, spindown_sites_coupled_to_spindown_center, zeta)
     TestDictsAreCompatible(couplings_dict, expected_couplings_dict)
 
     tests_sites = [22, 23]
     couplings_dict = PrintCouplings(z2_model, include_sites=tests_sites)
-    couplings_to_tests_sites = [(13, (-1) * x_nn_hopping), (15, (-1) * x_nn_hopping),
-                                (25, (-1)*y_nn_hopping), (21, y_nn_hopping), (11, (-1)*nnn_hopping),
-                                (17, (-1)*nnn_hopping)]
+    couplings_to_tests_sites = [(13, bond_sign * x_nn_hopping), (15, bond_sign * x_nn_hopping),
+                                (25, bond_sign * y_nn_hopping), (21, bond_sign * y_nn_hopping),
+                                (11, bond_sign * nnn_hopping), (17, bond_sign * nnn_hopping),
+                                (5, bond_sign * nnn_hopping)]
     expected_couplings_dict = AddCouplingsToZ2ModelDict(tests_sites, couplings_to_tests_sites, zeta)
     TestDictsAreCompatible(couplings_dict, expected_couplings_dict)
 

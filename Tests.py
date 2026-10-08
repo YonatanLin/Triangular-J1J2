@@ -161,7 +161,8 @@ def TestZ2MeanFieldModel():
     y_nn_hopping = 2.0
     nnn_hopping = 3.0
     bond_sign = -1
-    model_params = {"mu": 1.0, "zeta": 5.0, "init_H_MPO": False, "lattice": triangular_lat, "bond_sign": bond_sign}
+    model_params = {"mu": 1.0, "zeta": 5.0, "init_H_MPO": False, "lattice": triangular_lat, "bond_sign": bond_sign,
+                    "flux": 0}
     model_params["hoppings"] = {(1, 0) : x_nn_hopping, (0, 1) : y_nn_hopping, (-1, 1) : x_nn_hopping,
                                 (-1, 2): nnn_hopping, (1, 1): nnn_hopping, (-2, 1): nnn_hopping}
     model_params["pairings"] = model_params["hoppings"]
@@ -188,11 +189,31 @@ def TestZ2MeanFieldModel():
     expected_couplings_dict = AddCouplingsToZ2ModelDict(tests_sites, couplings_to_tests_sites, zeta)
     TestDictsAreCompatible(couplings_dict, expected_couplings_dict)
 
-    print(z2_model.all_onsite_terms().to_TermList())
+    # pi flux through the cylinder: on a 3x4 cylinder (periodic y), the bonds of site (x, y) = (1, 3) (MPS sites 14, 15)
+    # that cross the y boundary change sign for flux = 1, written as (x, y) -> (x', y') with y' taken mod Ly = 4:
+    #   NN  dr = (0, 1):  (1, 3) -> (1, 0)   (MPS sites 8, 9)
+    #   NN  dr = (-1, 1): (1, 3) -> (0, 0)   (MPS sites 0, 1)
+    #   NNN dr = (1, 1):  (1, 3) -> (2, 0)   (MPS sites 16, 17)
+    #   NNN dr = (-1, 2): (1, 3) -> (0, 1)   (MPS sites 2, 3)
+    cylinder_lat = BuildTriangularLattice(3, 4, FermionSite(conserve="N"), "finite",
+                                          bc=("open", "periodic"), spinfull_fermions=True)
+    seam_sites = [14, 15]
+    for flux in (0, 1):
+        cylinder_params = dict(model_params, lattice=cylinder_lat, flux=flux)
+        cylinder_model = Z2MeanFieldModel(cylinder_params)
+        seam_sign = -1 if flux == 1 else 1
+        couplings_dict = PrintCouplings(cylinder_model, include_sites=seam_sites)
+        couplings_to_seam_sites = [(9, seam_sign * bond_sign * y_nn_hopping), (13, bond_sign * y_nn_hopping),
+                                   (1, seam_sign * bond_sign * x_nn_hopping), (21, bond_sign * x_nn_hopping),
+                                   (23, bond_sign * x_nn_hopping), (7, bond_sign * x_nn_hopping),
+                                   (17, seam_sign * bond_sign * nnn_hopping), (5, bond_sign * nnn_hopping),
+                                   (3, seam_sign * bond_sign * nnn_hopping), (19, bond_sign * nnn_hopping)]
+        expected_couplings_dict = AddCouplingsToZ2ModelDict(seam_sites, couplings_to_seam_sites, zeta)
+        TestDictsAreCompatible(couplings_dict, expected_couplings_dict)
+
     CreateHamiltonianMatrixFromCouplingsList(z2_model, 30)
     fig, ax = plt.subplots()
-    # PlotModelHoppingsByPhase(z2_model, ax)
-    PlotLattice(triangular_lat, ax)
+    PlotLattice(cylinder_lat, ax)
     plt.show()
 
 
@@ -326,3 +347,6 @@ def StaticCorrelationsTests():
     TestRandomStateCorrelations(bc_MPS="infinite")
     TestRandomStateCorrelations()
 
+
+if __name__ == "__main__":
+    TestZ2MeanFieldModel()

@@ -535,6 +535,9 @@ class Z2MeanFieldModel(MeanFieldSpinonModel):
         with real amplitudes per bond direction, in the particle-hole representation f_down -> h_down^dag.
         bond_sign multiplies all bond amplitudes (hoppings and pairings) relative to mu and zeta: +1 is Eq. (6) as written,
         -1 the opposite convention; the two are not gauge equivalent.
+        flux (in units of pi, 0 or 1) is threaded through the cylinder: flux=1 makes the spinons antiperiodic around
+        the circumference (hoppings and pairings crossing the y boundary change sign), i.e. a vison through the
+        cylinder, the other topological sector. A Z2 ansatz only allows the Z2 fluxes 0 and pi.
     """
     def init_terms(self, model_params):
         mu = model_params["mu"] # chemical potential
@@ -542,12 +545,14 @@ class Z2MeanFieldModel(MeanFieldSpinonModel):
         hoppings = model_params["hoppings"] # dict with hopping per direction
         pairings = model_params["pairings"] # dict with pairing per direction
         bond_sign = model_params["bond_sign"]
+        flux = model_params["flux"]
         init_MPO = model_params["init_H_MPO"]
         self.init_MPO = init_MPO
         lat = self.lat
         geometry = "XC" if isinstance(lat, TriangularXC) else "YC"
         assert(geometry == "YC")
         assert(bond_sign in (1, -1))
+        assert flux in (0, 1), "Z2 ansatz only allows flux 0 or pi (flux = 0 or 1)"
 
         unitcell_length = len(lat.unit_cell_positions)
         # on site terms - chemical potential and pairing
@@ -568,10 +573,16 @@ class Z2MeanFieldModel(MeanFieldSpinonModel):
                 dr_tuple = (int(dr[0]), int(dr[1]))
                 assert (dr_tuple in hoppings) and (dr_tuple in pairings), f"missing amplitude for bond {dr_tuple}"
 
-                hopping = bond_sign * hoppings[dr_tuple]
+                # -1 on the bonds crossing the y boundary for flux pi, the same for hopping and pairing (e^{i pi} is
+                # real, so the particle-hole transformed holes get the same sign)
+                seam_signs = self.coupling_strength_add_ext_flux(1.0, dr, [0, pi * flux])
+                assert np.max(np.abs(seam_signs.imag)) < 1e-12
+                seam_signs = np.round(seam_signs.real)
+
+                hopping = bond_sign * seam_signs * hoppings[dr_tuple]
                 self.add_coupling(ph_sgn * hopping, u1, "Cd", u2, "C", dr, plus_hc=True)
                 # singlet pairing Delta (c^dag_i,up h_j + c^dag_j,up h_i): the u1 = 1 term is the h.c. of the second
-                pairing = bond_sign * pairings[dr_tuple]
+                pairing = bond_sign * seam_signs * pairings[dr_tuple]
                 self.add_coupling(pairing, u1, "Cd", (u2 + 1) % 2, "C", dr, plus_hc=True)
 
 
@@ -632,7 +643,7 @@ def GetZ2CouplingDictFromStrengths(nn_10, nn_11, nnn_21, nnn_1m1):
             (1, 1): nnn_21, (-1, 2): nnn_21, (-2, 1): nnn_1m1}
 
 
-def Z2MeanFieldModelOptimalQSL(bond_sign=1):
+def Z2MeanFieldModelOptimalQSL(bond_sign=1, flux=0):
     """ Z2{0}A nematic spin liquid, final SR parameters of Fig. 6a of Iqbal et al. (J2 = J1 / 8, chi_(1,0) = 1) """
     zeta = -0.8
     mu = 0.8
@@ -647,7 +658,7 @@ def Z2MeanFieldModelOptimalQSL(bond_sign=1):
     nnn_21_pairing = 0.0
     nnn_1m1_pairing = 0.05
 
-    model_params = {"mu": mu, "zeta": zeta, "init_H_MPO": False, "bond_sign": bond_sign}
+    model_params = {"mu": mu, "zeta": zeta, "init_H_MPO": False, "bond_sign": bond_sign, "flux": flux}
     model_params["hoppings"] = GetZ2CouplingDictFromStrengths(nn_10_hopping, nn_11_hopping, nnn_21_hopping,
                                                               nnn_1m1_hopping)
     model_params["pairings"] = GetZ2CouplingDictFromStrengths(nn_10_pairing, nn_11_pairing, nnn_21_pairing,
@@ -829,7 +840,7 @@ def GetTriangularFluxSlaterMPS(Lx, Ly, spinfull, site, geometry, slater_trunc_pa
                         "particle_hole": particle_hole}
     elif model_type == model_type_Z2:
         assert particle_hole, "Z2 ansatz with pairing needs the particle-hole representation"
-        model_params = Z2MeanFieldModelOptimalQSL(z2_bond_sign)
+        model_params = Z2MeanFieldModelOptimalQSL(z2_bond_sign, flux=flux)
         model_params["particle_hole"] = particle_hole
     else:
         raise ValueError("inrecognized model type")

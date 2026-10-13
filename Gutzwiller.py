@@ -1200,6 +1200,7 @@ def ApplyNNSzSzJastrow(psi, spin_lat, v, trunc_par):
     assert spin_lat.N_sites == psi.L and spin_lat.bc_MPS == psi.bc, "lattice doesn't match the MPS"
 
     layers = GroupBondsIntoMPOLayers(NearestNeighborMPSBonds(spin_lat), psi.L, psi.finite)
+    trunc_par["svd_min"] /= len(layers)
     mpos = (SzSzJastrowLayerMPO(psi.sites, layer_bonds, psi.bc, v) for layer_bonds in layers)
     return ApplyMPOsWithTruncation(psi, mpos, trunc_par)
 
@@ -1219,6 +1220,7 @@ def ApplyNNXYJastrow(psi, spin_lat, v, n_trotter, trunc_par):
     assert spin_lat.N_sites == psi.L and spin_lat.bc_MPS == psi.bc, "lattice doesn't match the MPS"
 
     layers = GroupBondsIntoMPOLayers(NearestNeighborMPSBonds(spin_lat), psi.L, psi.finite, site_disjoint=True)
+    trunc_par["svd_min"] /= len(layers)
     sequence = StrangLayerSequence(len(layers), n_trotter)
     print(f"XY Jastrow: {len(layers)} layers, {len(sequence)} layer applications")
     layer_mpos = {}
@@ -1330,12 +1332,15 @@ def SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, geometry, bc_MPS, g
 
     if jastrow_nn_zz != 0.0 or jastrow_nn_xy != 0.0:
         assert particle_hole, "Jastrow factor needs the spin MPS of the particle-hole projection"
-        jastrow_trunc_par = {"chi_max": chi_max if jastrow_chi_max is None else jastrow_chi_max, "svd_min": svd_min}
+        jastrow_trunc_par = {"chi_max": chi_max if jastrow_chi_max is None else jastrow_chi_max}
+        jastrow_default_total_trunc = 1.e-9
         if jastrow_nn_zz != 0.0:
+            jastrow_trunc_par["svd_min"] = jastrow_default_total_trunc
             jastrow_trunc_err = ApplyNNSzSzJastrow(psi_pi_flux, spin_lat, jastrow_nn_zz, jastrow_trunc_par)
             print(f"zz Jastrow v={jastrow_nn_zz}: truncation error {jastrow_trunc_err.eps}, chi {max(psi_pi_flux.chi)}")
         else:
             jastrow_trotter_steps = XYJastrowTrotterSteps(jastrow_nn_xy, jastrow_trotter_res)
+            jastrow_trunc_par["svd_min"] = jastrow_default_total_trunc / jastrow_trotter_steps
             jastrow_trunc_err = ApplyNNXYJastrow(psi_pi_flux, spin_lat, jastrow_nn_xy, jastrow_trotter_steps,
                                                  jastrow_trunc_par)
             print(f"xy Jastrow v={jastrow_nn_xy}, {jastrow_trotter_steps} Trotter steps (resolution "
@@ -1669,8 +1674,9 @@ def DebugMagnetizedIMPS():
 
 
 if __name__ == "__main__":
-    SpinonTriangularLatticeMeanFieldGutzwillerProjection(6, "YC", "infinite", 0,
-                                                         model_type_Z2, Lx=2, chi_max=600, flux=0.0)
+    SpinonTriangularLatticeMeanFieldGutzwillerProjection(4, "YC", "infinite", 0,
+                                                         model_type_dirac, Lx=2, chi_max=800, flux=0.0,
+                                                         jastrow_nn_xy=0.1)
     exit(0)
 
     # TestFreeFermionsSpinCorrelations()

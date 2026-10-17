@@ -31,6 +31,9 @@ svd_min_slater_default = 5e-7
 
 Lx_short_factor_temfpy_iMPS = 50
 
+# default Jastrow bond dimension cap, relative to the maximal chi of the projected state before the Jastrow
+jastrow_chi_max_default_factor = 1.5
+
 # convergence tolerance of tenpy's canonical_form_infinite2 fixed point iteration (default 1e-15). The iteration
 # error has a floating point floor that grows with chi (~1e-15 at chi ~1000), so the default can be unreachable and
 # the loop then runs its 10^4 iterations; it otherwise converges within a few iterations, far below this tolerance
@@ -175,6 +178,44 @@ def getZeroModeSupportSide(zm):
     assert(isEdgeMode(abs_zm, side))
 
     return side
+
+
+def GetCircumferenceMomentum(psi, lat, spin_parity=None, tol=1e-8):
+    """
+    Momentum k_y (in (-pi, pi], per lattice step a2 around the cylinder) of a single particle eigenstate psi,
+    defined by psi(x, y + 1, u) = exp(i k_y) psi(x, y, u). Only translations around the cylinder are used: x is open,
+    and the Landau gauge of MonopoleCondensatePiFluxModel depends on x only, so T_y is a symmetry.
+    The ratio is taken over the interior bonds y -> y + 1 for y < Ly - 1 only, so an external flux on the seam bonds
+    is accounted for automatically: k_y then sits on the shifted grid (2 pi n + flux) / Ly.
+    psi is either a vector over all lattice sites (MPS ordering), or over one spin block (H[p::2, p::2]), in which
+    case spin_parity = p must be given. For particle-hole transformed down spins the momentum is that of the hole,
+    i.e. minus the momentum of the corresponding down spinon.
+    Degenerate eigenvectors from eigh can be arbitrary mixtures of different k_y; then psi is not a T_y eigenstate
+    and a ValueError is raised.
+    Returns (k_y, residual), residual = ||psi(y+1) - exp(i k_y) psi(y)|| over the interior bonds.
+    """
+    N_sites = lat.N_sites
+    if psi.shape[0] == N_sites:
+        mps_indices = np.arange(N_sites)
+    else:
+        assert spin_parity is not None and psi.shape[0] == N_sites // 2, "specify spin_parity for a spin block vector"
+        mps_indices = np.arange(spin_parity, N_sites, 2)
+    Lx, Ly = lat.Ls
+    n_u = len(lat.unit_cell_positions)
+    psi_lat = np.zeros((Lx, Ly, n_u), dtype=np.complex128)
+    for i, j in enumerate(mps_indices):
+        x, y, u = lat.mps2lat_idx(j)
+        psi_lat[x, y, u] = psi[i]
+    psi_y, psi_y_plus_1 = psi_lat[:, :-1, :], psi_lat[:, 1:, :]
+    norm = np.sum(np.abs(psi_y) ** 2)
+    assert norm > 1e-12, "psi has no weight on the interior bonds"
+    phase = np.vdot(psi_y, psi_y_plus_1) / norm
+    k_y = np.angle(phase)
+    residual = np.linalg.norm(psi_y_plus_1 - np.exp(1j * k_y) * psi_y) / np.sqrt(norm)
+    if residual > tol:
+        raise ValueError(f"psi is not a T_y eigenstate (residual {residual:.2e}), "
+                         f"probably a mixture within a degenerate subspace")
+    return k_y, residual
 
 
 def GetEigenvectorsForCorrelationMatrixArbitraryOccupation(H, N, psi_support_per_spin, zero_energy_tol, num_zero_modes,
@@ -1250,7 +1291,8 @@ def SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, geometry, bc_MPS, g
                        (0 = none), Trotterized with ceil(|jastrow_nn_xy| / jastrow_trotter_res) second order steps.
                        Only one of jastrow_nn_zz, jastrow_nn_xy may be nonzero.
         jastrow_trotter_res: None means default_jastrow_trotter_res.
-        jastrow_chi_max: bond dimension cap while applying the Jastrow factor, defaults to chi_max.
+        jastrow_chi_max: bond dimension cap while applying the Jastrow factor, None means
+                         jastrow_chi_max_default_factor times the maximal chi of the projected state (before the Jastrow).
         z2_bond_sign: sign of the bond amplitudes relative to mu, zeta in the Z2 ansatz (see Z2MeanFieldModel).
     """
     assert jastrow_nn_zz == 0.0 or jastrow_nn_xy == 0.0, "only one of the zz and xy Jastrow factors is supported"
@@ -1332,7 +1374,10 @@ def SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, geometry, bc_MPS, g
 
     if jastrow_nn_zz != 0.0 or jastrow_nn_xy != 0.0:
         assert particle_hole, "Jastrow factor needs the spin MPS of the particle-hole projection"
-        jastrow_trunc_par = {"chi_max": chi_max if jastrow_chi_max is None else jastrow_chi_max}
+        if jastrow_chi_max is None:
+            jastrow_chi_max = int(np.ceil(jastrow_chi_max_default_factor * max(psi_pi_flux.chi)))
+        print(f"Jastrow chi_max: {jastrow_chi_max} (projected state chi {max(psi_pi_flux.chi)})")
+        jastrow_trunc_par = {"chi_max": jastrow_chi_max}
         jastrow_default_total_trunc = 1.e-9
         if jastrow_nn_zz != 0.0:
             jastrow_trunc_par["svd_min"] = jastrow_default_total_trunc
@@ -1674,9 +1719,9 @@ def DebugMagnetizedIMPS():
 
 
 if __name__ == "__main__":
-    SpinonTriangularLatticeMeanFieldGutzwillerProjection(4, "YC", "infinite", 0,
-                                                         model_type_dirac, Lx=2, chi_max=800, flux=0.0,
-                                                         jastrow_nn_xy=0.1)
+    SpinonTriangularLatticeMeanFieldGutzwillerProjection(6, "YC", "finite", 0,
+                                                         model_type_dirac, Lx=20, chi_max=800, flux=1.0,
+                                                         jastrow_nn_xy=0.0, monopole_Q=1)
     exit(0)
 
     # TestFreeFermionsSpinCorrelations()

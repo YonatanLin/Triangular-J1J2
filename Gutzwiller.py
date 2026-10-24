@@ -1039,6 +1039,8 @@ class GutzwillerLatticeSpec:
     """
     model_type = None
     results_dir_name = None # directory of the local results
+    # n_repeat of plot_structure_factor: number of S(k) periods drawn on each side of the central one
+    structure_factor_n_repeat = 0
 
     def fermion_lattice(self, site, Lx, Ly, spinfull, bc_MPS, bc=None):
         """ bc=None: open (periodic for an infinite MPS) along the cylinder, periodic around it """
@@ -1139,6 +1141,8 @@ class TriangularGutzwillerSpec(GutzwillerLatticeSpec):
 class KagomeGutzwillerSpec(GutzwillerLatticeSpec):
     results_dir_name = "KagomeGutzwiller/"
     model_type = model_type_dirac
+    # the period of S(k) is the extended Brillouin zone, drawn with its neighbours to show the periodicity
+    structure_factor_n_repeat = 1
 
     def fermion_lattice(self, site, Lx, Ly, spinfull, bc_MPS, bc=None):
         return GetPiFluxKagomeLattice(site, Lx, Ly, spinfull, bc_MPS, bc=bc)
@@ -1736,7 +1740,8 @@ def SpinonMeanFieldGutzwillerProjection(spec, Ly, bc_MPS, gs_manifold_index, Lx=
                                                           n1=n1, n2=n2)
 
     fig_corr_k, ax_corr_k = plt.subplots(figsize=(6, 5))
-    plot_structure_factor(ks, spin_corr_k, lat_for_corr, ax_corr_k, mode='voronoi')
+    plot_structure_factor(ks, spin_corr_k, lat_for_corr, ax_corr_k, mode='voronoi',
+                          n_repeat=spec.structure_factor_n_repeat)
     spec.plot_brillouin_zone(ax_corr_k, spin_site, bc_MPS)
     ax_corr_k.set_title("Spin Correlations")
 

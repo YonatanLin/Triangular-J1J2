@@ -558,7 +558,8 @@ def PlotKagomeBrillouinZone(ax):
     # of the Kagome sites and the hexagon centers), the period of S(k)
     site = SpinHalfSite(None)
     BuildKagomeLattice(1, 1, site, "finite", bc="periodic").plot_brillouin_zone(ax)
-    tenpy.models.lattice.Triangular(1, 1, site, bc="periodic", bc_MPS="finite").plot_brillouin_zone(
+    # not tenpy's Triangular, whose basis is rotated by 30 degrees relative to the Kagome Bravais basis
+    BuildTriangularLattice(1, 1, site, "finite", ("periodic", "periodic"), "YC").plot_brillouin_zone(
         ax, draw_points=False, ls=':')
 
 
@@ -764,6 +765,8 @@ class DMRGLatticeSpec:
     local_results_dir_name = None
     # mode of plot_structure_factor
     structure_factor_plot_mode = "interpolate"
+    # n_repeat of plot_structure_factor: number of S(k) periods drawn on each side of the central one
+    structure_factor_n_repeat = 0
 
     def lattice(self, site, Lx, Ly, bc_MPS, bc):
         raise NotImplementedError
@@ -821,6 +824,8 @@ class KagomeDMRGSpec(DMRGLatticeSpec):
     local_results_dir_name = "LocalJ1J2KagomeDMRGResults/"
     # S(k) isn't periodic in the Kagome reciprocal lattice (only in the extended one), so it is not interpolated
     structure_factor_plot_mode = "voronoi"
+    # the period of S(k) is the extended Brillouin zone, drawn with its neighbours to show the periodicity
+    structure_factor_n_repeat = 1
 
     def lattice(self, site, Lx, Ly, bc_MPS, bc):
         return BuildKagomeLattice(Lx, Ly, site, bc_MPS, bc=bc)
@@ -942,7 +947,8 @@ def J1J2DMRG(spec, Lx, Ly, bc, bc_MPS, conserve=True, initial_state="Random", J2
                                                           n1=n1, n2=n2)
 
     fig_corr, ax_corr = plt.subplots(figsize=(6, 5))
-    plot_structure_factor(ks, spin_corr_k, lat, ax_corr, mode=spec.structure_factor_plot_mode)
+    plot_structure_factor(ks, spin_corr_k, lat, ax_corr, mode=spec.structure_factor_plot_mode,
+                          n_repeat=spec.structure_factor_n_repeat)
     spec.plot_brillouin_zone(ax_corr)
 
     special_points_structure_factor = calculateStructureFactorAtSpecialPoints(lat_for_corr, spin_corr_x,

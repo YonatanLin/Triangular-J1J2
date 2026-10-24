@@ -550,10 +550,33 @@ def _tile_kpoints(ks, Sk, lattice, n_tiles):
     return ks_tiled, Sk_tiled, central_slice
 
 
+def _largest_covered_square(ks_tiled, drawn, n_samples=200, n_bisections=30):
+    """
+    Half width of the largest square (-k, k)^2 covered by the Voronoi cells of the points ks_tiled[drawn]: a point is
+    covered iff its nearest point of ks_tiled is drawn. The drawn tiles cover a convex region around the origin, so
+    the coverage is monotonic in k and is found by bisection on a grid of n_samples^2 points of the square.
+    """
+    from scipy.spatial import cKDTree
+
+    tree = cKDTree(ks_tiled)
+    is_drawn = np.zeros(len(ks_tiled), dtype=bool)
+    is_drawn[drawn] = True
+    grid = np.stack(np.meshgrid(np.linspace(-1, 1, n_samples), np.linspace(-1, 1, n_samples)), axis=-1).reshape(-1, 2)
+
+    def covered(k_half):
+        return is_drawn[tree.query(k_half * grid)[1]].all()
+
+    k_low, k_high = 0.0, np.abs(ks_tiled[drawn]).max()
+    for _ in range(n_bisections):
+        k_mid = 0.5 * (k_low + k_high)
+        k_low, k_high = (k_mid, k_high) if covered(k_mid) else (k_low, k_mid)
+    return k_low
+
+
 def plot_structure_factor(ks, Sk, lat, ax=None, cmap='RdBu',
                           mode='interpolate', n_interp=300,
                           show_kpoints=True, n_tiles=1,
-                          edge_color='none'):
+                          edge_color='none', n_repeat=0):
     """Plot S(k) as a 2D image in the lab-frame (kx, ky) plane.
 
     Because the reciprocal lattice vectors b1, b2 of a general lattice
@@ -616,6 +639,11 @@ def plot_structure_factor(ks, Sk, lat, ax=None, cmap='RdBu',
         Edge color of the Voronoi cells; only used when
         ``mode='voronoi'`` (default ``'none'``, i.e. no edges).
         Pass e.g. ``'white'`` or ``'0.3'`` to draw cell boundaries.
+    n_repeat : int
+        Number of periods of S(k) drawn on each side of the central one,
+        i.e. the (2*n_repeat+1)^2 tiles n1*b1 + n2*b2 with |n1|, |n2| <=
+        n_repeat are drawn, with b1, b2 the periods of S(k) (default 0,
+        only the central tile within (-2pi, 2pi)^2).
 
     Returns
     -------
@@ -630,7 +658,12 @@ def plot_structure_factor(ks, Sk, lat, ax=None, cmap='RdBu',
     if ax is None:
         _, ax = plt.subplots(figsize=(5, 5))
 
-    ks_tiled, Sk_tiled, central_slice = _tile_kpoints(ks, Sk, lat, n_tiles)
+    n_tiles = max(n_tiles, n_repeat + 1)  # the drawn tiles need neighbouring images to bound their Voronoi cells
+    ks_tiled, Sk_tiled, _ = _tile_kpoints(ks, Sk, lat, n_tiles)
+    # indices of the points of the drawn tiles; _tile_kpoints orders the tiles by n1, then n2
+    Nk, n_side = len(ks), 2 * n_tiles + 1
+    drawn = np.concatenate([np.arange(t * Nk, (t + 1) * Nk) for t in range(n_side ** 2)
+                            if max(abs(t // n_side - n_tiles), abs(t % n_side - n_tiles)) <= n_repeat])
 
     if mode == 'interpolate':
         from scipy.interpolate import griddata
@@ -650,7 +683,7 @@ def plot_structure_factor(ks, Sk, lat, ax=None, cmap='RdBu',
 
         patches = []
         values = []
-        for pt_idx in range(central_slice.start, central_slice.stop):
+        for pt_idx in drawn:
             region_idx = vor.point_region[pt_idx]
             region = vor.regions[region_idx]
             if -1 in region or len(region) == 0:
@@ -671,15 +704,23 @@ def plot_structure_factor(ks, Sk, lat, ax=None, cmap='RdBu',
         raise ValueError(f"mode must be 'interpolate' or 'voronoi', got {mode!r}")
 
     if show_kpoints:
-        ax.scatter(ks_tiled[:, 0], ks_tiled[:, 1],
+        shown = drawn if n_repeat > 0 else slice(None)  # all the images by default, beyond the axes limits
+        ax.scatter(ks_tiled[shown, 0], ks_tiled[shown, 1],
                    color='white', s=12, linewidths=0,
                    alpha=0.5, zorder=3)
 
     ax.set_aspect('equal')
     ax.set_xlabel(r'$k_x$')
     ax.set_ylabel(r'$k_y$')
-    ax.set_xlim((-2 * pi, 2 * pi))
-    ax.set_ylim((-2 * pi, 2 * pi))
+    if n_repeat == 0:
+        ax.set_xlim((-2 * pi, 2 * pi))
+        ax.set_ylim((-2 * pi, 2 * pi))
+    else:
+        # the largest centered square covered by the drawn tiles, so that the plot fills the axes; S(k) is periodic,
+        # so the tiles cut at its edges lose nothing
+        k_half = _largest_covered_square(ks_tiled, drawn)
+        ax.set_xlim((-k_half, k_half))
+        ax.set_ylim((-k_half, k_half))
     plt.colorbar(artist, ax=ax, label=r'$S(\mathbf{k})$')
 
     return ax, artist

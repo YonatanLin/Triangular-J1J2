@@ -85,7 +85,7 @@ def PlotEntanglementProfileAndFitCentralCharge(psi, results_dir):
     decays into the bulk; the central half suppresses its residual bias). Saves EE_profile.png and EE_profile.txt.
     """
     import matplotlib.pyplot as plt
-
+    assert(psi.finite)
     S = np.asarray(psi.entanglement_entropy())  # bond i is between sites i and i + 1
     bonds = np.arange(len(S))
     sites_per_column = 1

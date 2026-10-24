@@ -23,8 +23,8 @@ from Noninteracting import PiFluxBandStructure
 from WaveFunctionProperties import (plot_structure_factor, ComputeMomentumSpaceStructureFactor,
                                     CalculateSpinSpinCorrelations, plot_scalar_spin_chirality, SpinComponentsOutput)
 from Main import (AbsMagzFromNormMagz, BuildTriangularLattice, TriangularXC, LxInfiniteMPSCorrelations,
-                  CreateGutzwillerCaseDir, PlotLattice, PrintCouplings, ImshowMatrix, SaveSimulationOutput,
-                  calculateStructureFactorAtSpecialPoints, getSpecielBzPoints, glob_results_dir, code_dir, meetings_dir,
+                  CreateGutzwillerCaseDir, CreateKagomeGutzwillerCaseDir, PlotLattice, PrintCouplings, ImshowMatrix, SaveSimulationOutput,
+                  calculateStructureFactorAtSpecialPoints, getTriangularLatticeSpecielBzPoints, glob_results_dir, code_dir, meetings_dir,
                   model_type_dirac, model_type_Z2, pauli_x, pauli_y, pauli_z, ResolveJastrowTrotterRes)
 
 svd_min_slater_default = 5e-7
@@ -328,14 +328,17 @@ def CreateHamiltonianMatrixFromCouplingsList(model, N_sites, dtype=np.float64):
     return H
 
 
-def FreeFermionSpinCorrelations(C):
+def FreeFermionSpinCorrelations(C, particle_hole):
     """
     input: two-fermions spatial correlation matrix C, corresponding to a quadratic Hamiltonian
     :return: spin-spin correlations, where the spin operator is expressed as a fermion bilinear contracted with Pauli
     matrices
     """
     C_up = C[0::2, 0::2]
-    C_down = np.eye(C_up.shape[0]) - np.transpose(C[1::2, 1::2])
+    if particle_hole:
+        C_down = np.eye(C_up.shape[0]) - np.transpose(C[1::2, 1::2])
+    else:
+        C_down = C[1::2, 1::2]
 
     assert(np.max(np.abs(C_up - HT(C_up))) < 1e-14), "C_up should be hermitian"
     assert (np.max(np.abs(C_down - HT(C_down))) < 1e-14), "C_down should be hermitian"
@@ -598,11 +601,18 @@ def KagomePiFluxBondSigns(sub1, sub2, dr, y_coors):
     return signs
 
 
+# Dirac point energy of H = -sum_<ij> s_ij f^dag_i f_j, the Fermi level at half filling
+kagome_pi_flux_dirac_energy = sqrt(3) - 1
+
+
 class KagomeMonopoleCondensatePiFluxModel(MeanFieldSpinonModel):
     """
-        Dirac pi flux (U(1) Dirac spin liquid) mean field ansatz on the Kagome lattice, H = -sum_<ij> s_ij f^dag_i f_j,
+        Dirac pi flux (U(1) Dirac spin liquid) mean field ansatz on the Kagome lattice,
+        H = -sum_<ij> s_ij f^dag_i f_j - kagome_pi_flux_dirac_energy * N,
         with the gauge signs s_ij of KagomePiFluxBondSigns (Fig. 1b of He et al.). Lattice from GetPiFluxKagomeLattice,
         with unit cell index u = n_flavors * sublattice + spin.
+        The chemical potential puts the Dirac points at zero energy, so that in the particle-hole representation the up
+        spinons and the down holes share the Fermi level 0, as for the triangular pi flux ansatz.
         flux (in units of pi) is threaded through the cylinder. Monopole insertion (monopole_Q != 0) is not implemented yet.
     """
     def init_terms(self, model_params):
@@ -628,6 +638,11 @@ class KagomeMonopoleCondensatePiFluxModel(MeanFieldSpinonModel):
 
         nys, nxs = np.arange(0, Ly), np.arange(0, Lx)
         y_coors, x_coors = np.meshgrid(nys, nxs) # first coordinate of the matrix (row) is the x coordinate
+
+        for u in range(len(lat.unit_cell_positions)):
+            # -mu n_down -> +mu n_hole for the particle-hole transformed down spins, up to the dropped constant
+            ph_sgn = getParticleHoleHoppingSign(u) if particle_hole else 1
+            self.add_onsite((-1) * ph_sgn * kagome_pi_flux_dirac_energy, u, "N")
 
         for u1, u2, dr in lat.pairs["nearest_neighbors"]:
             assert(u1 % n_flavors == u2 % n_flavors)
@@ -868,32 +883,78 @@ def getZeroModesDict(gs_manifold_index):
 def CalculateExactCMatrixForPiFlux(gs_manifold_index, model_params, model_type,
                                    zero_energy_tol=1e-9, plot_lattice=False, abs_magz=0,
                                    results_dir=None, debug=False):
-    particle_hole = model_params["particle_hole"]
-    triangular_lat = model_params["lattice"]
+    """ CalculateExactCMatrixForMeanFieldModel for the triangular lattice ansatz of model_type """
     if model_type == model_type_dirac:
         model = MonopoleCondensatePiFluxModel(model_params)
     elif model_type == model_type_Z2:
         model = Z2MeanFieldModel(model_params)
     else:
         raise ValueError("unrecognized model type")
+    return CalculateExactCMatrixForMeanFieldModel(model, model_type, gs_manifold_index, model_params["particle_hole"],
+                                                  zero_energy_tol=zero_energy_tol, plot_lattice=plot_lattice,
+                                                  abs_magz=abs_magz, results_dir=results_dir, debug=debug)
 
+
+def SymmetricSpinBlockSpectrum(H, tol):
+    """ whether the up spin block H[0::2, 0::2] of the spin block diagonal H has a spectrum symmetric about 0 """
+    assert (np.max(np.abs(H[0::2, 1::2])) < 1e-14), "H should be spin block diagonal"
+    e_up = np.linalg.eigvalsh(H[0::2, 0::2])
+    return np.allclose(e_up, -e_up[::-1], rtol=0, atol=tol)
+
+
+def HalfFilledSpinBlocksCorrelationMatrix(H, gap_tol):
+    """
+        Correlation matrix C_ij = <c_j^dag c_i> (as slater.correlation_matrix) of the spin block diagonal H, with the
+        lowest half of the orbitals of each spin block H[p::2, p::2] filled. In the particle-hole representation this is
+        half filling of both the up spinons and the down holes, i.e. one fermion per site and S^z = 0.
+    """
+    assert (np.max(np.abs(H[0::2, 1::2])) < 1e-14), "H should be spin block diagonal"
+    n_sites = H.shape[0] // 2
+    assert (n_sites % 2 == 0), "half filling of each spin block needs an even number of sites"
+    v = np.zeros((H.shape[0], n_sites), dtype=np.complex128)
+    for parity in [0, 1]:
+        e_p, v_p = eigh(H[parity::2, parity::2])
+        assert (e_p[n_sites // 2] - e_p[n_sites // 2 - 1] > gap_tol), \
+            "degenerate Fermi level at half filling of a spin block"
+        v[parity::2, parity::2] = v_p[:, 0:n_sites // 2]
+    C = v @ HT(v)
+    if np.allclose(C.imag, 0.0, rtol=0, atol=1e-14):
+        C = C.real  # eliminate zero imaginary parts
+    return C
+
+
+def CalculateExactCMatrixForMeanFieldModel(model, model_type, gs_manifold_index, particle_hole, zero_energy_tol=1e-9,
+                                           plot_lattice=False, abs_magz=0, results_dir=None, debug=False):
+    """
+        Ground state correlation matrix C of the quadratic mean field model (on model.lat), with the filling and the
+        zero modes occupation determined as for the pi flux / Z2 ansatz of model_type. Returns (C, model.lat).
+    """
+    lat = model.lat
 
     if plot_lattice:
         fig, ax = plt.subplots(figsize=(6, 5))
-        PlotLattice(triangular_lat, ax, additional_couplings_to_plot=model.pos_hoppings_list)
-        PlotLattice(triangular_lat, ax, additional_couplings_to_plot=model.neg_hoppings_list,
+        PlotLattice(lat, ax, additional_couplings_to_plot=model.pos_hoppings_list)
+        PlotLattice(lat, ax, additional_couplings_to_plot=model.neg_hoppings_list,
                     nnn_line_style="--", )
         if local:
             plt.show()
 
-    H = CreateHamiltonianMatrixFromCouplingsList(model, triangular_lat.N_sites, dtype=np.complex128)
+    H = CreateHamiltonianMatrixFromCouplingsList(model, lat.N_sites, dtype=np.complex128)
     e, v = eigh(H)
 
-    Lx, Ly = triangular_lat.Ls
+    Lx, Ly = lat.Ls
 
     if debug:
         np.savetxt(f"debug_magnetized_iMPS/e_Lx_{Lx}.txt", e)
         np.savetxt(f"debug_magnetized_iMPS/v_Lx_{Lx}.txt", v)
+
+    finite_magz = abs(abs_magz) > 0
+    if (model_type == model_type_dirac and particle_hole and not finite_magz
+            and not SymmetricSpinBlockSpectrum(H, zero_energy_tol)):
+        # no common Fermi level 0 of the up spinons and the down holes (e.g. the Kagome pi flux ansatz on an open
+        # cylinder, whose spectrum has in gap edge states), so fill each spin block separately
+        assert (gs_manifold_index == 0), "gs_manifold_index is only supported for a symmetric spectrum"
+        return HalfFilledSpinBlocksCorrelationMatrix(H, zero_energy_tol), lat
 
     zero_modes_indices = np.where(np.abs(e) < zero_energy_tol)
     num_zero_modes = zero_modes_indices[0].shape[0]
@@ -902,14 +963,13 @@ def CalculateExactCMatrixForPiFlux(gs_manifold_index, model_params, model_type,
         assert (gs_manifold_index == 0), "don't support gs_manifold_index for more than 4 zero modes"
     print(f"number of zero modes in pi flux model: {num_zero_modes}")
     zero_modes = num_zero_modes > 0
-    finite_magz = abs(abs_magz) > 0
     if model_type == model_type_Z2:
         assert not zero_modes, "shouldn't have zero modes in the Z2 gapped ansatz"
 
     if finite_magz:
         assert (particle_hole), "expect particle hole for magnetized state"
-        assert (abs_magz <= triangular_lat.N_sites // 4), "absolute magnetization cannot exceed the number of sites"
-        N_up = (triangular_lat.N_sites // 4 + abs_magz)
+        assert (abs_magz <= lat.N_sites // 4), "absolute magnetization cannot exceed the number of sites"
+        N_up = (lat.N_sites // 4 + abs_magz)
         N_filling = 2 * N_up
 
         n_edge_modes_L_up = 0
@@ -945,14 +1005,14 @@ def CalculateExactCMatrixForPiFlux(gs_manifold_index, model_params, model_type,
     elif model_type == model_type_dirac:
         if particle_hole and not zero_modes:
             #TODO: is it okay that we don't enter here if there are zero modes?
-            N_filling_no_ph = triangular_lat.N_sites // 2
+            N_filling_no_ph = lat.N_sites // 2
             N_up, N_down_holes = DetermineSpinsOccupation(N_filling_no_ph, H, e)
             print(f"N_up={N_up}, N_down_holes={N_down_holes}")
             N_filling = 2*N_up
         else:
-            N_filling = (np.max(zero_modes_indices) + 1) if zero_modes else (triangular_lat.N_sites // 2)
+            N_filling = (np.max(zero_modes_indices) + 1) if zero_modes else (lat.N_sites // 2)
     else:
-        N_filling = triangular_lat.N_sites // 2
+        N_filling = lat.N_sites // 2
 
     print("pi-flux energy from exact diagonalization: ", np.sum(e[0:N_filling])/N_filling)
 
@@ -966,81 +1026,240 @@ def CalculateExactCMatrixForPiFlux(gs_manifold_index, model_params, model_type,
                 "Fermi level should sit inside a gap for magnetized state"
         C, _ = slater.correlation_matrix(H, N_filling)
 
-    return C, triangular_lat
+    return C, lat
+
+
+class GutzwillerLatticeSpec:
+    """
+        The lattice dependent parts of the mean field Gutzwiller pipeline (GetFluxSlaterMPS,
+        SpinonMeanFieldGutzwillerProjection). The fermion lattice has the unit cell index
+        u = n_flavors * (spin lattice unit cell index) + spin, so that grouping the (up, down) site pairs of the projected
+        MPS gives the MPS ordering of the spin lattice.
+    """
+    model_type = None
+    results_dir_name = None # directory of the local results
+
+    def fermion_lattice(self, site, Lx, Ly, spinfull, bc_MPS, bc=None):
+        """ bc=None: open (periodic for an infinite MPS) along the cylinder, periodic around it """
+        raise NotImplementedError
+
+    def spin_lattice(self, spin_site, Lx, Ly, bc_MPS, bc):
+        raise NotImplementedError
+
+    def mean_field_params(self, flux, monopole_Q, particle_hole):
+        """ model_params of mean_field_model, without the lattice """
+        raise NotImplementedError
+
+    def mean_field_model(self, model_params):
+        raise NotImplementedError
+
+    def check_dimensions(self, Lx, Ly):
+        """ Lx: the length of the finite cylinder or of the iMPS unit cell """
+        raise NotImplementedError
+
+    def Lx_correlations(self, Lx, Ly):
+        """ length of the finite lattice the correlations of an iMPS are calculated on """
+        raise NotImplementedError
+
+    def special_bz_points(self):
+        raise NotImplementedError
+
+    def plot_brillouin_zone(self, ax, spin_site, bc_MPS):
+        raise NotImplementedError
+
+    def periodic_gauge_phases(self, lat, Lx_cell, monopole_Q, particle_hole):
+        """ see PeriodicLandauGaugePhases """
+        raise NotImplementedError
+
+    def case_dir(self, main_results_dir, Lx, Ly, chi_max, flux, bc_MPS, gs_manifold_index, norm_magz, monopole_Q,
+                 **suffix_kwargs):
+        """ creates the results directory, suffix_kwargs as in GutzwillerCaseNameSuffix """
+        raise NotImplementedError
+
+
+class TriangularGutzwillerSpec(GutzwillerLatticeSpec):
+    results_dir_name = "MonopoleCondensateGutzwiller/"
+
+    def __init__(self, geometry, model_type, z2_bond_sign=1):
+        assert (geometry == "XC" or geometry == "YC")
+        self.geometry = geometry
+        self.model_type = model_type
+        self.z2_bond_sign = z2_bond_sign
+
+    def fermion_lattice(self, site, Lx, Ly, spinfull, bc_MPS, bc=None):
+        if bc is None:
+            return GetPiFluxTriangularLattice(site, Lx, Ly, spinfull, bc_MPS, self.geometry)
+        return BuildTriangularLattice(Lx, Ly, site, bc_MPS, bc, self.geometry, spinfull)
+
+    def spin_lattice(self, spin_site, Lx, Ly, bc_MPS, bc):
+        return BuildTriangularLattice(Lx, Ly, spin_site, bc_MPS, bc=bc, geometry=self.geometry)
+
+    def mean_field_params(self, flux, monopole_Q, particle_hole):
+        if self.model_type == model_type_dirac:
+            return {"init_H_MPO": False, "monopole_Q": monopole_Q, "flux": flux, "particle_hole": particle_hole}
+        elif self.model_type == model_type_Z2:
+            assert particle_hole, "Z2 ansatz with pairing needs the particle-hole representation"
+            model_params = Z2MeanFieldModelOptimalQSL(self.z2_bond_sign, flux=flux)
+            model_params["particle_hole"] = particle_hole
+            return model_params
+        raise ValueError("inrecognized model type")
+
+    def mean_field_model(self, model_params):
+        if self.model_type == model_type_dirac:
+            return MonopoleCondensatePiFluxModel(model_params)
+        elif self.model_type == model_type_Z2:
+            return Z2MeanFieldModel(model_params)
+        raise ValueError("unrecognized model type")
+
+    def check_dimensions(self, Lx, Ly):
+        assert(Lx % 2 == 0), "pi-flux model requires even-sized unitcell"
+
+    def Lx_correlations(self, Lx, Ly):
+        return LxInfiniteMPSCorrelations(Lx, Ly, self.geometry)
+
+    def special_bz_points(self):
+        return getTriangularLatticeSpecielBzPoints()
+
+    def plot_brillouin_zone(self, ax, spin_site, bc_MPS):
+        BuildTriangularLattice(1, 1, spin_site, bc_MPS, geometry="YC").plot_brillouin_zone(ax)
+
+    def periodic_gauge_phases(self, lat, Lx_cell, monopole_Q, particle_hole):
+        assert self.geometry == "YC", "monopole flux only implemented for YC"
+        return PeriodicLandauGaugePhases(lat, Lx_cell, monopole_Q, particle_hole)
+
+    def case_dir(self, main_results_dir, Lx, Ly, chi_max, flux, bc_MPS, gs_manifold_index, norm_magz, monopole_Q,
+                 **suffix_kwargs):
+        z2_bond_sign = self.z2_bond_sign if self.model_type == model_type_Z2 else None
+        return CreateGutzwillerCaseDir(main_results_dir, Lx, Ly, chi_max, flux, self.geometry, bc_MPS,
+                                       gs_manifold_index, self.model_type, norm_magz, monopole_Q,
+                                       z2_bond_sign=z2_bond_sign, **suffix_kwargs)
+
+
+def KagomeSpecialBzPoints():
+    """
+        The Bravais lattice of the Kagome lattice is triangular with lattice constant 2, so the M, K points of its
+        Brillouin zone are those of getSpecielBzPoints divided by 2. The points of the extended Brillouin zone (of the
+        triangular lattice with lattice constant 1, the Kagome sites and the hexagon centers), with the suffix "_ext",
+        are getSpecielBzPoints themselves.
+    """
+    triangular_points = getTriangularLatticeSpecielBzPoints()
+    points = {key: k / 2 for key, k in triangular_points.items()}
+    points.update({key + "_ext": k for key, k in triangular_points.items()})
+    return points
+
+
+class KagomeGutzwillerSpec(GutzwillerLatticeSpec):
+    results_dir_name = "KagomeGutzwiller/"
+    model_type = model_type_dirac
+
+    def fermion_lattice(self, site, Lx, Ly, spinfull, bc_MPS, bc=None):
+        return GetPiFluxKagomeLattice(site, Lx, Ly, spinfull, bc_MPS, bc=bc)
+
+    def spin_lattice(self, spin_site, Lx, Ly, bc_MPS, bc):
+        return tenpy.models.lattice.Kagome(Lx, Ly, spin_site, bc=bc, bc_MPS=bc_MPS)
+
+    def mean_field_params(self, flux, monopole_Q, particle_hole):
+        return {"init_H_MPO": False, "monopole_Q": monopole_Q, "flux": flux, "particle_hole": particle_hole}
+
+    def mean_field_model(self, model_params):
+        return KagomeMonopoleCondensatePiFluxModel(model_params)
+
+    def check_dimensions(self, Lx, Ly):
+        assert(Ly % 2 == 0), "the Kagome pi flux magnetic unit cell is doubled along a_y, Ly must be even"
+
+    def Lx_correlations(self, Lx, Ly):
+        return LxInfiniteMPSCorrelations(Lx, Ly, "YC")
+
+    def special_bz_points(self):
+        return KagomeSpecialBzPoints()
+
+    def plot_brillouin_zone(self, ax, spin_site, bc_MPS):
+        tenpy.models.lattice.Kagome(1, 1, spin_site, bc="periodic", bc_MPS=bc_MPS).plot_brillouin_zone(ax)
+
+    def periodic_gauge_phases(self, lat, Lx_cell, monopole_Q, particle_hole):
+        raise NotImplementedError("monopole insertion is not implemented for the Kagome pi flux ansatz")
+
+    def case_dir(self, main_results_dir, Lx, Ly, chi_max, flux, bc_MPS, gs_manifold_index, norm_magz, monopole_Q,
+                 **suffix_kwargs):
+        return CreateKagomeGutzwillerCaseDir(main_results_dir, Lx, Ly, chi_max, flux, bc_MPS, gs_manifold_index,
+                                             norm_magz, monopole_Q, **suffix_kwargs)
 
 
 def GetTriangularFluxSlaterMPS(Lx, Ly, spinfull, site, geometry, slater_trunc_par, unitcell_width,
                                bc_MPS, gs_manifold_index, model_type, flux=0.0, particle_hole=True,
                                norm_magz=0., monopole_Q=0, iMPS_Lx_factor=Lx_short_factor_temfpy_iMPS, results_dir=None,
                                z2_bond_sign=1):
+    spec = TriangularGutzwillerSpec(geometry, model_type, z2_bond_sign)
+    psi_from_slater, C, lat = GetFluxSlaterMPS(spec, Lx, Ly, spinfull, site, slater_trunc_par, bc_MPS,
+                                               gs_manifold_index, flux=flux, particle_hole=particle_hole,
+                                               norm_magz=norm_magz, monopole_Q=monopole_Q,
+                                               iMPS_Lx_factor=iMPS_Lx_factor, results_dir=results_dir)
+    # GetFluxSlaterMPS reads the fermion sites per lattice unit cell off the lattice
+    assert (lat.N_sites == unitcell_width * Lx * Ly)
+    return psi_from_slater, C, lat
+
+
+def GetFluxSlaterMPS(spec, Lx, Ly, spinfull, site, slater_trunc_par, bc_MPS, gs_manifold_index, flux=0.0,
+                     particle_hole=True, norm_magz=0., monopole_Q=0, iMPS_Lx_factor=Lx_short_factor_temfpy_iMPS,
+                     results_dir=None):
+    """ Slater determinant (i)MPS of the mean field ansatz of the GutzwillerLatticeSpec spec """
     zero_energy_tol = 1e3 * slater_trunc_par["degeneracy_tol"]
-    assert(Lx % 2 == 0), "pi-flux model requires even-sized unitcell"
-    imps_unitcell = unitcell_width * Lx * Ly
+    spec.check_dimensions(Lx, Ly)
 
     C = None
     finite = (bc_MPS == "finite")
     finite_bc_MPS = "finite"
 
-    if model_type == model_type_dirac:
-        model_params = {"init_H_MPO": False, "monopole_Q": monopole_Q, "flux": flux,
-                        "particle_hole": particle_hole}
-    elif model_type == model_type_Z2:
-        assert particle_hole, "Z2 ansatz with pairing needs the particle-hole representation"
-        model_params = Z2MeanFieldModelOptimalQSL(z2_bond_sign, flux=flux)
-        model_params["particle_hole"] = particle_hole
-    else:
-        raise ValueError("inrecognized model type")
-        model_params = None
+    model_params = spec.mean_field_params(flux, monopole_Q, particle_hole)
 
-    triangular_lat_finite = GetPiFluxTriangularLattice(site, Lx, Ly, spinfull, finite_bc_MPS, geometry)
+    lat_finite = spec.fermion_lattice(site, Lx, Ly, spinfull, finite_bc_MPS)
+    imps_unitcell = lat_finite.N_sites
     if finite:
-        abs_magz = AbsMagzFromNormMagz(norm_magz, triangular_lat_finite.N_sites // 2)
-        model_params["lattice"] = triangular_lat_finite
-        C, triangular_lattice = CalculateExactCMatrixForPiFlux(gs_manifold_index, model_params, model_type,
-                                                               zero_energy_tol = zero_energy_tol,
-                                                               plot_lattice=False, abs_magz=abs_magz,
-                                                               results_dir=results_dir)
+        abs_magz = AbsMagzFromNormMagz(norm_magz, lat_finite.N_sites // 2)
+        model_params["lattice"] = lat_finite
+        C, lattice = CalculateExactCMatrixForMeanFieldModel(spec.mean_field_model(model_params), spec.model_type,
+                                                            gs_manifold_index, particle_hole,
+                                                            zero_energy_tol=zero_energy_tol, abs_magz=abs_magz,
+                                                            results_dir=results_dir)
 
         psi_from_slater = slater.C_to_MPS(C, trunc_par=slater_trunc_par)
     else:
-        abs_magz_unitcell = AbsMagzFromNormMagz(norm_magz, triangular_lat_finite.N_sites // 2)
-        if model_type != model_type_Z2:
-            assert ("monopole_Q" in model_params), ("Should specify monopole Q for models other than Z2.")
+        abs_magz_unitcell = AbsMagzFromNormMagz(norm_magz, lat_finite.N_sites // 2)
         Q_unitcell = model_params.get("monopole_Q", 0)
 
         Lx_short, Lx_long = iMPS_Lx_factor * Lx, (iMPS_Lx_factor + 1) * Lx
 
         model_params_short = model_params.copy()
-        triangular_lat_short = GetPiFluxTriangularLattice(site, Lx_short, Ly, spinfull, finite_bc_MPS, geometry)
-        model_params_short["lattice"] = triangular_lat_short
-        if model_type == model_type_dirac:
+        lat_short = spec.fermion_lattice(site, Lx_short, Ly, spinfull, finite_bc_MPS)
+        model_params_short["lattice"] = lat_short
+        if "monopole_Q" in model_params:
             model_params_short["monopole_Q"] = Q_unitcell * (Lx_short // Lx)
-        abs_magz_short = AbsMagzFromNormMagz(norm_magz, triangular_lat_short.N_sites // 2)
+        abs_magz_short = AbsMagzFromNormMagz(norm_magz, lat_short.N_sites // 2)
 
-        C_short, triangular_lat_short = CalculateExactCMatrixForPiFlux(gs_manifold_index, model_params_short, model_type,
-                                                                       zero_energy_tol=zero_energy_tol,
-                                                                       abs_magz=abs_magz_short)
+        C_short, lat_short = CalculateExactCMatrixForMeanFieldModel(spec.mean_field_model(model_params_short),
+                                                                    spec.model_type, gs_manifold_index, particle_hole,
+                                                                    zero_energy_tol=zero_energy_tol,
+                                                                    abs_magz=abs_magz_short)
 
         model_params_long = model_params.copy()
-        triangular_lat_long = GetPiFluxTriangularLattice(site, Lx_long, Ly, spinfull, finite_bc_MPS, geometry)
-        model_params_long["lattice"] = triangular_lat_long
-        if model_type == model_type_dirac:
+        lat_long = spec.fermion_lattice(site, Lx_long, Ly, spinfull, finite_bc_MPS)
+        model_params_long["lattice"] = lat_long
+        if "monopole_Q" in model_params:
             model_params_long["monopole_Q"] = Q_unitcell * (Lx_long // Lx)
-        abs_magz_long = AbsMagzFromNormMagz(norm_magz, triangular_lat_long.N_sites // 2)
+        abs_magz_long = AbsMagzFromNormMagz(norm_magz, lat_long.N_sites // 2)
 
         assert (abs_magz_short + abs_magz_unitcell == abs_magz_long), \
                 "magnetization should fit in unitcell for iMPS temfpy calculation"
 
-        C_long, triangular_lat_long = CalculateExactCMatrixForPiFlux(gs_manifold_index, model_params_long, model_type,
-                                                                     zero_energy_tol=zero_energy_tol,
-                                                                     abs_magz=abs_magz_long)
-        middle_site_mps_ind_short = triangular_lat_short.lat2mps_idx([Lx_short // 2, 0, 0])
-        # exit(0)
+        C_long, lat_long = CalculateExactCMatrixForMeanFieldModel(spec.mean_field_model(model_params_long),
+                                                                  spec.model_type, gs_manifold_index, particle_hole,
+                                                                  zero_energy_tol=zero_energy_tol,
+                                                                  abs_magz=abs_magz_long)
+        middle_site_mps_ind_short = lat_short.lat2mps_idx([Lx_short // 2, 0, 0])
 
-        if model_type == model_type_dirac and Q_unitcell != 0:
-            assert geometry == "YC", "monopole flux only implemented for YC"
-            for lat_i, name in [(triangular_lat_short, "short"), (triangular_lat_long, "long")]:
-                g = PeriodicLandauGaugePhases(lat_i, Lx, Q_unitcell, particle_hole)
+        if Q_unitcell != 0:
+            for lat_i, name in [(lat_short, "short"), (lat_long, "long")]:
+                g = spec.periodic_gauge_phases(lat_i, Lx, Q_unitcell, particle_hole)
                 if name == "short":
                     C_short = g[:, None] * C_short * np.conj(g)[None, :]
                 else:
@@ -1058,12 +1277,11 @@ def GetTriangularFluxSlaterMPS(Lx, Ly, spinfull, site, geometry, slater_trunc_pa
         print("#####################")
 
         infinite_bc = ("periodic", "periodic")
-        triangular_lattice = BuildTriangularLattice(Lx, Ly, site, bc_MPS, infinite_bc,
-                                                    geometry, spinfull)
+        lattice = spec.fermion_lattice(site, Lx, Ly, spinfull, bc_MPS, bc=infinite_bc)
 
-    psi_from_slater.unit_cell_width = triangular_lattice.mps_unit_cell_width
+    psi_from_slater.unit_cell_width = lattice.mps_unit_cell_width
 
-    return psi_from_slater, C, triangular_lattice
+    return psi_from_slater, C, lattice
 
 
 def TriangularPiFluxAnsatz(Lx=2, Ly=3, spinfull=True, bc_MPS="finite",
@@ -1389,11 +1607,27 @@ def XYJastrowTrotterSteps(v, trotter_res):
 
 
 def SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, geometry, bc_MPS, gs_manifold_index, model_type,
-                                                         Lx=6, chi_max=3000, flux=0.0, norm_magz=0.0, monopole_Q=0,
-                                                         iMPS_Lx_factor=Lx_short_factor_temfpy_iMPS,
-                                                         svd_min=None, jastrow_nn_zz=0.0, jastrow_chi_max=None,
-                                                         jastrow_nn_xy=0.0, jastrow_trotter_res=None, z2_bond_sign=1):
+                                                         z2_bond_sign=1, **kwargs):
     """
+        SpinonMeanFieldGutzwillerProjection of the triangular lattice ansatz of model_type.
+        z2_bond_sign: sign of the bond amplitudes relative to mu, zeta in the Z2 ansatz (see Z2MeanFieldModel).
+    """
+    SpinonMeanFieldGutzwillerProjection(TriangularGutzwillerSpec(geometry, model_type, z2_bond_sign), Ly, bc_MPS,
+                                        gs_manifold_index, **kwargs)
+
+
+def SpinonKagomeMeanFieldGutzwillerProjection(Ly, bc_MPS, gs_manifold_index, **kwargs):
+    """ SpinonMeanFieldGutzwillerProjection of the Kagome Dirac pi flux ansatz """
+    SpinonMeanFieldGutzwillerProjection(KagomeGutzwillerSpec(), Ly, bc_MPS, gs_manifold_index, **kwargs)
+
+
+def SpinonMeanFieldGutzwillerProjection(spec, Ly, bc_MPS, gs_manifold_index, Lx=6, chi_max=3000, flux=0.0,
+                                        norm_magz=0.0, monopole_Q=0, iMPS_Lx_factor=Lx_short_factor_temfpy_iMPS,
+                                        svd_min=None, jastrow_nn_zz=0.0, jastrow_chi_max=None, jastrow_nn_xy=0.0,
+                                        jastrow_trotter_res=None):
+    """
+        Gutzwiller projected mean field ansatz of the GutzwillerLatticeSpec spec, with an optional Jastrow factor, and
+        its spin correlations.
         jastrow_nn_zz: v of the Jastrow factor exp(-v sum_<ij> Sz_i Sz_j) applied after the projection (0 = none).
         jastrow_nn_xy: v of the Jastrow factor exp(-v sum_<ij> (Sx_i Sx_j + Sy_i Sy_j)) applied after the projection
                        (0 = none), Trotterized with ceil(|jastrow_nn_xy| / jastrow_trotter_res) second order steps.
@@ -1401,7 +1635,6 @@ def SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, geometry, bc_MPS, g
         jastrow_trotter_res: None means default_jastrow_trotter_res.
         jastrow_chi_max: bond dimension cap while applying the Jastrow factor, None means
                          jastrow_chi_max_default_factor times the maximal chi of the projected state (before the Jastrow).
-        z2_bond_sign: sign of the bond amplitudes relative to mu, zeta in the Z2 ansatz (see Z2MeanFieldModel).
     """
     assert jastrow_nn_zz == 0.0 or jastrow_nn_xy == 0.0, "only one of the zz and xy Jastrow factors is supported"
     jastrow_trotter_res = ResolveJastrowTrotterRes(jastrow_trotter_res)
@@ -1409,7 +1642,7 @@ def SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, geometry, bc_MPS, g
     print(f"norm_magz: {norm_magz}")
     site = FermionSite(conserve='N')
     spin_site = SpinHalfSite(conserve='Sz')
-    gutzwiller_results_dir = "MonopoleCondensateGutzwiller/"
+    gutzwiller_results_dir = spec.results_dir_name
     if local:
         gutzwiller_results_dir = glob_results_dir + gutzwiller_results_dir
 
@@ -1417,48 +1650,38 @@ def SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, geometry, bc_MPS, g
     particle_hole = spinfull
     debug = False
     if local:
-        results_dir = CreateGutzwillerCaseDir(gutzwiller_results_dir, Lx, Ly, chi_max, flux, geometry, bc_MPS,
-                                              gs_manifold_index, model_type, norm_magz, monopole_Q, svd_min=svd_min,
-                                              jastrow_nn_zz=jastrow_nn_zz, jastrow_chi_max=jastrow_chi_max,
-                                              jastrow_nn_xy=jastrow_nn_xy, jastrow_trotter_res=jastrow_trotter_res,
-                                              z2_bond_sign=z2_bond_sign if model_type == model_type_Z2 else None)
+        results_dir = spec.case_dir(gutzwiller_results_dir, Lx, Ly, chi_max, flux, bc_MPS, gs_manifold_index,
+                                    norm_magz, monopole_Q, svd_min=svd_min, jastrow_nn_zz=jastrow_nn_zz,
+                                    jastrow_chi_max=jastrow_chi_max, jastrow_nn_xy=jastrow_nn_xy,
+                                    jastrow_trotter_res=jastrow_trotter_res)
     else:
         results_dir = "./"
     assert((bc_MPS == "finite") or (bc_MPS == "infinite"))
     finite = (bc_MPS == "finite")
-    #fig_lat, ax_lat = plt.subplots()
-    #lat = GetPiFluxTriangularLattice(site, Lx, Ly, True, bc_MPS, geometry)
-    #PlotLattice(lat, ax_lat)
-    #plt.show()
 
     if svd_min is None:
         svd_min = svd_min_slater_default
     slater_trunc_par = {"chi_max": chi_max, "svd_min": svd_min, "degeneracy_tol": 1e-12}
-    assert (geometry == "XC" or geometry == "YC")
-    flavors = 2 if spinfull else 1
-    unitcell_width = flavors if geometry == "YC" else 2 * flavors
 
-    psi_pi_flux, C, triangular_lat = GetTriangularFluxSlaterMPS(Lx, Ly, spinfull, site, geometry, slater_trunc_par,
-                                                                unitcell_width, bc_MPS, gs_manifold_index,
-                                                                model_type, flux=flux, particle_hole=particle_hole,
-                                                                norm_magz=norm_magz, monopole_Q=monopole_Q,
-                                                                iMPS_Lx_factor=iMPS_Lx_factor, results_dir=results_dir,
-                                                                z2_bond_sign=z2_bond_sign)
+    psi_pi_flux, C, fermion_lat = GetFluxSlaterMPS(spec, Lx, Ly, spinfull, site, slater_trunc_par, bc_MPS,
+                                                   gs_manifold_index, flux=flux, particle_hole=particle_hole,
+                                                   norm_magz=norm_magz, monopole_Q=monopole_Q,
+                                                   iMPS_Lx_factor=iMPS_Lx_factor, results_dir=results_dir)
     # np.savetxt(results_dir + "C_slater.csv", C)
 
     if debug and finite:
-        _triangular_lat = GetPiFluxTriangularLattice(site, Lx, Ly, spinfull, bc_MPS, geometry)
-        pi_flux_model = MonopoleCondensatePiFluxModel({"lattice" : _triangular_lat,
-                                                       "init_H_MPO" : True, "flux" : flux, "monopole_Q" : monopole_Q,
-                                                       "particle_hole": particle_hole})
+        mean_field_params = spec.mean_field_params(flux, monopole_Q, particle_hole)
+        mean_field_params.update({"lattice": spec.fermion_lattice(site, Lx, Ly, spinfull, bc_MPS),
+                                  "init_H_MPO": True})
+        mean_field_model = spec.mean_field_model(mean_field_params)
 
         fig, ax_lat = plt.subplots(figsize=(6,5))
-        PlotModelHoppingsByPhase(pi_flux_model, ax_lat, plot_order=False)
+        PlotModelHoppingsByPhase(mean_field_model, ax_lat, plot_order=False)
         if local:
             plt.show()
 
-        print(f"energy per mode of triangular pi flux gs = "
-              f"{pi_flux_model.H_MPO.expectation_value(psi_pi_flux) / (0.5 * _triangular_lat.N_sites)}")
+        print(f"energy per mode of the mean field gs = "
+              f"{mean_field_model.H_MPO.expectation_value(psi_pi_flux) / (0.5 * mean_field_model.lat.N_sites)}")
 
     psi_pi_flux.canonical_form()
         
@@ -1476,9 +1699,9 @@ def SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, geometry, bc_MPS, g
 
     # the spin lattice of the projected MPS: same geometry and bc as the fermion lattice, grouping its (up, down)
     # site pairs gives this ordering
-    Lx, Ly = triangular_lat.Ls
-    bc = triangular_lat.boundary_conditions
-    spin_lat = BuildTriangularLattice(Lx, Ly, spin_site, bc_MPS, bc=bc, geometry=geometry)
+    Lx, Ly = fermion_lat.Ls
+    bc = fermion_lat.boundary_conditions
+    spin_lat = spec.spin_lattice(spin_site, Lx, Ly, bc_MPS, bc)
 
     if jastrow_nn_zz != 0.0 or jastrow_nn_xy != 0.0:
         assert particle_hole, "Jastrow factor needs the spin MPS of the particle-hole projection"
@@ -1510,26 +1733,27 @@ def SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, geometry, bc_MPS, g
     # correlations and their saving as in TriangularJ1J2DMRG (Main.py)
     lat_for_corr = spin_lat
     if not finite:
-        Lx_large = LxInfiniteMPSCorrelations(Lx, Ly, geometry)
-        lat_for_corr = BuildTriangularLattice(Lx_large, Ly, spin_site, bc_MPS, bc=bc, geometry=geometry)
+        Lx_large = spec.Lx_correlations(Lx, Ly)
+        lat_for_corr = spec.spin_lattice(spin_site, Lx_large, Ly, bc_MPS, bc)
     fig_lat, ax_lat = plt.subplots(figsize=(6, 5))
     PlotLattice(lat_for_corr, ax_lat)
 
     # the total, transverse (xx) and longitudinal (zz) correlations and structure factors; all structure factors
     # are on the same, doubled-resolution k grid
     n1, n2 = 2 * lat_for_corr.Ls[0], 2 * lat_for_corr.Ls[1]
-    spin_components_output = SpinComponentsOutput(psi_pi_flux, lat_for_corr, getSpecielBzPoints(), n1=n1, n2=n2)
+    special_bz_points = spec.special_bz_points()
+    spin_components_output = SpinComponentsOutput(psi_pi_flux, lat_for_corr, special_bz_points, n1=n1, n2=n2)
     spin_corr_x = spin_components_output["corr"]["total"]
     ks, spin_corr_k = ComputeMomentumSpaceStructureFactor(spin_corr_x, lat_for_corr, assert_realness=False,
                                                           n1=n1, n2=n2)
 
     fig_corr_k, ax_corr_k = plt.subplots(figsize=(6, 5))
-    plot_structure_factor(ks, spin_corr_k, triangular_lat, ax_corr_k, mode='voronoi')
-    YC_triangular_lat = BuildTriangularLattice(1, 1, spin_site, bc_MPS, geometry="YC")
-    YC_triangular_lat.plot_brillouin_zone(ax_corr_k)
+    plot_structure_factor(ks, spin_corr_k, fermion_lat, ax_corr_k, mode='voronoi')
+    spec.plot_brillouin_zone(ax_corr_k, spin_site, bc_MPS)
     ax_corr_k.set_title("Spin Correlations")
 
-    special_points_structure_factor = calculateStructureFactorAtSpecialPoints(lat_for_corr, spin_corr_x)
+    special_points_structure_factor = calculateStructureFactorAtSpecialPoints(lat_for_corr, spin_corr_x,
+                                                                             special_bz_points)
 
     SaveSimulationOutput(results_dir, spin_corr_x, ks, spin_corr_k, fig_corr_k, fig_lat,
                          special_points_structure_factor=special_points_structure_factor, lattice=lat_for_corr,
@@ -1678,7 +1902,7 @@ def checkPiFluxFreeSpinCorrelations():
     spin_spin_corr = FreeFermionSpinCorrelations(C_x_exact)
     spin_triangular_lat = BuildTriangularLattice(Lx, Ly, site, "finite", bc_exact, geometry)
 
-    special_bz_points = getSpecielBzPoints()
+    special_bz_points = getTriangularLatticeSpecielBzPoints()
     M1, M2, M3 = special_bz_points["M1"], special_bz_points["M2"], special_bz_points["M3"]
     Ms = (M1, M2, M3)
     for i_M, M in enumerate(Ms):
@@ -1826,9 +2050,11 @@ def DebugMagnetizedIMPS():
 
 
 if __name__ == "__main__":
-    SpinonTriangularLatticeMeanFieldGutzwillerProjection(4, "YC", "infinite", 0,
-                                                         model_type_dirac, Lx=2, chi_max=500, flux=1.0,
-                                                         jastrow_nn_xy=0.0, monopole_Q=1)
+    #SpinonTriangularLatticeMeanFieldGutzwillerProjection(4, "YC", "infinite", 0,
+    #                                                     model_type_dirac, Lx=2, chi_max=500, flux=1.0,
+    #                                                     jastrow_nn_xy=0.0, monopole_Q=1)
+    SpinonKagomeMeanFieldGutzwillerProjection(4, "infinite", 0, chi_max=3000,
+                                              Lx=2, flux=1)
     exit(0)
 
     # TestFreeFermionsSpinCorrelations()

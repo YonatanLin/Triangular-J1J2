@@ -253,8 +253,9 @@ def TestFreeFermionsSpinCorrelations():
             else:
                 assert(np.abs(spin_spin_corr[i,j] - 0.75) < 1e-14), "test failed - incorrect diagonal term"
 
+
 def Test120State(Lx, Ly, geometry="YC"):
-    from Main import getSpecielBzPoints
+    from Main import getTriangularLatticeSpecielBzPoints
 
     fig, ax = plt.subplots()
     YC_lat = BuildTriangularLattice(1, 1, SpinHalfSite(None), "finite",
@@ -280,7 +281,7 @@ def Test120State(Lx, Ly, geometry="YC"):
     YC_lat.plot_brillouin_zone(ax, draw_points=False)
     plt.show()
 
-    special_bz_points = getSpecielBzPoints()
+    special_bz_points = getTriangularLatticeSpecielBzPoints()
     K, K_prime = special_bz_points["K"], special_bz_points["K_prime"]
     structure_factor_at_K = structure_factor(spin_corr_x, lat, K)
     structure_factor_at_K_prime = structure_factor(spin_corr_x, lat, K_prime)

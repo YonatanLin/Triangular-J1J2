@@ -146,10 +146,10 @@ def CalculatMagz(results_dir, psi_filename="psi_gs.pkl"):
 
 def CalculateSpecialPointsStructureFactor(results_dir):
     """Saves results_dir/special_points_structure_factor_postprocess.csv (the DMRG run owns ...structure_factor.csv): kx ky structure_factor per special BZ point."""
-    from Main import getSpecielBzPoints
+    from Main import getTriangularLatticeSpecielBzPoints
     from WaveFunctionProperties import structure_factor
 
-    special_bz_points = getSpecielBzPoints()
+    special_bz_points = getTriangularLatticeSpecielBzPoints()
     point_names = list(special_bz_points.keys())
 
     print(results_dir)
@@ -181,7 +181,7 @@ def CalculateSpinComponentsStructureFactor(results_dir, psi_filename="psi_gs.pkl
     Calculate the transverse (<SxSx>) and longitudinal (<SzSz>) spin correlations of results_dir and their structure
     factors (see WaveFunctionProperties.SpinComponentsOutput) and save them in results_dir.
     """
-    from Main import getSpecielBzPoints
+    from Main import getTriangularLatticeSpecielBzPoints
     from WaveFunctionProperties import SpinComponentsOutput, SaveSpinComponentsOutput
 
     print(results_dir)
@@ -195,7 +195,7 @@ def CalculateSpinComponentsStructureFactor(results_dir, psi_filename="psi_gs.pkl
     # default k-grid resolution: the same as the DMRG run (Main.TriangularJ1J2DMRG)
     n1 = 2 * lattice.Ls[0] if n1 is None else n1
     n2 = 2 * lattice.Ls[1] if n2 is None else n2
-    output = SpinComponentsOutput(psi, lattice, getSpecielBzPoints(), i0=i0, save_full_grid=save_full_grid,
+    output = SpinComponentsOutput(psi, lattice, getTriangularLatticeSpecielBzPoints(), i0=i0, save_full_grid=save_full_grid,
                                   n1=n1, n2=n2)
     for point_name, row in zip(output["point_names"], output["special_points"]):
         print(f"{point_name}: total={row[2]}, xx={row[3]}, zz={row[4]}")

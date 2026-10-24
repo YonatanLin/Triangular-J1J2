@@ -74,6 +74,12 @@ gutzwiller_input_params = [
     ("z2_bond_sign", int, 1)
 ]
 
+# the Kagome Gutzwiller run has the triangular parameters without the triangular geometry and ansatz choice, in the
+# same order
+triangular_only_gutzwiller_params = ("geometry", "model_type", "z2_bond_sign")
+kagome_gutzwiller_input_params = [param for param in gutzwiller_input_params
+                                  if param[0] not in triangular_only_gutzwiller_params]
+
 afm_dispersion_input_params = [
     ("Ly", int),
     ("chi_max", int),
@@ -116,6 +122,12 @@ def build_parser(input_params):
                             required=not has_default, default=input_param_default(param))
 
     return parser
+
+
+def RunFromCommandLine(input_params, run):
+    """ calls run with the input_params parsed from the command line as keyword arguments """
+    args_dict = vars(build_parser(input_params).parse_args())
+    run(**{input_param_name(param): args_dict[input_param_name(param)] for param in input_params})
 
 
 def CreateTriangularCaseDirFromInputFile(main_results_dir, input_file, input_params, excluded_params,

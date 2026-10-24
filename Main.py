@@ -84,14 +84,10 @@ def ChangeChiInDMRGParams(dmrg_params, chi_max):
     dmrg_params["chi_list"] = {0: 50, 3: 100, 7: chi_max}
 
 
-def GutzwillerCaseDirName(main_results_dir, Lx, Ly, chi_max, flux, geometry, bc_MPS,
-                          gs_manifold_index, model_type, norm_magz, monopole_Q, svd_min=None,
-                          jastrow_nn_zz=0.0, jastrow_chi_max=None, jastrow_nn_xy=0.0, jastrow_trotter_res=None,
-                          z2_bond_sign=None):
-    case_name = f"{bc_MPS}_Lx_{Lx}_Ly_{Ly}_chi_{chi_max}_flux_{flux}_{geometry}_gsindex_{gs_manifold_index}"
-
-    if model_type is not None:
-        case_name = f"{model_type}_" + case_name
+def GutzwillerCaseNameSuffix(norm_magz, monopole_Q, svd_min=None, jastrow_nn_zz=0.0, jastrow_chi_max=None,
+                             jastrow_nn_xy=0.0, jastrow_trotter_res=None):
+    """ the lattice independent part of the Gutzwiller case directory name """
+    case_name = ""
     if float(norm_magz) > 1e-15:
         norm_magz_float = float(norm_magz)
         case_name += f"_magz_{norm_magz_float:.4f}"
@@ -107,6 +103,20 @@ def GutzwillerCaseDirName(main_results_dir, Lx, Ly, chi_max, flux, geometry, bc_
     if float(jastrow_nn_zz) != 0.0 or float(jastrow_nn_xy) != 0.0:
         if jastrow_chi_max is not None and str(jastrow_chi_max) != "None":
             case_name += f"_jaschi_{jastrow_chi_max}"
+    return case_name
+
+
+def GutzwillerCaseDirName(main_results_dir, Lx, Ly, chi_max, flux, geometry, bc_MPS,
+                          gs_manifold_index, model_type, norm_magz, monopole_Q, svd_min=None,
+                          jastrow_nn_zz=0.0, jastrow_chi_max=None, jastrow_nn_xy=0.0, jastrow_trotter_res=None,
+                          z2_bond_sign=None):
+    case_name = f"{bc_MPS}_Lx_{Lx}_Ly_{Ly}_chi_{chi_max}_flux_{flux}_{geometry}_gsindex_{gs_manifold_index}"
+
+    if model_type is not None:
+        case_name = f"{model_type}_" + case_name
+    case_name += GutzwillerCaseNameSuffix(norm_magz, monopole_Q, svd_min=svd_min, jastrow_nn_zz=jastrow_nn_zz,
+                                          jastrow_chi_max=jastrow_chi_max, jastrow_nn_xy=jastrow_nn_xy,
+                                          jastrow_trotter_res=jastrow_trotter_res)
     if z2_bond_sign is not None and int(z2_bond_sign) != 1:
         case_name += f"_bondsign_{int(z2_bond_sign)}"
 
@@ -114,8 +124,22 @@ def GutzwillerCaseDirName(main_results_dir, Lx, Ly, chi_max, flux, geometry, bc_
     return main_results_dir + case_name
 
 
+def KagomeGutzwillerCaseDirName(main_results_dir, Lx, Ly, chi_max, flux, bc_MPS, gs_manifold_index, norm_magz,
+                                monopole_Q, **suffix_kwargs):
+    case_name = f"Kagome_{bc_MPS}_Lx_{Lx}_Ly_{Ly}_chi_{chi_max}_flux_{flux}_gsindex_{gs_manifold_index}"
+    case_name += GutzwillerCaseNameSuffix(norm_magz, monopole_Q, **suffix_kwargs)
+    case_name += "/"
+    return main_results_dir + case_name
+
+
 def CreateGutzwillerCaseDir(main_results_dir, *args, **kwargs):
     gutz_dir = GutzwillerCaseDirName(main_results_dir, *args, **kwargs)
+    Path(gutz_dir).mkdir(parents=True, exist_ok=True)
+    return gutz_dir
+
+
+def CreateKagomeGutzwillerCaseDir(main_results_dir, *args, **kwargs):
+    gutz_dir = KagomeGutzwillerCaseDirName(main_results_dir, *args, **kwargs)
     Path(gutz_dir).mkdir(parents=True, exist_ok=True)
     return gutz_dir
 
@@ -207,7 +231,7 @@ def PrintCouplings(model, include_sites=None):
     return couplings_dict
 
 
-def getSpecielBzPoints():
+def getTriangularLatticeSpecielBzPoints():
     M1 = np.array([0., 2 * pi / sqrt(3)])
     M2 = np.array([pi, (-1) * pi / sqrt(3)])
     M3 = np.array([pi, pi / sqrt(3)])
@@ -217,7 +241,7 @@ def getSpecielBzPoints():
 
 
 def getKPointName(k_2D):
-    special_k_points = getSpecielBzPoints()
+    special_k_points = getTriangularLatticeSpecielBzPoints()
     for key in special_k_points.keys():
         if(np.linalg.norm(k_2D - special_k_points[key]) < 1e-14):
             return key
@@ -669,8 +693,9 @@ def SaveSimulationOutput(results_dir, spin_corr_x, ks, spin_corr_k, fig_corr_k, 
             pickle.dump(lattice, f_lat)
 
 
-def calculateStructureFactorAtSpecialPoints(lat, spin_corr_x):
-    special_bz_points = getSpecielBzPoints()
+def calculateStructureFactorAtSpecialPoints(lat, spin_corr_x, special_bz_points=None):
+    if special_bz_points is None:
+        special_bz_points = getTriangularLatticeSpecielBzPoints()
     special_points_structure_factor = np.zeros((len(special_bz_points.keys()), 3))
     for ind, key in enumerate(special_bz_points.keys()):
         k = special_bz_points[key]
@@ -764,7 +789,7 @@ def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, conserve=True, initial_state="Random"
     # the total, transverse (xx) and longitudinal (zz) correlations and structure factors; all structure factors
     # are on the same, doubled-resolution k grid
     n1, n2 = 2 * lat_for_corr.Ls[0], 2 * lat_for_corr.Ls[1]
-    spin_components_output = SpinComponentsOutput(psi, lat_for_corr, getSpecielBzPoints(), n1=n1, n2=n2)
+    spin_components_output = SpinComponentsOutput(psi, lat_for_corr, getTriangularLatticeSpecielBzPoints(), n1=n1, n2=n2)
     spin_corr_x = spin_components_output["corr"]["total"]
     ks, spin_corr_k = ComputeMomentumSpaceStructureFactor(spin_corr_x, lat_for_corr, assert_realness=False,
                                                           n1=n1, n2=n2)
@@ -1274,7 +1299,7 @@ def AnalyzeMagnetizedJ1J2Correlations(results_dir, n_sites_cases, postprocess_di
     #            "PostProcess/StructureFactor_Lx12_Ly6_infinite_magz2_special_points_structure_factor/"
     #dirs = [magz1_dir, magz2_dir]
 
-    special_k_points = getSpecielBzPoints()
+    special_k_points = getTriangularLatticeSpecielBzPoints()
     fig, ax = plt.subplots(figsize=(6, 5))
 
     sf_dict = {k_name:np.zeros((n_sites_cases.shape[0], 2)) for k_name in special_k_points.keys()}

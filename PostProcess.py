@@ -73,6 +73,66 @@ def CalculateCentralBondEntanglementEntropy(results_dir, psi_filename="psi_gs.pk
                np.array([[central_bond, bond_dimension, entanglement_entropy, E_gs]]),
                header="bond bond_dimension entanglement_entropy energy")
 
+    if psi.finite:
+        PlotEntanglementProfileAndFitCentralCharge(psi, results_dir)
+
+
+def PlotEntanglementProfileAndFitCentralCharge(psi, results_dir):
+    """
+    Quick and dirty: plots S(bond) of a finite MPS and fits the open BC CFT form
+    S = (c/6) ln[(2L/pi) sin(pi x/L)] + const on the bonds between columns (x in columns, L = number of columns),
+    in the central half of the columns, with separate constants for even and odd x (open BC alternation, which
+    decays into the bulk; the central half suppresses its residual bias). Saves EE_profile.png and EE_profile.txt.
+    """
+    import matplotlib.pyplot as plt
+
+    S = np.asarray(psi.entanglement_entropy())  # bond i is between sites i and i + 1
+    bonds = np.arange(len(S))
+    sites_per_column = 1
+    lattice_path = _result_file_path(results_dir, "lattice.pkl", assert_exist=False)
+    if lattice_path.exists():
+        with open(lattice_path, "rb") as f:
+            sites_per_column = pickle.load(f).N_sites_per_ring
+    n_columns = psi.L // sites_per_column
+    column_bonds = np.arange(1, n_columns) * sites_per_column - 1  # bond after the last site of each column
+    x = (column_bonds + 1) // sites_per_column
+    chord = np.log((2 * n_columns / np.pi) * np.sin(np.pi * x / n_columns))
+    fit = (x >= n_columns / 4) & (x <= 3 * n_columns / 4)
+    if np.count_nonzero(fit) % 2:  # equally many even and odd x, an unbalanced window biases c by a few percent
+        fit[np.flatnonzero(fit)[-1]] = False
+    # open BC give an even/odd (in x) alternation of S: shared slope, separate constants for the two parities
+    odd = (x % 2).astype(float)
+    design = np.column_stack([chord, 1 - odd, odd])
+    (slope, intercept_even, intercept_odd), *_ = np.linalg.lstsq(design[fit], S[column_bonds][fit], rcond=None)
+    intercept = intercept_even + (intercept_odd - intercept_even) * odd  # per column bond
+    c = 6 * slope
+    print(f"CFT fit on {np.count_nonzero(fit)} column bonds: c = {c:.3f}, const (even, odd x) = "
+          f"({intercept_even:.3f}, {intercept_odd:.3f})")
+
+    fig, (ax_bond, ax_chord) = plt.subplots(1, 2, figsize=(11, 4.5))
+    ax_bond.plot(bonds, S, ".-", color="gray", lw=0.8, label="all bonds")
+    ax_bond.plot(column_bonds, S[column_bonds], "o", color="C0", label="column bonds")
+    S_fit = slope * chord + intercept
+    for parity in (0, 1):
+        branch = fit & (x % 2 == parity)
+        label = f"fit, c = {c:.2f}" if parity == 0 else None
+        ax_bond.plot(column_bonds[branch], S_fit[branch], "-", color="C3", label=label)
+        ax_chord.plot(chord[branch], S_fit[branch], "-", color="C3", label=label)
+    ax_bond.set_xlabel("bond index")
+    ax_bond.set_ylabel("S")
+    ax_bond.legend()
+    ax_chord.plot(chord, S[column_bonds], "o", color="C0")
+    ax_chord.set_xlabel(r"$\ln[(2L/\pi)\sin(\pi x/L)]$")
+    ax_chord.set_ylabel("S")
+    ax_chord.legend()
+    fig.tight_layout()
+    fig.savefig(_result_file_path(results_dir, "EE_profile.png", assert_exist=False), bbox_inches="tight")
+    plt.close(fig)
+    np.savetxt(_result_file_path(results_dir, "EE_profile.txt", assert_exist=False), np.column_stack([bonds, S]),
+               header=f"bond entanglement_entropy; column bond CFT fit: c={c} const_even={intercept_even} "
+                      f"const_odd={intercept_odd} sites_per_column={sites_per_column}")
+    return c
+
 
 def CalculatMagz(results_dir, psi_filename="psi_gs.pkl"):
     print(results_dir)

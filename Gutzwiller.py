@@ -948,6 +948,9 @@ def GetTriangularFluxSlaterMPS(Lx, Ly, spinfull, site, geometry, slater_trunc_pa
 
         psi_from_slater, error = slater.C_to_iMPS(C_short, C_long, slater_trunc_par, sites_per_cell=imps_unitcell,
                                                   cut=middle_site_mps_ind_short, offset=offset)
+        print("#####################")
+        print(f"error from C_to_iMPS: {error}")
+        print("#####################")
 
         infinite_bc = ("periodic", "periodic")
         triangular_lattice = BuildTriangularLattice(Lx, Ly, site, bc_MPS, infinite_bc,
@@ -1719,8 +1722,8 @@ def DebugMagnetizedIMPS():
 
 
 if __name__ == "__main__":
-    SpinonTriangularLatticeMeanFieldGutzwillerProjection(6, "YC", "finite", 0,
-                                                         model_type_dirac, Lx=20, chi_max=800, flux=1.0,
+    SpinonTriangularLatticeMeanFieldGutzwillerProjection(4, "YC", "infinite", 0,
+                                                         model_type_dirac, Lx=2, chi_max=500, flux=1.0,
                                                          jastrow_nn_xy=0.0, monopole_Q=1)
     exit(0)
 

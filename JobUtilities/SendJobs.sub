@@ -1,5 +1,5 @@
 executable = /srv01/technion/yonlin/scripts/Triangular-J1J2/JobUtilities/Run.sh
-arguments = --Lx $(Lx) --Ly $(Ly) --bc $(bc) --bc_MPS $(bc_MPS) --conserve $(conserve) --initial_state $(initial_state) --J2 $(J2) --geometry $(geometry) --chi $(chi) --max_sweeps $(max_sweeps) --norm_magz $(norm_magz) --initial_psi_dir $(initial_psi_dir)
+arguments = --Lx $(Lx) --Ly $(Ly) --bc $(bc) --bc_MPS $(bc_MPS) --conserve $(conserve) --initial_state $(initial_state) --J2 $(J2) --geometry $(geometry) --chi $(chi) --max_sweeps $(max_sweeps) --norm_magz $(norm_magz) --initial_psi_dir $(initial_psi_dir) --Delz $(Delz)
 root_dir = /storage/ph_keselman/yonlin/TriangularJ1J2
 case_folder = $(root_dir)/$(case_folder_name)
 log_name = run
@@ -9,20 +9,19 @@ output = $(case_folder)/$(log_name).out
 error = $(case_folder)/$(log_name).err
 
 request_cpus = 30
-chi_mem_factor = real(2E-07) * real($(chi) * $(chi))
+chi_mem_factor =  real(2E-07) * real($(chi) * $(chi))
+chi_mem_factor = ifThenElse( "$(bc_MPS)" == "infinite", \
+			     chi_mem_factor, \
+			     real(0.5) * real(chi_mem_factor))
 memory_factor = $(chi_mem_factor) * (real($(Lx) * $(Ly))) * 1024
 memory = ifThenElse( "$(geometry)" == "XC", \
                       $(memory_factor) * 2, \
                       $(memory_factor))
-RequestMemory = $(memory)
-#RequestMemory = ifThenElse( "$(bc_MPS)" == "finite", \
-#			    $(memory), \
-# 			    $(memory) )
 
-#RequestMemory = 50000
+RequestMemory = 45158
 
 Initialdir = $(case_folder)
 universe = vanilla
 input_file = $(root_dir)/condor_cases.txt
 
-queue Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, geometry, chi, max_sweeps, norm_magz, initial_psi_dir, case_folder_name from $(input_file)
+queue Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, geometry, chi, max_sweeps, norm_magz, initial_psi_dir, Delz, case_folder_name from $(input_file)

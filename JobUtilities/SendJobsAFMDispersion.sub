@@ -9,7 +9,7 @@ output = $(case_folder)/$(log_name).out
 error = $(case_folder)/$(log_name).err
 
 request_cpus = 10
-RequestMemory = (real($(Ly)) * real($(chi_max)) * real($(chi_max)) * 7E-05 + 4) * 1024
+RequestMemory = 2000
 Initialdir = $(case_folder)
 universe = vanilla
 input_file = $(root_dir)/afm_dispersion_condor_cases.txt

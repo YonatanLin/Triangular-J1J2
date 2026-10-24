@@ -9,7 +9,7 @@ output = $(case_folder)/$(log_name).out
 error = $(case_folder)/$(log_name).err
 
 request_cpus = 10
-RequestMemory = 12083.199999999999
+RequestMemory = 369663.99999999994
 
 chi_factor = real(7E-08) * real($(chi) * $(chi))
 #chi_factor = (real($(chi)) / 20000.0) * (real($(chi)) / 20000.0)

@@ -28,11 +28,12 @@ from Main import (AbsMagzFromNormMagz, BuildTriangularLattice, TriangularXC, LxI
                   model_type_dirac, model_type_Z2, pauli_x, pauli_y, pauli_z, ResolveJastrowTrotterRes)
 
 svd_min_slater_default = 5e-7
+jastrow_default_total_trunc = 1.e-5
 
 Lx_short_factor_temfpy_iMPS = 50
 
 # default Jastrow bond dimension cap, relative to the maximal chi of the projected state before the Jastrow
-jastrow_chi_max_default_factor = 1.5
+jastrow_chi_max_default_factor = 1.1
 
 # convergence tolerance of tenpy's canonical_form_infinite2 fixed point iteration (default 1e-15). The iteration
 # error has a floating point floor that grows with chi (~1e-15 at chi ~1000), so the default can be unreachable and
@@ -948,6 +949,9 @@ def GetTriangularFluxSlaterMPS(Lx, Ly, spinfull, site, geometry, slater_trunc_pa
 
         psi_from_slater, error = slater.C_to_iMPS(C_short, C_long, slater_trunc_par, sites_per_cell=imps_unitcell,
                                                   cut=middle_site_mps_ind_short)
+        print("#####################")
+        print(f"error from C_to_iMPS: {error}")
+        print("#####################")
 
         infinite_bc = ("periodic", "periodic")
         triangular_lattice = BuildTriangularLattice(Lx, Ly, site, bc_MPS, infinite_bc,
@@ -1378,7 +1382,6 @@ def SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, geometry, bc_MPS, g
             jastrow_chi_max = int(np.ceil(jastrow_chi_max_default_factor * max(psi_pi_flux.chi)))
         print(f"Jastrow chi_max: {jastrow_chi_max} (projected state chi {max(psi_pi_flux.chi)})")
         jastrow_trunc_par = {"chi_max": jastrow_chi_max}
-        jastrow_default_total_trunc = 1.e-9
         if jastrow_nn_zz != 0.0:
             jastrow_trunc_par["svd_min"] = jastrow_default_total_trunc
             jastrow_trunc_err = ApplyNNSzSzJastrow(psi_pi_flux, spin_lat, jastrow_nn_zz, jastrow_trunc_par)

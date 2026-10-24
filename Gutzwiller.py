@@ -375,7 +375,7 @@ def FreeFermionSpinCorrelations(C):
 
 
 def PlotModelHoppingsByPhase(model, ax, linewidth_min=0.4, linewidth_max=3.0, plot_sites=True,
-                             plot_order=False, add_colorbar=True):
+                             plot_order=False, add_colorbar=True, max_bond_length=None):
     couplings_list = model.all_coupling_terms().to_TermList()
     lat = model.lat
     basis_vectors = np.asarray(lat.basis, dtype=float)
@@ -415,6 +415,8 @@ def PlotModelHoppingsByPhase(model, ax, linewidth_min=0.4, linewidth_max=3.0, pl
         i, j, t = hoppings[key]
         p1 = site_position(i)
         p2 = site_position(j)
+        if max_bond_length is not None and np.linalg.norm(p2 - p1) > max_bond_length:
+            continue # bonds across a periodic boundary
 
         theta = np.mod(np.angle(t), 2.0 * np.pi)
         if(abs(theta - 2*pi) < 1e-12):
@@ -562,6 +564,78 @@ class MonopoleCondensatePiFluxModel(MeanFieldSpinonModel):
 
             couplings_shape = self.lat.coupling_shape(dr)[0]
             strength = strength[0:couplings_shape[0], 0:couplings_shape[1]]
+            strength_with_flux = self.coupling_strength_add_ext_flux(strength, dr, [0, flux])
+            if hole_transformed:
+                # f_down -> h_down^\dagger maps t_ij f_i^\dagger f_j to
+                # -conj(t_ij) h_i^\dagger h_j, up to the dropped constant.
+                strength_with_flux = -np.conj(strength_with_flux)
+            self.add_coupling(strength_with_flux, u1, "Cd", u2, "C", dr, plus_hc=plus_hc)
+
+
+def KagomePiFluxBondSigns(sub1, sub2, dr, y_coors):
+    """
+        Gauge signs s_ij of the Dirac pi flux ansatz on the Kagome lattice, Fig. 1b of He et al., PRX 7, 031020 (2017).
+        Kagome sublattices as in tenpy: 0 (bottom left), 1 (bottom right), 2 (top) of the up triangle of the unit cell,
+        a_x = (2, 0) (a_2 of the paper) and a_y = (1, sqrt(3)) (a_1 of the paper).
+        The down triangle bonds (dr != 0) are all black, s = 1. Each up triangle has two red bonds, s = -1:
+            y even: 0-2 (left) and 1-2 (right)
+            y odd:  0-2 (left) and 0-1 (base)
+        so triangles have zero flux and hexagons pi flux. The magnetic unit cell is doubled along a_y, so Ly must be even.
+        Returns an array of the same shape as y_coors.
+    """
+    signs = np.ones(y_coors.shape)
+    if tuple(dr) != (0, 0):
+        return signs
+    bond = {sub1, sub2}
+    y_parity = y_coors % 2
+    if bond == {0, 2}:
+        signs *= -1
+    elif bond == {1, 2}:
+        signs[y_parity == 0] = -1
+    else:
+        assert bond == {0, 1}
+        signs[y_parity == 1] = -1
+    return signs
+
+
+class KagomeMonopoleCondensatePiFluxModel(MeanFieldSpinonModel):
+    """
+        Dirac pi flux (U(1) Dirac spin liquid) mean field ansatz on the Kagome lattice, H = -sum_<ij> s_ij f^dag_i f_j,
+        with the gauge signs s_ij of KagomePiFluxBondSigns (Fig. 1b of He et al.). Lattice from GetPiFluxKagomeLattice,
+        with unit cell index u = n_flavors * sublattice + spin.
+        flux (in units of pi) is threaded through the cylinder. Monopole insertion (monopole_Q != 0) is not implemented yet.
+    """
+    def init_terms(self, model_params):
+        plus_hc = True
+        init_MPO = model_params["init_H_MPO"]
+        monopole_Q = model_params["monopole_Q"]
+        flux = model_params["flux"] * pi
+        particle_hole = model_params["particle_hole"]
+        self.init_MPO = init_MPO
+        lat = self.lat
+        bc = lat.boundary_conditions
+        if monopole_Q != 0:
+            raise NotImplementedError("monopole insertion is not implemented for the Kagome pi flux ansatz")
+
+        n_flavors = len(lat.unit_cell_positions) // 3
+        assert(len(lat.unit_cell_positions) == 3 * n_flavors and n_flavors in (1, 2))
+        if particle_hole:
+            assert(n_flavors == 2), "wrong unit cell size for spinfull model"
+
+        Lx, Ly = lat.Ls[0], lat.Ls[1]
+        assert(bc[1] == "periodic")
+        assert(Ly % 2 == 0), "the pi flux magnetic unit cell is doubled along a_y, Ly must be even"
+
+        nys, nxs = np.arange(0, Ly), np.arange(0, Lx)
+        y_coors, x_coors = np.meshgrid(nys, nxs) # first coordinate of the matrix (row) is the x coordinate
+
+        for u1, u2, dr in lat.pairs["nearest_neighbors"]:
+            assert(u1 % n_flavors == u2 % n_flavors)
+            hole_transformed = particle_hole and getParticleHoleHoppingSign(u1) < 0
+            strength = (-1) * KagomePiFluxBondSigns(u1 // n_flavors, u2 // n_flavors, dr, y_coors)
+
+            couplings_shape = self.lat.coupling_shape(dr)[0]
+            strength = strength[0:couplings_shape[0], 0:couplings_shape[1]].astype(np.complex128)
             strength_with_flux = self.coupling_strength_add_ext_flux(strength, dr, [0, flux])
             if hole_transformed:
                 # f_down -> h_down^\dagger maps t_ij f_i^\dagger f_j to
@@ -746,6 +820,36 @@ def GetPiFluxTriangularLattice(site, Lx, Ly, spinfull, bc_MPS, geometry):
 
     return BuildTriangularLattice(Lx, Ly, site, bc_MPS, bc=bc, geometry=geometry,
                                   spinfull_fermions=spinfull)
+
+
+def GetPiFluxKagomeLattice(site, Lx, Ly, spinfull, bc_MPS, bc=None):
+    """
+        Kagome lattice (tenpy conventions, a_x = (2, 0), a_y = (1, sqrt(3))) for the pi flux ansatz. For spinfull
+        fermions every Kagome site holds two flavors, unit cell index u = 2 * sublattice + spin.
+    """
+    if bc is None:
+        bc = ['open', 'periodic']
+        if bc_MPS == "infinite":
+            bc[0] = 'periodic'
+
+    kagome_pos = np.array([[0, 0], [1, 0], [0.5, 0.5 * sqrt(3)]])
+    kagome_NN = [(0, 1, [0, 0]), (0, 2, [0, 0]), (1, 2, [0, 0]),
+                 (1, 0, [1, 0]), (2, 0, [0, 1]), (2, 1, [-1, 1])]
+    num_flavors = 2 if spinfull else 1
+    flavor_shifts = [[-0.08, 0.0], [0.08, 0.0]] if spinfull else [[0.0, 0.0]]
+
+    unit_cell = []
+    for pos in kagome_pos:
+        for shift in flavor_shifts:
+            unit_cell.append(pos + np.array(shift))
+    nearest_neighbors = []
+    for sub1, sub2, dr in kagome_NN:
+        for i in range(num_flavors):
+            nearest_neighbors += [[num_flavors * sub1 + i, num_flavors * sub2 + i, np.array(dr)]]
+
+    return tenpy.models.lattice.Lattice([Lx, Ly], [site] * len(unit_cell), basis=[2 * kagome_pos[1], 2 * kagome_pos[2]],
+                                        positions=unit_cell, bc=bc, pairs={'nearest_neighbors': nearest_neighbors},
+                                        bc_MPS=bc_MPS)
 
 
 def getZeroModesDict(gs_manifold_index):

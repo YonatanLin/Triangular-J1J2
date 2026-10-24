@@ -949,7 +949,6 @@ def GetTriangularFluxSlaterMPS(Lx, Ly, spinfull, site, geometry, slater_trunc_pa
 
         psi_from_slater, error = slater.C_to_iMPS(C_short, C_long, slater_trunc_par, sites_per_cell=imps_unitcell,
                                                   cut=middle_site_mps_ind_short)
-                                                  cut=middle_site_mps_ind_short)
         print("#####################")
         print(f"error from C_to_iMPS: {error}")
         print("#####################")

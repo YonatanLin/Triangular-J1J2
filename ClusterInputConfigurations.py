@@ -50,6 +50,9 @@ dmrg_input_params = [
 
 dmrg_params_excluded_from_dirname = ["initial_psi_dir"]
 
+# the Kagome DMRG run has the triangular parameters without the triangular geometry, in the same order
+kagome_dmrg_input_params = [param for param in dmrg_input_params if param[0] != "geometry"]
+
 postprocess_input_params = [
     ("results_dir", str),
     ("post_process_type", str)

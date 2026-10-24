@@ -447,7 +447,41 @@ def _structure_factor_reciprocal_basis(lattice):
             primitive = np.array([basis[short_axis], delta])
             return 2.0 * np.pi * np.linalg.inv(primitive).T
 
-    return np.asarray(lattice.reciprocal_basis, dtype=float)
+    return StructureFactorPeriodBasis(lattice)
+
+
+def StructureFactorPeriodBasis(lattice, n_max=4, tol=1e-9):
+    """
+    Basis of the reciprocal lattice under which S(k) is periodic: the vectors G = n1 b1 + n2 b2 of the unit cell
+    reciprocal lattice (b1, b2 = lattice.reciprocal_basis) with exp(i G.(tau_u - tau_v)) = 1 for all the sublattice
+    positions tau_u. For a single site unit cell this is b1, b2 itself. For the Kagome lattice the sublattice offsets
+    are half lattice vectors, and S(k) is only periodic under 2 b1, 2 b2 (the extended Brillouin zone of the triangular
+    lattice of the sites and the hexagon centers).
+    """
+    b = np.asarray(lattice.reciprocal_basis, dtype=float)
+    tau = np.asarray(lattice.unit_cell_positions, dtype=float)
+    offsets = tau - tau[0]
+
+    def is_period(n):
+        phases = offsets @ (n @ b) / (2 * np.pi)
+        return np.allclose(phases, np.round(phases), rtol=0, atol=tol)
+
+    if is_period(np.array([1, 0])) and is_period(np.array([0, 1])):
+        return b
+    ns = [np.array([n1, n2]) for n1 in range(-n_max, n_max + 1) for n2 in range(-n_max, n_max + 1)
+          if (n1, n2) != (0, 0) and is_period(np.array([n1, n2]))]
+    # the pair of periods spanning the smallest cell is a basis of the period lattice
+    best = None
+    for i, n in enumerate(ns):
+        for m in ns[i + 1:]:
+            det = abs(n[0] * m[1] - n[1] * m[0])
+            if det > 0 and (best is None or det < best[0] or
+                            (det == best[0] and np.linalg.norm(n @ b) + np.linalg.norm(m @ b) < best[3])):
+                best = (det, n, m, np.linalg.norm(n @ b) + np.linalg.norm(m @ b))
+    if best is None:
+        raise ValueError("sublattice positions aren't commensurate with the lattice, S(k) has no period lattice "
+                         "(pass the spin lattice, not a fermion lattice with shifted flavor positions)")
+    return np.array([best[1] @ b, best[2] @ b])
 
 
 def compute_structure_factor_grid(C, lattice, n1=None, n2=None,

@@ -1,0 +1,25 @@
+executable = /srv01/technion/yonlin/scripts/Triangular-J1J2/JobUtilities/RunKagome.sh
+arguments = --Lx $(Lx) --Ly $(Ly) --bc $(bc) --bc_MPS $(bc_MPS) --conserve $(conserve) --initial_state $(initial_state) --J2 $(J2) --chi $(chi) --max_sweeps $(max_sweeps) --norm_magz $(norm_magz) --initial_psi_dir $(initial_psi_dir) --Delz $(Delz)
+root_dir = /storage/ph_keselman/yonlin/TriangularJ1J2
+case_folder = $(root_dir)/$(case_folder_name)
+log_name = run
+
+log = $(case_folder)/$(log_name).log
+output = $(case_folder)/$(log_name).out
+error = $(case_folder)/$(log_name).err
+
+request_cpus = 30
+chi_mem_factor =  real(2E-07) * real($(chi) * $(chi))
+chi_mem_factor = ifThenElse( "$(bc_MPS)" == "infinite", \
+			     chi_mem_factor, \
+			     real(0.5) * real(chi_mem_factor))
+# 3 Kagome sites per unit cell
+memory = $(chi_mem_factor) * (real(3 * $(Lx) * $(Ly))) * 1024
+
+RequestMemory = 45158
+
+Initialdir = $(case_folder)
+universe = vanilla
+input_file = $(root_dir)/kagome_condor_cases.txt
+
+queue Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, chi, max_sweeps, norm_magz, initial_psi_dir, Delz, case_folder_name from $(input_file)

@@ -1,4 +1,5 @@
 import os.path
+import copy
 
 from TryingTemfpy import local
 from scipy.optimize import curve_fit
@@ -238,6 +239,19 @@ def getTriangularLatticeSpecielBzPoints():
     K = 2 * pi * np.array([1./3., 1./sqrt(3.)])
     K_prime = 2 * pi * np.array([-1./3., 1./sqrt(3.)])
     return {"M1": M1, "M2": M2, "M3": M3, "K": K, "K_prime": K_prime}
+
+
+def KagomeSpecialBzPoints():
+    """
+        The Bravais lattice of the Kagome lattice is triangular with lattice constant 2, so the M, K points of its
+        Brillouin zone are those of getTriangularLatticeSpecielBzPoints divided by 2. The points of the extended
+        Brillouin zone (of the triangular lattice with lattice constant 1, the Kagome sites and the hexagon centers),
+        with the suffix "_ext", are getTriangularLatticeSpecielBzPoints themselves.
+    """
+    triangular_points = getTriangularLatticeSpecielBzPoints()
+    points = {key: k / 2 for key, k in triangular_points.items()}
+    points.update({key + "_ext": k for key, k in triangular_points.items()})
+    return points
 
 
 def getKPointName(k_2D):
@@ -534,6 +548,20 @@ def BuildTriangularLattice(Lx, Ly, site, bc_MPS, bc = ('periodic', 'periodic'), 
     else:
         raise ValueError("unrecognized geometry")
 
+def BuildKagomeLattice(Lx, Ly, site, bc_MPS, bc=('open', 'periodic')):
+    """ tenpy's Kagome lattice, a_x = (2, 0), a_y = (1, sqrt(3)), next nearest neighbors at distance sqrt(3) """
+    return tenpy.models.lattice.Kagome(Lx, Ly, site, bc=bc, bc_MPS=bc_MPS)
+
+
+def PlotKagomeBrillouinZone(ax):
+    # the Brillouin zone of the Kagome Bravais lattice, and the extended Brillouin zone (of the triangular lattice
+    # of the Kagome sites and the hexagon centers), the period of S(k)
+    site = SpinHalfSite(None)
+    BuildKagomeLattice(1, 1, site, "finite", bc="periodic").plot_brillouin_zone(ax)
+    tenpy.models.lattice.Triangular(1, 1, site, bc="periodic", bc_MPS="finite").plot_brillouin_zone(
+        ax, draw_points=False, ls=':')
+
+
 def LxInfiniteMPSCorrelations(Lx, Ly, geometry):
     assert(geometry == "YC" or geometry == "XC")
     geometry_factor = 1 if (geometry == "YC") else 2
@@ -551,10 +579,14 @@ def initialStateFromFile(initial_state):
     return "from_file" in initial_state
 
 
-def GetTriangularLatticeInitialState(initial_state, triangular_lat, initial_psi_dir, abs_magz):
-    Lx = triangular_lat.Ls[0]
-    Ly = triangular_lat.Ls[1]
-    N_sites = triangular_lat.N_sites
+def GetLatticeInitialState(initial_state, lat, initial_psi_dir, abs_magz, ordered_states=None):
+    """
+        initial MPS of the DMRG on lat: "Random" (a random product state of total Sz abs_magz), "from_file" (the
+        ground state of an earlier run in initial_psi_dir) or one of ordered_states, a dict of name: f(lat) -> MPS
+    """
+    if ordered_states is None:
+        ordered_states = {}
+    N_sites = lat.N_sites
     assert(abs_magz <= N_sites // 2), "normalized magnetization cannot exceed 1"
     if abs_magz > 0:
         assert(initial_state == "Random" or initialStateFromFile(initial_state))
@@ -568,17 +600,14 @@ def GetTriangularLatticeInitialState(initial_state, triangular_lat, initial_psi_
         for down_ind in down_indices:
             product_state[down_ind] = "down"
         psi = MPS.from_product_state(
-            triangular_lat.mps_sites(),
+            lat.mps_sites(),
             product_state,
-            bc=triangular_lat.bc_MPS,
-            unit_cell_width=triangular_lat.mps_unit_cell_width,
+            bc=lat.bc_MPS,
+            unit_cell_width=lat.mps_unit_cell_width,
         )
 
-    elif initial_state == "120":
-        psi = Generate120DegOrderedState(lat=triangular_lat, Lx=Lx, Ly=Ly)
-
-    elif initial_state == "stripe":
-        psi = GenerateStripeOrderedState(lat=triangular_lat)
+    elif initial_state in ordered_states:
+        psi = ordered_states[initial_state](lat)
 
     elif initialStateFromFile(initial_state):
         initial_psi_path = initial_psi_dir + 'psi_gs.pkl'
@@ -593,8 +622,7 @@ def GetTriangularLatticeInitialState(initial_state, triangular_lat, initial_psi_
     return psi
 
 
-def TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, geometry, chi, max_sweeps, norm_magz,
-                              Delz=1.0):
+def BcDirString(bc):
     bc_string = ""
     for bc_ax in bc:
         if bc_ax == "periodic":
@@ -602,8 +630,11 @@ def TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, g
         else:
             assert(bc_ax == "open")
             bc_string += "o"
+    return bc_string
 
-    geometry_dir = f"Lx_{Lx}_Ly_{Ly}_bc_{bc_string}_{geometry}/"
+
+def J1J2ParamsDirName(bc_MPS, initial_state, conserve, J2, chi, max_sweeps, norm_magz, Delz=1.0):
+    """ the lattice independent part of the J1J2 DMRG case directory name """
     params_dir = f"{bc_MPS}_init_{initial_state}_conserve_{conserve}_J2_{J2}"
     if Delz is not None and abs(float(Delz) - 1.0) > 1e-15:
         params_dir += f"_Delz_{Delz}"
@@ -614,37 +645,57 @@ def TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, g
     if float(norm_magz) > 1e-15:
         norm_magz_float = float(norm_magz)
         params_dir += f"_magz_{norm_magz_float:.4f}"
-    return geometry_dir, params_dir + "/"
+    return params_dir + "/"
 
 
-def CreateTriangularCaseDir(main_results_dir, Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, geometry,
-                            chi_max=None, max_sweeps=None, norm_magz=0.0, Delz=1.0):
-    Path(main_results_dir).mkdir(parents=True, exist_ok=True)
-    geometry_dir, params_dir = TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, geometry,
-                                                         chi_max, max_sweeps, norm_magz, Delz)
-    results_dir = main_results_dir + geometry_dir
-    Path(results_dir).mkdir(parents=True, exist_ok=True)
-    results_dir += params_dir
+def TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, geometry, chi, max_sweeps, norm_magz,
+                              Delz=1.0):
+    geometry_dir = f"Lx_{Lx}_Ly_{Ly}_bc_{BcDirString(bc)}_{geometry}/"
+    return geometry_dir, J1J2ParamsDirName(bc_MPS, initial_state, conserve, J2, chi, max_sweeps, norm_magz, Delz)
+
+
+def KagomeJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, chi, max_sweeps, norm_magz, Delz=1.0):
+    geometry_dir = f"Kagome_Lx_{Lx}_Ly_{Ly}_bc_{BcDirString(bc)}/"
+    return geometry_dir, J1J2ParamsDirName(bc_MPS, initial_state, conserve, J2, chi, max_sweeps, norm_magz, Delz)
+
+
+def CreateDMRGCaseDir(main_results_dir, geometry_dir, params_dir):
+    results_dir = main_results_dir + geometry_dir + params_dir
     Path(results_dir).mkdir(parents=True, exist_ok=True)
     return results_dir
 
 
-def GenerateJ1J2SpinTriangularModel(J2, Delz, triangular_lat):
+def CreateTriangularCaseDir(main_results_dir, Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, geometry,
+                            chi_max=None, max_sweeps=None, norm_magz=0.0, Delz=1.0):
+    return CreateDMRGCaseDir(main_results_dir,
+                             *TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, geometry,
+                                                        chi_max, max_sweeps, norm_magz, Delz))
+
+
+def CreateKagomeCaseDir(main_results_dir, Lx, Ly, bc, bc_MPS, initial_state, conserve, J2,
+                        chi_max=None, max_sweeps=None, norm_magz=0.0, Delz=1.0):
+    return CreateDMRGCaseDir(main_results_dir,
+                             *KagomeJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, chi_max,
+                                                    max_sweeps, norm_magz, Delz))
+
+
+def GenerateJ1J2SpinModel(J2, Delz, lat):
+    """ the XXZ J1J2 model on the nearest and next nearest neighbors of lat, J1 = 1 """
     J1 = 1.0
-    assert(len(triangular_lat.pairs["nearest_neighbors"]) > 0 and
-           len(triangular_lat.pairs["next_nearest_neighbors"]) > 0)
+    assert(len(lat.pairs["nearest_neighbors"]) > 0 and
+           len(lat.pairs["next_nearest_neighbors"]) > 0)
 
     J1_xy = J1
     J1_z = J1 * Delz
     J2_xy = J2
     J2_z = J2 * Delz
 
-    J1J2_model = SpinModel({"lattice": triangular_lat, "Jx": J1_xy, "Jy": J1_xy, "Jz": J1_z})
+    J1J2_model = SpinModel({"lattice": lat, "Jx": J1_xy, "Jy": J1_xy, "Jz": J1_z})
     J1J2_model.manually_call_init_H = True
 
     nnn_couplings_list = []
     if abs(J2) > 0.0:
-        for u1, u2, dx in triangular_lat.pairs['next_nearest_neighbors']:
+        for u1, u2, dx in lat.pairs['next_nearest_neighbors']:
             AddAndTrackCoupling(J1J2_model, 0.5 * J2_xy, u1, "Sp", u2, "Sm", dx,
                                 nnn_couplings_list)
             AddAndTrackCoupling(J1J2_model, 0.5 * J2_xy, u1, "Sm", u2, "Sp", dx,
@@ -667,7 +718,7 @@ def calculateGutzwillerEnergyTriangularJ1J2(psi, Lx, Ly, bc_MPS, J2, Delz, bc, g
     site = SpinHalfSite(conserve="Sz")
     triangular_lat = BuildTriangularLattice(Lx, Ly, site, bc_MPS, bc, geometry=geometry)
     assert psi.L == triangular_lat.N_sites, f"MPS length {psi.L} != number of lattice sites {triangular_lat.N_sites}"
-    J1J2_model, _ = GenerateJ1J2SpinTriangularModel(J2, Delz, triangular_lat)
+    J1J2_model, _ = GenerateJ1J2SpinModel(J2, Delz, triangular_lat)
 
     E = J1J2_model.H_MPO.expectation_value(psi)
     if bc_MPS == "finite":
@@ -705,16 +756,111 @@ def calculateStructureFactorAtSpecialPoints(lat, spin_corr_x, special_bz_points=
     return special_points_structure_factor
 
 
-def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, conserve=True, initial_state="Random", J2=0.0, geometry="YC",
-                       chi_max=None, initial_psi_dir=None, max_sweeps=None, norm_magz=0.0, Delz=1.0):
+class DMRGLatticeSpec:
+    """
+        The lattice dependent parts of the J1J2 DMRG (J1J2DMRG): the spin lattice, its initial states, Brillouin zone
+        and results directory.
+    """
+    local_results_dir_name = None
+    # mode of plot_structure_factor
+    structure_factor_plot_mode = "interpolate"
+
+    def lattice(self, site, Lx, Ly, bc_MPS, bc):
+        raise NotImplementedError
+
+    def Lx_correlations(self, Lx, Ly):
+        """ length of the finite lattice the correlations of an iMPS are calculated on """
+        raise NotImplementedError
+
+    def special_bz_points(self):
+        raise NotImplementedError
+
+    def plot_brillouin_zone(self, ax):
+        raise NotImplementedError
+
+    def ordered_initial_states(self):
+        """ the ordered initial states of GetLatticeInitialState """
+        return {}
+
+    def case_dir(self, main_results_dir, Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, chi_max, max_sweeps,
+                 norm_magz, Delz):
+        """ creates the results directory """
+        raise NotImplementedError
+
+
+class TriangularDMRGSpec(DMRGLatticeSpec):
+    local_results_dir_name = "LocalJ1J2TriangularDMRGResults/"
+
+    def __init__(self, geometry):
+        assert (geometry == "XC" or geometry == "YC")
+        self.geometry = geometry
+
+    def lattice(self, site, Lx, Ly, bc_MPS, bc):
+        return BuildTriangularLattice(Lx, Ly, site, bc_MPS, bc=bc, geometry=self.geometry)
+
+    def Lx_correlations(self, Lx, Ly):
+        return LxInfiniteMPSCorrelations(Lx, Ly, self.geometry)
+
+    def special_bz_points(self):
+        return getTriangularLatticeSpecielBzPoints()
+
+    def plot_brillouin_zone(self, ax):
+        BuildTriangularLattice(1, 1, SpinHalfSite(None), "finite", ("open", "open"), "YC").plot_brillouin_zone(ax)
+
+    def ordered_initial_states(self):
+        return {"120": lambda lat: Generate120DegOrderedState(lat=lat),
+                "stripe": lambda lat: GenerateStripeOrderedState(lat)}
+
+    def case_dir(self, main_results_dir, Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, chi_max, max_sweeps,
+                 norm_magz, Delz):
+        return CreateTriangularCaseDir(main_results_dir, Lx, Ly, bc, bc_MPS, initial_state, conserve, J2,
+                                       self.geometry, chi_max, max_sweeps, norm_magz, Delz)
+
+
+class KagomeDMRGSpec(DMRGLatticeSpec):
+    local_results_dir_name = "LocalJ1J2KagomeDMRGResults/"
+    # S(k) isn't periodic in the Kagome reciprocal lattice (only in the extended one), so it is not interpolated
+    structure_factor_plot_mode = "voronoi"
+
+    def lattice(self, site, Lx, Ly, bc_MPS, bc):
+        return BuildKagomeLattice(Lx, Ly, site, bc_MPS, bc=bc)
+
+    def Lx_correlations(self, Lx, Ly):
+        return LxInfiniteMPSCorrelations(Lx, Ly, "YC")
+
+    def special_bz_points(self):
+        return KagomeSpecialBzPoints()
+
+    def plot_brillouin_zone(self, ax):
+        PlotKagomeBrillouinZone(ax)
+
+    def case_dir(self, main_results_dir, Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, chi_max, max_sweeps,
+                 norm_magz, Delz):
+        return CreateKagomeCaseDir(main_results_dir, Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, chi_max,
+                                   max_sweeps, norm_magz, Delz)
+
+
+def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, geometry="YC", **kwargs):
+    """ J1J2DMRG on the triangular lattice of geometry (YC / XC) """
+    J1J2DMRG(TriangularDMRGSpec(geometry), Lx, Ly, bc, bc_MPS, **kwargs)
+
+
+def KagomeJ1J2DMRG(Lx, Ly, bc, bc_MPS, **kwargs):
+    """ J1J2DMRG on the Kagome lattice (BuildKagomeLattice) """
+    J1J2DMRG(KagomeDMRGSpec(), Lx, Ly, bc, bc_MPS, **kwargs)
+
+
+def J1J2DMRG(spec, Lx, Ly, bc, bc_MPS, conserve=True, initial_state="Random", J2=0.0,
+             chi_max=None, initial_psi_dir=None, max_sweeps=None, norm_magz=0.0, Delz=1.0):
+    """ DMRG of the XXZ J1J2 Heisenberg model (GenerateJ1J2SpinModel) on the lattice of spec, a DMRGLatticeSpec """
     if isinstance(bc, str):
         bc_parsed = bc.split("-")
         bc = (bc_parsed[0], bc_parsed[1])
 
     if local:
-        main_results_dir = glob_results_dir + "LocalJ1J2TriangularDMRGResults/"
-        results_dir = CreateTriangularCaseDir(main_results_dir, Lx, Ly, bc, bc_MPS, initial_state, conserve, J2,
-                                              geometry, chi_max, max_sweeps, norm_magz, Delz)
+        main_results_dir = glob_results_dir + spec.local_results_dir_name
+        results_dir = spec.case_dir(main_results_dir, Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, chi_max,
+                                    max_sweeps, norm_magz, Delz)
     else:
         results_dir = "./"
 
@@ -723,15 +869,15 @@ def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, conserve=True, initial_state="Random"
     else:
         site = SpinHalfSite(conserve=None)
 
-    triangular_lat = BuildTriangularLattice(Lx, Ly, site, bc_MPS, bc=bc, geometry=geometry)
-    abs_magz = AbsMagzFromNormMagz(norm_magz, triangular_lat.N_sites)
-    center_site_mps_index = triangular_lat.lat2mps_idx([Lx // 2, Ly // 2, 0])
+    lat = spec.lattice(site, Lx, Ly, bc_MPS, bc)
+    abs_magz = AbsMagzFromNormMagz(norm_magz, lat.N_sites)
+    center_site_mps_index = lat.lat2mps_idx([Lx // 2, Ly // 2, 0])
     print("center site mps index: ", center_site_mps_index)
 
-    J1J2_model, nnn_couplings_list = GenerateJ1J2SpinTriangularModel(J2, Delz, triangular_lat)
+    J1J2_model, nnn_couplings_list = GenerateJ1J2SpinModel(J2, Delz, lat)
 
     fig_lat, ax_lat = plt.subplots(figsize=(6, 5))
-    PlotLattice(triangular_lat, ax_lat, additional_couplings_to_plot=nnn_couplings_list)
+    PlotLattice(lat, ax_lat, additional_couplings_to_plot=nnn_couplings_list)
 
     print_couplings = False
     if print_couplings:
@@ -743,9 +889,9 @@ def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, conserve=True, initial_state="Random"
     if local:
             plt.show()
 
-    psi = GetTriangularLatticeInitialState(initial_state, triangular_lat, initial_psi_dir, abs_magz)
+    psi = GetLatticeInitialState(initial_state, lat, initial_psi_dir, abs_magz, spec.ordered_initial_states())
    
-    dmrg_params = default_dmrg_params
+    dmrg_params = copy.deepcopy(default_dmrg_params)
 
     if chi_max is not None:
         ChangeChiInDMRGParams(dmrg_params, chi_max)
@@ -781,26 +927,26 @@ def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, conserve=True, initial_state="Random"
     with open(results_dir + 'psi_gs' + ".pkl", 'wb') as f:
         pickle.dump(psi, f)
 
-    lat_for_corr = triangular_lat
+    lat_for_corr = lat
     if bc_MPS == "infinite":
-        Lx_large = LxInfiniteMPSCorrelations(Lx, Ly, geometry)
-        lat_for_corr = BuildTriangularLattice(Lx_large, Ly, site, bc_MPS, bc=bc, geometry=geometry)
+        Lx_large = spec.Lx_correlations(Lx, Ly)
+        lat_for_corr = spec.lattice(site, Lx_large, Ly, bc_MPS, bc)
 
     # the total, transverse (xx) and longitudinal (zz) correlations and structure factors; all structure factors
     # are on the same, doubled-resolution k grid
     n1, n2 = 2 * lat_for_corr.Ls[0], 2 * lat_for_corr.Ls[1]
-    spin_components_output = SpinComponentsOutput(psi, lat_for_corr, getTriangularLatticeSpecielBzPoints(), n1=n1, n2=n2)
+    special_bz_points = spec.special_bz_points()
+    spin_components_output = SpinComponentsOutput(psi, lat_for_corr, special_bz_points, n1=n1, n2=n2)
     spin_corr_x = spin_components_output["corr"]["total"]
     ks, spin_corr_k = ComputeMomentumSpaceStructureFactor(spin_corr_x, lat_for_corr, assert_realness=False,
                                                           n1=n1, n2=n2)
 
     fig_corr, ax_corr = plt.subplots(figsize=(6, 5))
-    plot_structure_factor(ks, spin_corr_k, triangular_lat, ax_corr)
+    plot_structure_factor(ks, spin_corr_k, lat, ax_corr, mode=spec.structure_factor_plot_mode)
+    spec.plot_brillouin_zone(ax_corr)
 
-    YC_lat = BuildTriangularLattice(1, 1, SpinHalfSite(None), "finite", ("open", "open"), "YC")
-    YC_lat.plot_brillouin_zone(ax_corr)
-
-    special_points_structure_factor = calculateStructureFactorAtSpecialPoints(lat_for_corr, spin_corr_x)
+    special_points_structure_factor = calculateStructureFactorAtSpecialPoints(lat_for_corr, spin_corr_x,
+                                                                             special_bz_points)
 
     SaveSimulationOutput(results_dir, spin_corr_x, ks, spin_corr_k, fig_corr, fig_lat,
                          special_points_structure_factor=special_points_structure_factor, lattice=lat_for_corr,

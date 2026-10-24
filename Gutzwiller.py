@@ -24,7 +24,8 @@ from WaveFunctionProperties import (plot_structure_factor, ComputeMomentumSpaceS
                                     CalculateSpinSpinCorrelations, plot_scalar_spin_chirality, SpinComponentsOutput)
 from Main import (AbsMagzFromNormMagz, BuildTriangularLattice, TriangularXC, LxInfiniteMPSCorrelations,
                   CreateGutzwillerCaseDir, CreateKagomeGutzwillerCaseDir, PlotLattice, PrintCouplings, ImshowMatrix, SaveSimulationOutput,
-                  calculateStructureFactorAtSpecialPoints, getTriangularLatticeSpecielBzPoints, glob_results_dir, code_dir, meetings_dir,
+                  calculateStructureFactorAtSpecialPoints, getTriangularLatticeSpecielBzPoints, KagomeSpecialBzPoints,
+                  BuildKagomeLattice, PlotKagomeBrillouinZone, glob_results_dir, code_dir, meetings_dir,
                   model_type_dirac, model_type_Z2, pauli_x, pauli_y, pauli_z, ResolveJastrowTrotterRes)
 
 svd_min_slater_default = 5e-7
@@ -1135,19 +1136,6 @@ class TriangularGutzwillerSpec(GutzwillerLatticeSpec):
                                        z2_bond_sign=z2_bond_sign, **suffix_kwargs)
 
 
-def KagomeSpecialBzPoints():
-    """
-        The Bravais lattice of the Kagome lattice is triangular with lattice constant 2, so the M, K points of its
-        Brillouin zone are those of getSpecielBzPoints divided by 2. The points of the extended Brillouin zone (of the
-        triangular lattice with lattice constant 1, the Kagome sites and the hexagon centers), with the suffix "_ext",
-        are getSpecielBzPoints themselves.
-    """
-    triangular_points = getTriangularLatticeSpecielBzPoints()
-    points = {key: k / 2 for key, k in triangular_points.items()}
-    points.update({key + "_ext": k for key, k in triangular_points.items()})
-    return points
-
-
 class KagomeGutzwillerSpec(GutzwillerLatticeSpec):
     results_dir_name = "KagomeGutzwiller/"
     model_type = model_type_dirac
@@ -1156,7 +1144,7 @@ class KagomeGutzwillerSpec(GutzwillerLatticeSpec):
         return GetPiFluxKagomeLattice(site, Lx, Ly, spinfull, bc_MPS, bc=bc)
 
     def spin_lattice(self, spin_site, Lx, Ly, bc_MPS, bc):
-        return tenpy.models.lattice.Kagome(Lx, Ly, spin_site, bc=bc, bc_MPS=bc_MPS)
+        return BuildKagomeLattice(Lx, Ly, spin_site, bc_MPS, bc=bc)
 
     def mean_field_params(self, flux, monopole_Q, particle_hole):
         return {"init_H_MPO": False, "monopole_Q": monopole_Q, "flux": flux, "particle_hole": particle_hole}
@@ -1174,7 +1162,7 @@ class KagomeGutzwillerSpec(GutzwillerLatticeSpec):
         return KagomeSpecialBzPoints()
 
     def plot_brillouin_zone(self, ax, spin_site, bc_MPS):
-        tenpy.models.lattice.Kagome(1, 1, spin_site, bc="periodic", bc_MPS=bc_MPS).plot_brillouin_zone(ax)
+        PlotKagomeBrillouinZone(ax)
 
     def periodic_gauge_phases(self, lat, Lx_cell, monopole_Q, particle_hole):
         raise NotImplementedError("monopole insertion is not implemented for the Kagome pi flux ansatz")
@@ -1748,7 +1736,7 @@ def SpinonMeanFieldGutzwillerProjection(spec, Ly, bc_MPS, gs_manifold_index, Lx=
                                                           n1=n1, n2=n2)
 
     fig_corr_k, ax_corr_k = plt.subplots(figsize=(6, 5))
-    plot_structure_factor(ks, spin_corr_k, fermion_lat, ax_corr_k, mode='voronoi')
+    plot_structure_factor(ks, spin_corr_k, lat_for_corr, ax_corr_k, mode='voronoi')
     spec.plot_brillouin_zone(ax_corr_k, spin_site, bc_MPS)
     ax_corr_k.set_title("Spin Correlations")
 
@@ -2053,8 +2041,8 @@ if __name__ == "__main__":
     #SpinonTriangularLatticeMeanFieldGutzwillerProjection(4, "YC", "infinite", 0,
     #                                                     model_type_dirac, Lx=2, chi_max=500, flux=1.0,
     #                                                     jastrow_nn_xy=0.0, monopole_Q=1)
-    SpinonKagomeMeanFieldGutzwillerProjection(4, "infinite", 0, chi_max=3000,
-                                              Lx=2, flux=1)
+    SpinonKagomeMeanFieldGutzwillerProjection(2, "finite", 0, chi_max=1000,
+                                              Lx=6, flux=1)
     exit(0)
 
     # TestFreeFermionsSpinCorrelations()

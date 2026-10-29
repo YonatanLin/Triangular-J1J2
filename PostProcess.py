@@ -8,13 +8,15 @@ ENTANGLEMENT_ENTROPY = "entanglement_entropy"
 SPECIAL_POINTS_STRUCTURE_FACTOR = "special_points_structure_factor"
 MAGZ = "magz"
 SPIN_COMPONENTS_STRUCTURE_FACTOR = "spin_components_structure_factor"
+DIMER_CORRELATIONS = "dimer_correlations"
 SUPPORTED_POST_PROCESS_TYPES = {ENTANGLEMENT_ENTROPY, SPECIAL_POINTS_STRUCTURE_FACTOR, MAGZ,
-                                SPIN_COMPONENTS_STRUCTURE_FACTOR}
+                                SPIN_COMPONENTS_STRUCTURE_FACTOR, DIMER_CORRELATIONS}
 
 # per-case output files, which CollectPostProcessResults gathers
 EE_FILE = "EE_central_bond.txt"
 SPECIAL_POINTS_FILE = "special_points_structure_factor_postprocess.csv"  # not ...structure_factor.csv: the DMRG run writes that
 SPIN_COMPONENTS_FILE = "spin_components_structure_factor.csv"
+DIMER_CORR_FILE = "dimer_corr_x.csv"
 
 
 def _normalize_results_dir(results_dir):
@@ -202,6 +204,22 @@ def CalculateSpinComponentsStructureFactor(results_dir, psi_filename="psi_gs.pkl
     SaveSpinComponentsOutput(results_dir, output)
 
 
+def CalculateDimerCorrelations(results_dir, psi_filename="psi_gs.pkl"):
+    """Saves results_dir/dimer_corr_x.csv: the <D_i D_j> matrix (see WaveFunctionProperties.CalculateDimerDimerCorrelations)."""
+    from WaveFunctionProperties import CalculateDimerDimerCorrelations
+
+    print(results_dir)
+    psi_path = _result_file_path(results_dir, psi_filename)
+    lattice_path = _result_file_path(results_dir, "lattice.pkl")
+    with open(psi_path, "rb") as f:
+        psi = pickle.load(f)
+    with open(lattice_path, "rb") as f:
+        lattice = pickle.load(f)
+
+    dimer_corr = CalculateDimerDimerCorrelations(psi, lattice)
+    np.savetxt(_result_file_path(results_dir, DIMER_CORR_FILE, assert_exist=False), dimer_corr)
+
+
 # ----------------------------------------------------------------------
 # Collecting the per-case outputs of many results dirs (run locally after the cluster jobs finished)
 # ----------------------------------------------------------------------
@@ -272,6 +290,8 @@ def PostProcessResults(results_dir, post_process_type):
         CalculateSpecialPointsStructureFactor(results_dir)
     elif post_process_type == MAGZ:
         CalculatMagz(results_dir)
+    elif post_process_type == DIMER_CORRELATIONS:
+        CalculateDimerCorrelations(results_dir)
     else:
         raise ValueError(
             f"Unsupported post process type: {post_process_type}. "

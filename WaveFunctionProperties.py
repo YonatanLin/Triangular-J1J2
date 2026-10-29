@@ -877,12 +877,11 @@ def CalculateDimerDimerCorrelations(psi, lat, sites1=None, sites2=None, inf_mps_
             if ind2 < ind1: # only consider unique pairs without reagrding order
                 continue
             corr = 0.0
+            print(f"Calculating avg. dimer corr. for (i,j)={(ind1, ind2)}")
             for bond1 in bonds_by_site[int(site1)]:
                 for strength1, term1 in _spin_dot_component_terms(*bond1):
                     for bond2 in bonds_by_site[int(site2)]:
                         for strength2, term2 in _spin_dot_component_terms(*bond2):
-                            term1_expec = psi.expectation_value_term(term1)
-                            term2_expec = psi.expectation_value_term(term2)
                             corr += strength1 * strength2 * (psi.expectation_value_term(term1 + term2))
             dimer_corr[ind1, ind2] = corr
             dimer_corr[ind2, ind1] = corr #symmetrize

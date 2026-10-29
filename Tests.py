@@ -1,6 +1,7 @@
 from WaveFunctionProperties import (plot_scalar_spin_chirality, compute_structure_factor_grid,
                                     plot_structure_factor, structure_factor, ComputeMomentumSpaceStructureFactor,
-                                    CalculateSpinSpinCorrelations, CalculateDimerDimerCorrelations)
+                                    CalculateSpinSpinCorrelations, CalculateDimerDimerCorrelations,
+                                    _nearest_neighbor_dimer_bonds_by_site)
 from numpy import sin, cos, sqrt, pi
 import numpy as np
 from tenpy.networks.site import FermionSite, SpinHalfSite
@@ -94,7 +95,7 @@ def TestSquareLattice(Lx=5, Ly=5, bc=('open', 'open'), J2s=[0.0],
 
 def TestDimerDimerCorrelations():
     site = SpinHalfSite(conserve=None)
-    lat = BuildTriangularLattice(6, 6, site, "finite", bc=("open", "open"), geometry="YC")
+    lat = BuildTriangularLattice(3, 3, site, "finite", bc=("open", "open"), geometry="YC")
     psi = MPS.from_product_state(
         lat.mps_sites(),
         ["up"] * lat.N_sites,
@@ -102,14 +103,18 @@ def TestDimerDimerCorrelations():
         unit_cell_width=lat.mps_unit_cell_width,
     )
 
+    # all up: S_i . S_k = 1/4 on every bond, so <D_i D_j> = n_i n_j / 16 with n_i the number of bonds of site i
+    sites = np.arange(lat.N_sites)
+    n_bonds = np.array([len(bonds) for bonds in
+                        _nearest_neighbor_dimer_bonds_by_site(psi, lat, sites).values()])
     dimer_corr = CalculateDimerDimerCorrelations(psi, lat)
-    expected_dimer_corr = np.zeros((lat.N_sites, lat.N_sites))
+    expected_dimer_corr = np.outer(n_bonds, n_bonds) / 16
     assert(dimer_corr.shape == expected_dimer_corr.shape)
     assert(np.max(np.abs(dimer_corr - expected_dimer_corr)) < 1e-13)
 
-    partial_corr = CalculateDimerDimerCorrelations(psi, lat, sites1=[0, 3], sites2=[0, 3])
+    partial_corr = CalculateDimerDimerCorrelations(psi, lat, sites1=[0, 4], sites2=[0, 4])
     assert(partial_corr.shape == (2, 2))
-    assert(np.max(np.abs(partial_corr)) < 1e-13)
+    assert(np.max(np.abs(partial_corr - expected_dimer_corr[np.ix_([0, 4], [0, 4])])) < 1e-13)
     print("success")
 
 

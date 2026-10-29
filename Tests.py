@@ -132,8 +132,8 @@ def TestCorrelationsWithNontrivialUnitCell(Lx, Ly, state="120", geometry="YC"):
 
     if state == "120":
         spin_state = Generate120DegOrderedState(triangular_lat, Lx, Ly, False)
-    elif state == "stripe":
-        spin_state = GenerateStripeOrderedState(triangular_lat, False)
+    elif state.startswith("stripe"):  # stripe0, stripe60 or stripe120
+        spin_state = GenerateStripeOrderedState(triangular_lat, int(state[len("stripe"):]))
     else:
         ValueError("Illegal spin state option")
         return

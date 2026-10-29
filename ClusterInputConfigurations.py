@@ -74,7 +74,8 @@ gutzwiller_input_params = [
     ("jastrow_chi_max", optional_int, None),
     ("jastrow_nn_xy", float, 0.0),
     ("jastrow_trotter_res", optional_float, None),
-    ("z2_bond_sign", int, 1)
+    ("z2_bond_sign", int, 1),
+    ("virtual_parity", optional_int, None)
 ]
 
 # the Kagome Gutzwiller run has the triangular parameters without the triangular geometry and ansatz choice, in the

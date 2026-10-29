@@ -14,6 +14,7 @@ from tenpy.networks.mpo import MPO
 from tenpy.tools.params import asConfig
 from tenpy.networks.site import FermionSite, SpinHalfSite
 
+import temfpy
 from temfpy import slater
 import temfpy.gutzwiller as gutz
 from temfpy.utils import HT
@@ -30,6 +31,8 @@ from Main import (AbsMagzFromNormMagz, BuildTriangularLattice, TriangularXC, LxI
 
 svd_min_slater_default = 5e-7
 jastrow_default_total_trunc = 1.e-5
+# fermion number parity of the virtual legs kept by the infinite Gutzwiller projection (see iMPSAbrikosovPH)
+virtual_parity_default = 0
 
 Lx_short_factor_temfpy_iMPS = 50
 
@@ -156,6 +159,22 @@ def iMPSAbrikosov(mps, norm_magz):
 
     # Transform into right canoncial form
     mps.canonical_form()
+
+
+def iMPSAbrikosovPH(psi, virtual_parity):
+    """
+        In place Gutzwiller projection of the particle-hole rotated Abrikosov fermion iMPS psi, keeping the virtual
+        bond charges of fermion number parity virtual_parity. The projection conserves the bond parity, so the projected
+        iMPS splits into an even and an odd sector. The bond charge is N_left - round(<N_left>) (temfpy C_to_iMPS 'auto'
+        offset), so at zero magnetization virtual_parity = 1 is the sector with half-integer spin on each half-infinite
+        cylinder, i.e. a spinon at each end at infinity (doubly degenerate Schmidt values).
+    """
+    # temfpy 0.3.2 abrikosov_ph leaves the last tensor's vR charges unshifted for infinite MPS, fixed in 0.3.3
+    assert tuple(int(v) for v in temfpy.__version__.split(".")[:3]) >= (0, 3, 3), \
+        f"infinite abrikosov_ph needs temfpy >= 0.3.3, found {temfpy.__version__}"
+    gutz.abrikosov_ph(psi, inplace=True, parity=virtual_parity, return_canonical=False)
+    psi.canonical_form_infinite1()
+    psi.canonical_form_infinite2(tol=iMPS_canonical_form_tol)
 
 
 def isEdgeMode(abs_state, side, eps=0.01):
@@ -1616,10 +1635,12 @@ def SpinonKagomeMeanFieldGutzwillerProjection(Ly, bc_MPS, gs_manifold_index, **k
 def SpinonMeanFieldGutzwillerProjection(spec, Ly, bc_MPS, gs_manifold_index, Lx=6, chi_max=3000, flux=0.0,
                                         norm_magz=0.0, monopole_Q=0, iMPS_Lx_factor=Lx_short_factor_temfpy_iMPS,
                                         svd_min=None, jastrow_nn_zz=0.0, jastrow_chi_max=None, jastrow_nn_xy=0.0,
-                                        jastrow_trotter_res=None):
+                                        jastrow_trotter_res=None, virtual_parity=None):
     """
         Gutzwiller projected mean field ansatz of the GutzwillerLatticeSpec spec, with an optional Jastrow factor, and
         its spin correlations.
+        virtual_parity: fermion number parity of the virtual legs kept in the projected iMPS (see iMPSAbrikosovPH),
+                        None means virtual_parity_default. Finite MPS only have the even sector.
         jastrow_nn_zz: v of the Jastrow factor exp(-v sum_<ij> Sz_i Sz_j) applied after the projection (0 = none).
         jastrow_nn_xy: v of the Jastrow factor exp(-v sum_<ij> (Sx_i Sx_j + Sy_i Sy_j)) applied after the projection
                        (0 = none), Trotterized with ceil(|jastrow_nn_xy| / jastrow_trotter_res) second order steps.
@@ -1645,7 +1666,7 @@ def SpinonMeanFieldGutzwillerProjection(spec, Ly, bc_MPS, gs_manifold_index, Lx=
         results_dir = spec.case_dir(gutzwiller_results_dir, Lx, Ly, chi_max, flux, bc_MPS, gs_manifold_index,
                                     norm_magz, monopole_Q, svd_min=svd_min, jastrow_nn_zz=jastrow_nn_zz,
                                     jastrow_chi_max=jastrow_chi_max, jastrow_nn_xy=jastrow_nn_xy,
-                                    jastrow_trotter_res=jastrow_trotter_res)
+                                    jastrow_trotter_res=jastrow_trotter_res, virtual_parity=virtual_parity)
     else:
         results_dir = "./"
     assert((bc_MPS == "finite") or (bc_MPS == "infinite"))
@@ -1653,6 +1674,10 @@ def SpinonMeanFieldGutzwillerProjection(spec, Ly, bc_MPS, gs_manifold_index, Lx=
 
     if svd_min is None:
         svd_min = svd_min_slater_default
+    if virtual_parity is None:
+        virtual_parity = virtual_parity_default
+    assert virtual_parity in (0, 1), f"virtual_parity must be 0 or 1, got {virtual_parity}"
+    assert not finite or virtual_parity == 0, "finite MPS only have the even virtual parity sector"
     slater_trunc_par = {"chi_max": chi_max, "svd_min": svd_min, "degeneracy_tol": 1e-12}
 
     psi_pi_flux, C, fermion_lat = GetFluxSlaterMPS(spec, Lx, Ly, spinfull, site, slater_trunc_par, bc_MPS,
@@ -1683,7 +1708,7 @@ def SpinonMeanFieldGutzwillerProjection(spec, Ly, bc_MPS, gs_manifold_index, Lx=
         if finite:
             gutz.abrikosov_ph(psi_pi_flux, inplace=True)
         else:
-            iMPSAbrikosov(psi_pi_flux, norm_magz)
+            iMPSAbrikosovPH(psi_pi_flux, virtual_parity)
 
     else:
         assert(finite)
@@ -2040,9 +2065,25 @@ def DebugMagnetizedIMPS():
     # plt.show()
     exit(0)
 
-
+def plotXC6PiFlux():
+    XC6_lat = BuildTriangularLattice(4, 3, FermionSite(conserve='N'), "finite", bc=("open", "periodic"), geometry="XC")
+    XC6_pi_flux_model = MonopoleCondensatePiFluxModel({"init_H_MPO": False, "lattice": XC6_lat, "flux": 0.0,
+                                                       "monopole_Q": 0, "particle_hole": False})
+    fig, (ax_lat, ax_hop) = plt.subplots(1, 2, figsize=(12, 5))
+    XC6_lat.plot_order(ax_lat)
+    XC6_lat.plot_coupling(ax_lat)
+    XC6_lat.plot_sites(ax_lat)
+    ax_lat.set_aspect('equal')
+    ax_lat.set_title("XC6 lattice")
+    PlotModelHoppingsByPhase(XC6_pi_flux_model, ax_hop, max_bond_length=1.01)
+    ax_hop.set_title(r"$\pi$ flux hoppings (phase 0: $t=+1$, phase $\pi$: $t=-1$)")
+    fig.savefig(code_dir + "XC6_pi_flux_couplings.png", bbox_inches='tight')
+    if local:
+        plt.show()
 
 if __name__ == "__main__":
+    # XC6 lattice (the XC unit cell has two rows, so Ly=3 is a circumference of 6 sites) and its pi flux hoppings
+
     #SpinonTriangularLatticeMeanFieldGutzwillerProjection(4, "YC", "infinite", 0,
     #                                                     model_type_dirac, Lx=2, chi_max=500, flux=1.0,
     #                                                     jastrow_nn_xy=0.0, monopole_Q=1)

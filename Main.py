@@ -86,7 +86,7 @@ def ChangeChiInDMRGParams(dmrg_params, chi_max):
 
 
 def GutzwillerCaseNameSuffix(norm_magz, monopole_Q, svd_min=None, jastrow_nn_zz=0.0, jastrow_chi_max=None,
-                             jastrow_nn_xy=0.0, jastrow_trotter_res=None):
+                             jastrow_nn_xy=0.0, jastrow_trotter_res=None, virtual_parity=None):
     """ the lattice independent part of the Gutzwiller case directory name """
     case_name = ""
     if float(norm_magz) > 1e-15:
@@ -104,20 +104,22 @@ def GutzwillerCaseNameSuffix(norm_magz, monopole_Q, svd_min=None, jastrow_nn_zz=
     if float(jastrow_nn_zz) != 0.0 or float(jastrow_nn_xy) != 0.0:
         if jastrow_chi_max is not None and str(jastrow_chi_max) != "None":
             case_name += f"_jaschi_{jastrow_chi_max}"
+    if virtual_parity is not None and str(virtual_parity) != "None":
+        case_name += f"_vpar_{int(virtual_parity)}"
     return case_name
 
 
 def GutzwillerCaseDirName(main_results_dir, Lx, Ly, chi_max, flux, geometry, bc_MPS,
                           gs_manifold_index, model_type, norm_magz, monopole_Q, svd_min=None,
                           jastrow_nn_zz=0.0, jastrow_chi_max=None, jastrow_nn_xy=0.0, jastrow_trotter_res=None,
-                          z2_bond_sign=None):
+                          z2_bond_sign=None, virtual_parity=None):
     case_name = f"{bc_MPS}_Lx_{Lx}_Ly_{Ly}_chi_{chi_max}_flux_{flux}_{geometry}_gsindex_{gs_manifold_index}"
 
     if model_type is not None:
         case_name = f"{model_type}_" + case_name
     case_name += GutzwillerCaseNameSuffix(norm_magz, monopole_Q, svd_min=svd_min, jastrow_nn_zz=jastrow_nn_zz,
                                           jastrow_chi_max=jastrow_chi_max, jastrow_nn_xy=jastrow_nn_xy,
-                                          jastrow_trotter_res=jastrow_trotter_res)
+                                          jastrow_trotter_res=jastrow_trotter_res, virtual_parity=virtual_parity)
     if z2_bond_sign is not None and int(z2_bond_sign) != 1:
         case_name += f"_bondsign_{int(z2_bond_sign)}"
 
@@ -411,20 +413,35 @@ def Generate120DegOrderedState(lat=None, plot=False):
     return psi
 
 
-def GenerateStripeOrderedState(lat, plot=False):
-    basis = lat.basis
-    aligned_with_x = (basis[0][1] == 0.0 or basis[1][1] == 0.0)
-    aligned_with_y = (basis[0][0] == 0.0 or basis[1][0] == 0.0)
-    assert(aligned_with_x or aligned_with_y)
+def _StripeLineIndices(lat, angle):
+    """
+    Index of the bond line through each MPS site, for lines along the nearest neighbor bond direction at angle (degrees)
+    to the x axis; neighboring lines are sqrt(3)/2 apart.
+    """
+    theta = np.deg2rad(angle)
+    normal = np.array([-np.sin(theta), np.cos(theta)])
+    positions = np.array([lat.position(lat.mps2lat_idx(i)) for i in range(lat.N_sites)])
+    line_cor = (positions - positions[0]) @ normal / (sqrt(3) / 2.)
+    line_ind = np.rint(line_cor).astype(int)
+    assert(np.max(np.abs(line_cor - line_ind)) < 1e-8), f"angle {angle} is not a bond direction of the lattice"
 
-    product_state = []
-    for i in range(lat.N_sites):
-        lat_ind = lat.mps2lat_idx(i)
-        if aligned_with_x:
-            column_ind = lat_ind[1]
-        else:
-            column_ind = lat_ind[0]
-        product_state.append("up" if column_ind % 2 == 1 else "down")
+    # the stripes only close on themselves across a periodic direction if it crosses an even number of lines
+    for d in range(lat.dim):
+        if not lat.bc[d]:  # periodic (bc_MPS infinite makes the x direction periodic too)
+            n_lines_crossed = lat.Ls[d] * np.asarray(lat.basis[d]) @ normal / (sqrt(3) / 2.)
+            if int(np.rint(n_lines_crossed)) % 2 == 1:
+                print(f"WARNING: {angle} degree stripes are frustrated across the periodic direction {d} "
+                      f"(L={lat.Ls[d]} crosses {int(np.rint(n_lines_crossed))} lines)")
+    return line_ind
+
+
+def GenerateStripeOrderedState(lat, angle, plot=False):
+    """
+    Stripe (collinear) product state: ferromagnetic lines along the nearest neighbor bond direction at angle (degrees,
+    0, 60 or 120) to the x axis, alternating between up and down.
+    """
+    line_ind = _StripeLineIndices(lat, angle)
+    product_state = ["up" if line_ind[i] % 2 == 1 else "down" for i in range(lat.N_sites)]
 
     psi = MPS.from_product_state(
         lat.mps_sites(),
@@ -443,6 +460,48 @@ def GenerateStripeOrderedState(lat, plot=False):
             plt.show()
 
     return psi
+
+
+def PlotStripesStructureFactors(output_dir=None, geometry_sizes=None, plot_mode="voronoi"):
+    """
+    Structure factor of the stripe0, stripe60 and stripe120 initial states (finite cylinders), one row per geometry.
+    geometry_sizes: {geometry: (Lx, Ly)}; the default sizes fit all three stripes around the circumference
+    (YC: even Ly; XC: even Ly, i.e. a circumference that is a multiple of 4).
+    Each stripe should peak at a single M point (the one normal to its lines).
+    Saves stripes_structure_factors.png in output_dir if given.
+    """
+    if geometry_sizes is None:
+        geometry_sizes = {"YC": (6, 6), "XC": (6, 4)}
+    stripe_names = ["stripe0", "stripe60", "stripe120"]
+    special_bz_points = getTriangularLatticeSpecielBzPoints()
+
+    fig, axes = plt.subplots(len(geometry_sizes), len(stripe_names), figsize=(5 * len(stripe_names),
+                                                                              4.5 * len(geometry_sizes)),
+                             squeeze=False)
+    for row, (geometry, (Lx, Ly)) in enumerate(geometry_sizes.items()):
+        spec = TriangularDMRGSpec(geometry)
+        lat = spec.lattice(SpinHalfSite(conserve=None), Lx, Ly, "finite", ("open", "periodic"))
+        ordered_states = spec.ordered_initial_states()
+        for col, stripe_name in enumerate(stripe_names):
+            psi = ordered_states[stripe_name](lat)
+            spin_corr_x = CalculateSpinSpinCorrelations(psi)
+            n1, n2 = 2 * lat.Ls[0], 2 * lat.Ls[1]
+            ks, spin_corr_k = ComputeMomentumSpaceStructureFactor(spin_corr_x, lat, assert_realness=False,
+                                                                  n1=n1, n2=n2)
+            ax = axes[row, col]
+            plot_structure_factor(ks, spin_corr_k, lat, ax, mode=plot_mode)
+            spec.plot_brillouin_zone(ax)
+            ax.set_title(f"{geometry} Lx={Lx} Ly={Ly}, {stripe_name}")
+
+            special_points_sf = calculateStructureFactorAtSpecialPoints(lat, spin_corr_x, special_bz_points)
+            print(f"{geometry} {stripe_name}: " + ", ".join(
+                f"{name}={sf:.3f}" for name, sf in zip(special_bz_points, special_points_sf[:, 2])))
+    fig.tight_layout()
+    if output_dir is not None:
+        fig.savefig(output_dir + "stripes_structure_factors.png", bbox_inches='tight')
+    if local:
+        plt.show()
+    return fig
 
 
 def RunDMRG(model, psi_init, dmrg_params=default_dmrg_params,
@@ -812,7 +871,9 @@ class TriangularDMRGSpec(DMRGLatticeSpec):
 
     def ordered_initial_states(self):
         return {"120": lambda lat: Generate120DegOrderedState(lat=lat),
-                "stripe": lambda lat: GenerateStripeOrderedState(lat)}
+                "stripe0": lambda lat: GenerateStripeOrderedState(lat, angle=0),
+                "stripe60": lambda lat: GenerateStripeOrderedState(lat, angle=60),
+                "stripe120": lambda lat: GenerateStripeOrderedState(lat, angle=120)}
 
     def case_dir(self, main_results_dir, Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, chi_max, max_sweeps,
                  norm_magz, Delz):
@@ -1502,6 +1563,8 @@ if __name__ == "__main__":
     #AnalyzeMagnetizedJ1J2Correlations(magz2_dir, ns)
     #plt.show()
 
+    PlotStripesStructureFactors(output_dir="./")
+    exit(0)
     TriangularJ1J2DMRG(8, 4, ("open", "periodic"), "finite", J2=0.1, chi_max=400, max_sweeps=15,
                        Delz=1.5)
     # norm_magz_third_dir = glob_results_dir + \

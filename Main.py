@@ -27,6 +27,7 @@ from tenpy import networks
 from tenpy import MPSEnvironment
 import threading
 import time
+from ClusterInputConfigurations import optional_bool
 from WaveFunctionProperties import (plot_scalar_spin_chirality, compute_structure_factor_grid,
                                     plot_structure_factor, structure_factor, ComputeMomentumSpaceStructureFactor,
                                     CalculateSpinSpinCorrelations, SpinComponentsOutput, SaveSpinComponentsOutput)
@@ -158,6 +159,7 @@ def CreateOverlapsCaseDir(main_results_dir, **kwargs):
     bc_MPS = kwargs.get("bc_MPS")
     dmrg_chi_max = kwargs.get("dmrg_chi_max")
     dmrg_max_sweeps = kwargs.get("dmrg_max_sweeps")
+    dmrg_mixer = kwargs.get("dmrg_mixer")
     norm_magz = kwargs.get("norm_magz")
     J2 = kwargs.get("J2")
     Delz = kwargs.get("Delz")
@@ -195,7 +197,7 @@ def CreateOverlapsCaseDir(main_results_dir, **kwargs):
     hamiltonian_case_dir = (f"chiGutz_{gutz_chi_max}_flux_{gutz_flux}_monQ_{gutz_mon_Q}_"
                               f"{scan_dir}{fixed_params_dir}"
                               f"initDMRG_{dmrg_initial_state}_chiDMRG_{dmrg_chi_max}_sweeps_{dmrg_max_sweeps}_"
-                              f"magz_{norm_magz}/")
+                              f"{'mix_0_' if MixerDisabled(dmrg_mixer) else ''}magz_{norm_magz}/")
     overlaps_dir = overlaps_dir + hamiltonian_case_dir
     Path(overlaps_dir).mkdir(parents=True, exist_ok=True)
     return overlaps_dir
@@ -693,8 +695,13 @@ def BcDirString(bc):
     return bc_string
 
 
-def J1J2ParamsDirName(bc_MPS, initial_state, conserve, J2, chi, max_sweeps, norm_magz, Delz=1.0):
-    """ the lattice independent part of the J1J2 DMRG case directory name """
+def MixerDisabled(mixer):
+    """ mixer is a bool, None (the default, True) or one of them as an input file string """
+    return optional_bool(str(mixer)) is False
+
+
+def J1J2ParamsDirName(bc_MPS, initial_state, conserve, J2, chi, max_sweeps, norm_magz, Delz=1.0, mixer=None):
+    """ the lattice independent part of the J1J2 DMRG case directory name (mixer=None is the default, True) """
     params_dir = f"{bc_MPS}_init_{initial_state}_conserve_{conserve}_J2_{J2}"
     if Delz is not None and abs(float(Delz) - 1.0) > 1e-15:
         params_dir += f"_Delz_{Delz}"
@@ -702,6 +709,8 @@ def J1J2ParamsDirName(bc_MPS, initial_state, conserve, J2, chi, max_sweeps, norm
         params_dir += f"_chi_{chi}"
     if max_sweeps is not None:
         params_dir += f"_maxsweeps_{max_sweeps}"
+    if MixerDisabled(mixer):
+        params_dir += "_mix_0"
     if float(norm_magz) > 1e-15:
         norm_magz_float = float(norm_magz)
         params_dir += f"_magz_{norm_magz_float:.4f}"
@@ -709,14 +718,17 @@ def J1J2ParamsDirName(bc_MPS, initial_state, conserve, J2, chi, max_sweeps, norm
 
 
 def TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, geometry, chi, max_sweeps, norm_magz,
-                              Delz=1.0):
+                              Delz=1.0, mixer=None):
     geometry_dir = f"Lx_{Lx}_Ly_{Ly}_bc_{BcDirString(bc)}_{geometry}/"
-    return geometry_dir, J1J2ParamsDirName(bc_MPS, initial_state, conserve, J2, chi, max_sweeps, norm_magz, Delz)
+    return geometry_dir, J1J2ParamsDirName(bc_MPS, initial_state, conserve, J2, chi, max_sweeps, norm_magz, Delz,
+                                           mixer)
 
 
-def KagomeJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, chi, max_sweeps, norm_magz, Delz=1.0):
+def KagomeJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, chi, max_sweeps, norm_magz, Delz=1.0,
+                          mixer=None):
     geometry_dir = f"Kagome_Lx_{Lx}_Ly_{Ly}_bc_{BcDirString(bc)}/"
-    return geometry_dir, J1J2ParamsDirName(bc_MPS, initial_state, conserve, J2, chi, max_sweeps, norm_magz, Delz)
+    return geometry_dir, J1J2ParamsDirName(bc_MPS, initial_state, conserve, J2, chi, max_sweeps, norm_magz, Delz,
+                                           mixer)
 
 
 def CreateDMRGCaseDir(main_results_dir, geometry_dir, params_dir):
@@ -726,17 +738,17 @@ def CreateDMRGCaseDir(main_results_dir, geometry_dir, params_dir):
 
 
 def CreateTriangularCaseDir(main_results_dir, Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, geometry,
-                            chi_max=None, max_sweeps=None, norm_magz=0.0, Delz=1.0):
+                            chi_max=None, max_sweeps=None, norm_magz=0.0, Delz=1.0, mixer=None):
     return CreateDMRGCaseDir(main_results_dir,
                              *TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, geometry,
-                                                        chi_max, max_sweeps, norm_magz, Delz))
+                                                        chi_max, max_sweeps, norm_magz, Delz, mixer))
 
 
 def CreateKagomeCaseDir(main_results_dir, Lx, Ly, bc, bc_MPS, initial_state, conserve, J2,
-                        chi_max=None, max_sweeps=None, norm_magz=0.0, Delz=1.0):
+                        chi_max=None, max_sweeps=None, norm_magz=0.0, Delz=1.0, mixer=None):
     return CreateDMRGCaseDir(main_results_dir,
                              *KagomeJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, chi_max,
-                                                    max_sweeps, norm_magz, Delz))
+                                                    max_sweeps, norm_magz, Delz, mixer))
 
 
 def GenerateJ1J2SpinModel(J2, Delz, lat):
@@ -845,7 +857,7 @@ class DMRGLatticeSpec:
         return {}
 
     def case_dir(self, main_results_dir, Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, chi_max, max_sweeps,
-                 norm_magz, Delz):
+                 norm_magz, Delz, mixer=None):
         """ creates the results directory """
         raise NotImplementedError
 
@@ -876,9 +888,9 @@ class TriangularDMRGSpec(DMRGLatticeSpec):
                 "stripe120": lambda lat: GenerateStripeOrderedState(lat, angle=120)}
 
     def case_dir(self, main_results_dir, Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, chi_max, max_sweeps,
-                 norm_magz, Delz):
+                 norm_magz, Delz, mixer=None):
         return CreateTriangularCaseDir(main_results_dir, Lx, Ly, bc, bc_MPS, initial_state, conserve, J2,
-                                       self.geometry, chi_max, max_sweeps, norm_magz, Delz)
+                                       self.geometry, chi_max, max_sweeps, norm_magz, Delz, mixer)
 
 
 class KagomeDMRGSpec(DMRGLatticeSpec):
@@ -901,9 +913,9 @@ class KagomeDMRGSpec(DMRGLatticeSpec):
         PlotKagomeBrillouinZone(ax)
 
     def case_dir(self, main_results_dir, Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, chi_max, max_sweeps,
-                 norm_magz, Delz):
+                 norm_magz, Delz, mixer=None):
         return CreateKagomeCaseDir(main_results_dir, Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, chi_max,
-                                   max_sweeps, norm_magz, Delz)
+                                   max_sweeps, norm_magz, Delz, mixer)
 
 
 def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, geometry="YC", **kwargs):
@@ -917,8 +929,9 @@ def KagomeJ1J2DMRG(Lx, Ly, bc, bc_MPS, **kwargs):
 
 
 def J1J2DMRG(spec, Lx, Ly, bc, bc_MPS, conserve=True, initial_state="Random", J2=0.0,
-             chi_max=None, initial_psi_dir=None, max_sweeps=None, norm_magz=0.0, Delz=1.0):
-    """ DMRG of the XXZ J1J2 Heisenberg model (GenerateJ1J2SpinModel) on the lattice of spec, a DMRGLatticeSpec """
+             chi_max=None, initial_psi_dir=None, max_sweeps=None, norm_magz=0.0, Delz=1.0, mixer=None):
+    """ DMRG of the XXZ J1J2 Heisenberg model (GenerateJ1J2SpinModel) on the lattice of spec, a DMRGLatticeSpec.
+        mixer: the DMRG 'mixer' parameter, None for the default of default_dmrg_params (True) """
     if isinstance(bc, str):
         bc_parsed = bc.split("-")
         bc = (bc_parsed[0], bc_parsed[1])
@@ -926,7 +939,7 @@ def J1J2DMRG(spec, Lx, Ly, bc, bc_MPS, conserve=True, initial_state="Random", J2
     if local:
         main_results_dir = glob_results_dir + spec.local_results_dir_name
         results_dir = spec.case_dir(main_results_dir, Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, chi_max,
-                                    max_sweeps, norm_magz, Delz)
+                                    max_sweeps, norm_magz, Delz, mixer)
     else:
         results_dir = "./"
 
@@ -965,6 +978,9 @@ def J1J2DMRG(spec, Lx, Ly, bc, bc_MPS, conserve=True, initial_state="Random", J2
 
     if max_sweeps is not None:
         dmrg_params['max_sweeps'] = max_sweeps
+
+    if mixer is not None:
+        dmrg_params['mixer'] = mixer
 
     if initialStateFromFile(initial_state):
         chi_max_psi = np.max(psi.chi)
@@ -1151,7 +1167,7 @@ def GutzwillerDMRGOverlaps(scanned_parameter_name, scanned_parameter_values, gut
                            gutz_flux, gutz_mon_Q, output_dir, dmrg_initial_state, dmrg_parent_dir, geometry, bc_MPS,
                            gutz_gs_manifold_index, dmrg_chi_max, dmrg_max_sweeps, dmrg_conserve, model_type, norm_magz,
                            jastrow_nn_zz=0.0, jastrow_chi_max=None, jastrow_nn_xy=0.0, jastrow_trotter_res=None,
-                           **kwargs):
+                           dmrg_mixer=None, **kwargs):
     if scanned_parameter_name not in HAMILTONIAN_SCAN_PARAMS | GUTZWILLER_SCAN_PARAMS:
         raise ValueError(f"Scanning {scanned_parameter_name} is not supported")
     gutzwiller_scan = scanned_parameter_name in GUTZWILLER_SCAN_PARAMS
@@ -1189,7 +1205,7 @@ def GutzwillerDMRGOverlaps(scanned_parameter_name, scanned_parameter_values, gut
 
         dmrg_geom_dir, dmrg_params_dir = (
             TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, dmrg_initial_state, dmrg_conserve, J2, geometry,
-                                      dmrg_chi_max, dmrg_max_sweeps, norm_magz, Delz))
+                                      dmrg_chi_max, dmrg_max_sweeps, norm_magz, Delz, dmrg_mixer))
         dmrg_dir = dmrg_parent_dir + dmrg_geom_dir + dmrg_params_dir
 
         # in a gutzwiller parameter scan the dmrg state is fixed, so it is loaded and plotted only once

@@ -12,6 +12,13 @@ def parse_bool(value):
     raise argparse.ArgumentTypeError(f"Invalid boolean value: {value}")
 
 
+def optional_bool(value):
+    if value == "None":
+        return None
+    else:
+        return parse_bool(value)
+
+
 def optional_int(value):
     if value == "None":
         return None
@@ -46,7 +53,8 @@ dmrg_input_params = [
     ("max_sweeps", int),
     ("norm_magz", float),
     ("initial_psi_dir", str),
-    ("Delz", optional_float)]
+    ("Delz", optional_float),
+    ("mixer", optional_bool, None)]  # None: DMRG with the mixer (default_dmrg_params)
 
 dmrg_params_excluded_from_dirname = ["initial_psi_dir"]
 
@@ -101,7 +109,8 @@ dmrg_gutz_comp_input_params = [("Lx", int), ("Ly", int), ("geometry", str), ("bc
                                ("gutz_gs_manifold_index", int), ("gutz_mon_Q", int), ("gutz_parent_dir", str),
                                ("model_type", optional_str), ("norm_magz", float), ("parameter_file", str),
                                ("jastrow_nn_zz", float, 0.0), ("jastrow_chi_max", optional_int, None),
-                               ("jastrow_nn_xy", float, 0.0), ("jastrow_trotter_res", optional_float, None)]
+                               ("jastrow_nn_xy", float, 0.0), ("jastrow_trotter_res", optional_float, None),
+                               ("dmrg_mixer", optional_bool, None)]
 
 
 def input_param_name(param):
@@ -160,4 +169,7 @@ def CreateTriangularCaseDirFromInputFile(main_results_dir, input_file, input_par
             kwargs["bc"] = kwargs["bc"].split("-")
         
         case_folder = dir_name_generator(main_results_dir, **kwargs)
-        input_for_condor.write(line[:-1] + " " + case_folder + "\n")
+        # all input params, with the defaults of the ones left out of the header, in the order of the .sub queue
+        condor_params = [str(parsed_params.get(input_param_name(param), input_param_default(param)))
+                         for param in input_params]
+        input_for_condor.write(" ".join(condor_params) + " " + case_folder + "\n")

@@ -291,6 +291,7 @@ def PostProcessResults(results_dir, post_process_type):
     elif post_process_type == MAGZ:
         CalculatMagz(results_dir)
     elif post_process_type == DIMER_CORRELATIONS:
+        print("sarting dimer correlations calculation...")
         CalculateDimerCorrelations(results_dir)
     else:
         raise ValueError(

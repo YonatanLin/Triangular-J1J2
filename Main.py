@@ -73,6 +73,18 @@ def ResolveJastrowTrotterRes(jastrow_trotter_res):
     return float(jastrow_trotter_res)
 
 
+# fermion number parity of the virtual legs kept by the infinite Gutzwiller projection (see Gutzwiller.iMPSAbrikosovPH);
+# finite MPS only have the even sector
+VIRTUAL_PARITY_DEFAULT = 1
+
+
+def ResolveVirtualParity(virtual_parity, bc_MPS):
+    """ virtual_parity, or its default if None (0 for a finite MPS) """
+    if virtual_parity is None or str(virtual_parity) == "None":
+        return 0 if bc_MPS == "finite" else VIRTUAL_PARITY_DEFAULT
+    return int(virtual_parity)
+
+
 def JastrowTrotterResDirTag(jastrow_trotter_res, prefix, suffix):
     # the default resolution is left out of directory names
     jastrow_trotter_res = ResolveJastrowTrotterRes(jastrow_trotter_res)
@@ -110,6 +122,16 @@ def GutzwillerCaseNameSuffix(norm_magz, monopole_Q, svd_min=None, jastrow_nn_zz=
     return case_name
 
 
+def _VirtualParityForDirName(virtual_parity, bc_MPS):
+    """
+        The virtual_parity tag of a case directory name: as given, or, if None, 1 when that is its default (infinite
+        MPS) and untagged otherwise, so that the untagged names stay those of virtual parity 0 (the earlier default).
+    """
+    if virtual_parity is None or str(virtual_parity) == "None":
+        return 1 if ResolveVirtualParity(None, bc_MPS) == 1 else None
+    return virtual_parity
+
+
 def GutzwillerCaseDirName(main_results_dir, Lx, Ly, chi_max, flux, geometry, bc_MPS,
                           gs_manifold_index, model_type, norm_magz, monopole_Q, svd_min=None,
                           jastrow_nn_zz=0.0, jastrow_chi_max=None, jastrow_nn_xy=0.0, jastrow_trotter_res=None,
@@ -120,7 +142,8 @@ def GutzwillerCaseDirName(main_results_dir, Lx, Ly, chi_max, flux, geometry, bc_
         case_name = f"{model_type}_" + case_name
     case_name += GutzwillerCaseNameSuffix(norm_magz, monopole_Q, svd_min=svd_min, jastrow_nn_zz=jastrow_nn_zz,
                                           jastrow_chi_max=jastrow_chi_max, jastrow_nn_xy=jastrow_nn_xy,
-                                          jastrow_trotter_res=jastrow_trotter_res, virtual_parity=virtual_parity)
+                                          jastrow_trotter_res=jastrow_trotter_res,
+                                          virtual_parity=_VirtualParityForDirName(virtual_parity, bc_MPS))
     if z2_bond_sign is not None and int(z2_bond_sign) != 1:
         case_name += f"_bondsign_{int(z2_bond_sign)}"
 
@@ -131,6 +154,7 @@ def GutzwillerCaseDirName(main_results_dir, Lx, Ly, chi_max, flux, geometry, bc_
 def KagomeGutzwillerCaseDirName(main_results_dir, Lx, Ly, chi_max, flux, bc_MPS, gs_manifold_index, norm_magz,
                                 monopole_Q, **suffix_kwargs):
     case_name = f"Kagome_{bc_MPS}_Lx_{Lx}_Ly_{Ly}_chi_{chi_max}_flux_{flux}_gsindex_{gs_manifold_index}"
+    suffix_kwargs["virtual_parity"] = _VirtualParityForDirName(suffix_kwargs.get("virtual_parity"), bc_MPS)
     case_name += GutzwillerCaseNameSuffix(norm_magz, monopole_Q, **suffix_kwargs)
     case_name += "/"
     return main_results_dir + case_name

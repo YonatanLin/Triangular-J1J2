@@ -27,12 +27,11 @@ from Main import (AbsMagzFromNormMagz, BuildTriangularLattice, TriangularXC, LxI
                   CreateGutzwillerCaseDir, CreateKagomeGutzwillerCaseDir, PlotLattice, PrintCouplings, ImshowMatrix, SaveSimulationOutput,
                   calculateStructureFactorAtSpecialPoints, getTriangularLatticeSpecielBzPoints, KagomeSpecialBzPoints,
                   BuildKagomeLattice, PlotKagomeBrillouinZone, glob_results_dir, code_dir, meetings_dir,
-                  model_type_dirac, model_type_Z2, pauli_x, pauli_y, pauli_z, ResolveJastrowTrotterRes)
+                  model_type_dirac, model_type_Z2, pauli_x, pauli_y, pauli_z, ResolveJastrowTrotterRes,
+                  ResolveVirtualParity)
 
 svd_min_slater_default = 5e-7
 jastrow_default_total_trunc = 1.e-5
-# fermion number parity of the virtual legs kept by the infinite Gutzwiller projection (see iMPSAbrikosovPH)
-virtual_parity_default = 0
 
 Lx_short_factor_temfpy_iMPS = 50
 
@@ -1640,7 +1639,7 @@ def SpinonMeanFieldGutzwillerProjection(spec, Ly, bc_MPS, gs_manifold_index, Lx=
         Gutzwiller projected mean field ansatz of the GutzwillerLatticeSpec spec, with an optional Jastrow factor, and
         its spin correlations.
         virtual_parity: fermion number parity of the virtual legs kept in the projected iMPS (see iMPSAbrikosovPH),
-                        None means virtual_parity_default. Finite MPS only have the even sector.
+                        None means Main.VIRTUAL_PARITY_DEFAULT (0 for finite MPS, which only have the even sector).
         jastrow_nn_zz: v of the Jastrow factor exp(-v sum_<ij> Sz_i Sz_j) applied after the projection (0 = none).
         jastrow_nn_xy: v of the Jastrow factor exp(-v sum_<ij> (Sx_i Sx_j + Sy_i Sy_j)) applied after the projection
                        (0 = none), Trotterized with ceil(|jastrow_nn_xy| / jastrow_trotter_res) second order steps.
@@ -1674,8 +1673,7 @@ def SpinonMeanFieldGutzwillerProjection(spec, Ly, bc_MPS, gs_manifold_index, Lx=
 
     if svd_min is None:
         svd_min = svd_min_slater_default
-    if virtual_parity is None:
-        virtual_parity = virtual_parity_default
+    virtual_parity = ResolveVirtualParity(virtual_parity, bc_MPS)
     assert virtual_parity in (0, 1), f"virtual_parity must be 0 or 1, got {virtual_parity}"
     assert not finite or virtual_parity == 0, "finite MPS only have the even virtual parity sector"
     slater_trunc_par = {"chi_max": chi_max, "svd_min": svd_min, "degeneracy_tol": 1e-12}
@@ -2084,11 +2082,11 @@ def plotXC6PiFlux():
 if __name__ == "__main__":
     # XC6 lattice (the XC unit cell has two rows, so Ly=3 is a circumference of 6 sites) and its pi flux hoppings
 
-    #SpinonTriangularLatticeMeanFieldGutzwillerProjection(4, "YC", "infinite", 0,
-    #                                                     model_type_dirac, Lx=2, chi_max=500, flux=1.0,
-    #                                                     jastrow_nn_xy=0.0, monopole_Q=1)
-    SpinonKagomeMeanFieldGutzwillerProjection(2, "finite", 0, chi_max=1000,
-                                              Lx=6, flux=1)
+    SpinonTriangularLatticeMeanFieldGutzwillerProjection(8, "YC", "infinite", 0,
+                                                         model_type_dirac, Lx=2, chi_max=500, flux=1.0,
+                                                         jastrow_nn_xy=0.0, monopole_Q=0)
+    #SpinonKagomeMeanFieldGutzwillerProjection(2, "finite", 0, chi_max=1000,
+    #                                          Lx=6, flux=1)
     exit(0)
 
     # TestFreeFermionsSpinCorrelations()

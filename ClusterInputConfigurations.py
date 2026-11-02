@@ -110,7 +110,7 @@ dmrg_gutz_comp_input_params = [("Lx", int), ("Ly", int), ("geometry", str), ("bc
                                ("model_type", optional_str), ("norm_magz", float), ("parameter_file", str),
                                ("jastrow_nn_zz", float, 0.0), ("jastrow_chi_max", optional_int, None),
                                ("jastrow_nn_xy", float, 0.0), ("jastrow_trotter_res", optional_float, None),
-                               ("dmrg_mixer", optional_bool, None)]
+                               ("dmrg_mixer", optional_bool, None), ("virtual_parity", optional_int, None)]
 
 
 def input_param_name(param):

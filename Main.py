@@ -192,6 +192,7 @@ def CreateOverlapsCaseDir(main_results_dir, **kwargs):
     jastrow_chi_max = kwargs.get("jastrow_chi_max")
     jastrow_nn_xy = kwargs.get("jastrow_nn_xy")
     jastrow_trotter_res = kwargs.get("jastrow_trotter_res")
+    virtual_parity = kwargs.get("virtual_parity")
 
     Path(main_results_dir).mkdir(parents=True, exist_ok=True)
     geometry_case_dir = f"{bc_MPS}_Lx_{Lx}_Ly_{Ly}_{geometry}/"
@@ -218,6 +219,9 @@ def CreateOverlapsCaseDir(main_results_dir, **kwargs):
         fixed_params_dir += JastrowTrotterResDirTag(jastrow_trotter_res, "jasRes_", "_")
     if jastrow_chi_max is not None and str(jastrow_chi_max) != "None":
         fixed_params_dir += f"jaschi_{jastrow_chi_max}_"
+    # the default virtual parity is left out, so that None and the explicit default share a directory
+    if ResolveVirtualParity(virtual_parity, bc_MPS) != ResolveVirtualParity(None, bc_MPS):
+        fixed_params_dir += f"vpar_{int(virtual_parity)}_"
     hamiltonian_case_dir = (f"chiGutz_{gutz_chi_max}_flux_{gutz_flux}_monQ_{gutz_mon_Q}_"
                               f"{scan_dir}{fixed_params_dir}"
                               f"initDMRG_{dmrg_initial_state}_chiDMRG_{dmrg_chi_max}_sweeps_{dmrg_max_sweeps}_"
@@ -1191,7 +1195,7 @@ def GutzwillerDMRGOverlaps(scanned_parameter_name, scanned_parameter_values, gut
                            gutz_flux, gutz_mon_Q, output_dir, dmrg_initial_state, dmrg_parent_dir, geometry, bc_MPS,
                            gutz_gs_manifold_index, dmrg_chi_max, dmrg_max_sweeps, dmrg_conserve, model_type, norm_magz,
                            jastrow_nn_zz=0.0, jastrow_chi_max=None, jastrow_nn_xy=0.0, jastrow_trotter_res=None,
-                           dmrg_mixer=None, **kwargs):
+                           dmrg_mixer=None, virtual_parity=None, **kwargs):
     if scanned_parameter_name not in HAMILTONIAN_SCAN_PARAMS | GUTZWILLER_SCAN_PARAMS:
         raise ValueError(f"Scanning {scanned_parameter_name} is not supported")
     gutzwiller_scan = scanned_parameter_name in GUTZWILLER_SCAN_PARAMS
@@ -1211,7 +1215,8 @@ def GutzwillerDMRGOverlaps(scanned_parameter_name, scanned_parameter_values, gut
     for parameter_value in scanned_parameter_values:
         hamiltonian_params = dict(kwargs)
         gutz_params = {"jastrow_nn_zz": jastrow_nn_zz, "jastrow_chi_max": jastrow_chi_max,
-                       "jastrow_nn_xy": jastrow_nn_xy, "jastrow_trotter_res": jastrow_trotter_res}
+                       "jastrow_nn_xy": jastrow_nn_xy, "jastrow_trotter_res": jastrow_trotter_res,
+                       "virtual_parity": virtual_parity}
         if gutzwiller_scan:
             gutz_params[scanned_parameter_name] = parameter_value
         else:

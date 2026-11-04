@@ -545,7 +545,12 @@ class MonopoleCondensatePiFluxModel(MeanFieldSpinonModel):
 
 
         assert(monopole_Q == round(monopole_Q))
-        assert(bc[1] == "periodic")
+        # helical YC cylinder: bc[1] is the shift helical_bc_shift. The x-dependent pi flux gauge keeps the fluxes of
+        # the plaquettes on the helical seam, the Landau gauge of the monopoles doesn't
+        assert(bc[1] == "periodic" or (YC and bc[1] == helical_bc_shift))
+        helical = (bc[1] != "periodic")
+        if helical:
+            assert monopole_Q == 0, "monopole flux is not implemented for the helical cylinder"
         if not YC:
             assert (abs(dphi) < 1e-15)
 
@@ -586,12 +591,40 @@ class MonopoleCondensatePiFluxModel(MeanFieldSpinonModel):
 
             couplings_shape = self.lat.coupling_shape(dr)[0]
             strength = strength[0:couplings_shape[0], 0:couplings_shape[1]]
+            if helical:
+                strength = strength * HelicalSeamGaugeSigns(lat, dr)
+                dy = int(dr[1])
+                if dy > 0:
+                    seam_strength = strength[:, -dy:]
+                    assert np.allclose(seam_strength, seam_strength[0:1, :]), \
+                        "strengths of bonds crossing the helical seam must not depend on x"
             strength_with_flux = self.coupling_strength_add_ext_flux(strength, dr, [0, flux])
             if hole_transformed:
                 # f_down -> h_down^\dagger maps t_ij f_i^\dagger f_j to
                 # -conj(t_ij) h_i^\dagger h_j, up to the dropped constant.
                 strength_with_flux = -np.conj(strength_with_flux)
             self.add_coupling(strength_with_flux, u1, "Cd", u2, "C", dr, plus_hc=plus_hc)
+
+
+def HelicalSeamGaugeSigns(lat, dr):
+    """
+        Signs phi_i phi_j of the gauge transformation phi(x, y) = (-1)^x on the last row y = Ly - 1 (1 elsewhere) of the
+        bonds dr of the helical cylinder (see helical_bc_shift). It makes the x-dependent pi flux signs of the bonds
+        crossing the helical seam x-independent, as needed by tenpy: it indexes the strength of a bond by its first site,
+        and the h.c. of a seam bond (x, Ly - 1) -> (x + 1, 0), as well as the aliased seam bond (0, Ly - 1) -> (0, 0) of
+        a finite cylinder, start at a different x. phi is periodic for an even Lx.
+        Returns an array of shape coupling_shape(dr), entry (k, y) for the bond starting at (k - min(0, dr_x), y).
+    """
+    shape, shift = lat.coupling_shape(dr)
+    Ly = lat.Ls[1]
+    assert dr[1] >= 0
+    k, y = np.meshgrid(np.arange(shape[0]), np.arange(shape[1]), indexing='ij')
+    x1, y1 = k - shift[0], y
+    x2, y2 = x1 + dr[0], y1 + dr[1]
+    winding = y2 // Ly
+    x2, y2 = x2 - winding * lat.bc_shift[0], y2 - winding * Ly
+    phi = lambda x, y: np.where(y == Ly - 1, 1 - 2 * (x % 2), 1)
+    return phi(x1, y1) * phi(x2, y2)
 
 
 def KagomePiFluxBondSigns(sub1, sub2, dr, y_coors):
@@ -837,12 +870,26 @@ def getPiFluxLatticeOrdering(Lx, Ly, unit_cell_size):
     return ordering
 
 
-def GetPiFluxTriangularLattice(site, Lx, Ly, spinfull, bc_MPS, geometry):
+# tenpy bc shift of the helical YC cylinder (YCLy-1 in the notation of He et al., PRX 7, 031020 (2017)): (x, y + Ly) is
+# identified with (x + 1, y), so that with the MPS ordering n = x Ly + y the cylinder is a chain with bonds n -> n + 1,
+# n + Ly, n + Ly - 1, and a shift by one MPS site is a lattice symmetry.
+# Each projected site holds one fermion, so the shift by one site maps the virtual parity sector of the projected iMPS
+# (see iMPSAbrikosovPH) to the other one: the iMPS of a fixed virtual_parity is only invariant under a shift by two sites
+helical_bc_shift = -1
 
-    bc = ['open', 'periodic']
 
+def TriangularCylinderBC(bc_MPS, geometry, helical=False):
+    """ open (periodic for an infinite MPS) along the cylinder, periodic (helical, YC only) around it """
+    assert not helical or geometry == "YC", "the helical cylinder is implemented for YC only"
+    bc = ['open', helical_bc_shift if helical else 'periodic']
     if bc_MPS == "infinite":
         bc[0] = 'periodic'
+    return bc
+
+
+def GetPiFluxTriangularLattice(site, Lx, Ly, spinfull, bc_MPS, geometry, helical=False):
+
+    bc = TriangularCylinderBC(bc_MPS, geometry, helical)
 
     nearest_neighbors = []
     if spinfull:
@@ -1064,6 +1111,10 @@ class GutzwillerLatticeSpec:
         """ bc=None: open (periodic for an infinite MPS) along the cylinder, periodic around it """
         raise NotImplementedError
 
+    def infinite_bc(self):
+        """ bc of the iMPS lattice """
+        return ("periodic", "periodic")
+
     def spin_lattice(self, spin_site, Lx, Ly, bc_MPS, bc):
         raise NotImplementedError
 
@@ -1101,21 +1152,28 @@ class GutzwillerLatticeSpec:
 class TriangularGutzwillerSpec(GutzwillerLatticeSpec):
     results_dir_name = "MonopoleCondensateGutzwiller/"
 
-    def __init__(self, geometry, model_type, z2_bond_sign=1):
+    def __init__(self, geometry, model_type, z2_bond_sign=1, helical=False):
+        """ helical: the helical YC cylinder YCLy-1, see helical_bc_shift """
         assert (geometry == "XC" or geometry == "YC")
+        assert not helical or geometry == "YC", "the helical cylinder is implemented for YC only"
         self.geometry = geometry
         self.model_type = model_type
         self.z2_bond_sign = z2_bond_sign
+        self.helical = helical
 
     def fermion_lattice(self, site, Lx, Ly, spinfull, bc_MPS, bc=None):
         if bc is None:
-            return GetPiFluxTriangularLattice(site, Lx, Ly, spinfull, bc_MPS, self.geometry)
+            return GetPiFluxTriangularLattice(site, Lx, Ly, spinfull, bc_MPS, self.geometry, self.helical)
         return BuildTriangularLattice(Lx, Ly, site, bc_MPS, bc, self.geometry, spinfull)
+
+    def infinite_bc(self):
+        return tuple(TriangularCylinderBC("infinite", self.geometry, self.helical))
 
     def spin_lattice(self, spin_site, Lx, Ly, bc_MPS, bc):
         return BuildTriangularLattice(Lx, Ly, spin_site, bc_MPS, bc=bc, geometry=self.geometry)
 
     def mean_field_params(self, flux, monopole_Q, particle_hole):
+        assert not self.helical or monopole_Q == 0, "monopole flux is not implemented for the helical cylinder"
         if self.model_type == model_type_dirac:
             return {"init_H_MPO": False, "monopole_Q": monopole_Q, "flux": flux, "particle_hole": particle_hole}
         elif self.model_type == model_type_Z2:
@@ -1146,12 +1204,14 @@ class TriangularGutzwillerSpec(GutzwillerLatticeSpec):
 
     def periodic_gauge_phases(self, lat, Lx_cell, monopole_Q, particle_hole):
         assert self.geometry == "YC", "monopole flux only implemented for YC"
+        assert not self.helical, "monopole flux is not implemented for the helical cylinder"
         return PeriodicLandauGaugePhases(lat, Lx_cell, monopole_Q, particle_hole)
 
     def case_dir(self, main_results_dir, Lx, Ly, chi_max, flux, bc_MPS, gs_manifold_index, norm_magz, monopole_Q,
                  **suffix_kwargs):
         z2_bond_sign = self.z2_bond_sign if self.model_type == model_type_Z2 else None
-        return CreateGutzwillerCaseDir(main_results_dir, Lx, Ly, chi_max, flux, self.geometry, bc_MPS,
+        geometry_tag = f"YC{Ly}-1" if self.helical else self.geometry
+        return CreateGutzwillerCaseDir(main_results_dir, Lx, Ly, chi_max, flux, geometry_tag, bc_MPS,
                                        gs_manifold_index, self.model_type, norm_magz, monopole_Q,
                                        z2_bond_sign=z2_bond_sign, **suffix_kwargs)
 
@@ -1286,8 +1346,7 @@ def GetFluxSlaterMPS(spec, Lx, Ly, spinfull, site, slater_trunc_par, bc_MPS, gs_
         print(f"error from C_to_iMPS: {error}")
         print("#####################")
 
-        infinite_bc = ("periodic", "periodic")
-        lattice = spec.fermion_lattice(site, Lx, Ly, spinfull, bc_MPS, bc=infinite_bc)
+        lattice = spec.fermion_lattice(site, Lx, Ly, spinfull, bc_MPS, bc=spec.infinite_bc())
 
     psi_from_slater.unit_cell_width = lattice.mps_unit_cell_width
 
@@ -1617,13 +1676,14 @@ def XYJastrowTrotterSteps(v, trotter_res):
 
 
 def SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, geometry, bc_MPS, gs_manifold_index, model_type,
-                                                         z2_bond_sign=1, **kwargs):
+                                                         z2_bond_sign=1, helical=False, **kwargs):
     """
         SpinonMeanFieldGutzwillerProjection of the triangular lattice ansatz of model_type.
         z2_bond_sign: sign of the bond amplitudes relative to mu, zeta in the Z2 ansatz (see Z2MeanFieldModel).
+        helical: the helical YC cylinder YCLy-1 (see helical_bc_shift), YC only, without monopole flux.
     """
-    SpinonMeanFieldGutzwillerProjection(TriangularGutzwillerSpec(geometry, model_type, z2_bond_sign), Ly, bc_MPS,
-                                        gs_manifold_index, **kwargs)
+    SpinonMeanFieldGutzwillerProjection(TriangularGutzwillerSpec(geometry, model_type, z2_bond_sign, helical), Ly,
+                                        bc_MPS, gs_manifold_index, **kwargs)
 
 
 def SpinonKagomeMeanFieldGutzwillerProjection(Ly, bc_MPS, gs_manifold_index, **kwargs):

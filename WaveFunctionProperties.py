@@ -101,8 +101,15 @@ def triangular_plaquettes(lattice, u=0):
     Lx, Ly = lattice.Ls
     # lattice.bc[d] is True for 'open', False for 'periodic'
     open_x, open_y = bool(lattice.bc[0]), bool(lattice.bc[1])
+    # helical (shifted) bc: (x, y + Ly) is identified with (x - bc_shift, y), which lat2mps_idx doesn't do
+    y_shift = 0 if lattice.bc_shift is None else int(lattice.bc_shift[0])
+
+    def wrap_y(cx, cy):
+        winding = cy // Ly if not open_y else 0
+        return cx - winding * y_shift, cy
 
     def in_bounds(cx, cy):
+        cx, cy = wrap_y(cx, cy)
         if open_x and not (0 <= cx < Lx):
             return False
         if open_y and not (0 <= cy < Ly):
@@ -110,6 +117,7 @@ def triangular_plaquettes(lattice, u=0):
         return True
 
     def site_index(cx, cy):
+        cx, cy = wrap_y(cx, cy)
         return int(lattice.lat2mps_idx(np.array([cx, cy, u])))
 
     def site_pos(cx, cy):
@@ -306,18 +314,23 @@ def minimum_image_displacements(lattice, N, wrap_displacements=True):
     tau = lattice.unit_cell_positions[us]  # (N, 2) real-space offsets
 
     periodic = ~np.asarray(lattice.bc)  # lattice.bc: True = open, False = periodic
+    # helical (shifted) bc: (x, y + Ly) is identified with (x - bc_shift, y), so wrapping y by m Ly shifts x by m bc_shift
+    y_shift = 0 if lattice.bc_shift is None else int(lattice.bc_shift[0])
 
     diff_xy = xy[:, None, :] - xy[None, :, :]  # (N, N, 2), n_i - n_j
     if wrap_displacements:
-        for d in range(2):
+        for d in (1, 0): # y first, its wrap with a shift changes x
             bc_MPS = lattice.bc_MPS
             infinite = (bc_MPS == "infinite")
             infinite_axis = (infinite and d == 0)
             if periodic[d] and not infinite_axis:
                 L = lattice.Ls[d]
                 not_half_len = np.where(np.abs(diff_xy[..., d]) != L/2)
-                diff_xy[..., d][not_half_len] = (
-                        (diff_xy[..., d][not_half_len] + L / 2) % L - L / 2)  # wrap into (-L/2, L/2]
+                unwrapped = diff_xy[..., d][not_half_len]
+                wrapped = (unwrapped + L / 2) % L - L / 2  # wrap into (-L/2, L/2]
+                diff_xy[..., d][not_half_len] = wrapped
+                if d == 1 and y_shift != 0:
+                    diff_xy[..., 0][not_half_len] += np.round((wrapped - unwrapped) / L) * y_shift
 
     dtau = tau[:, None, :] - tau[None, :, :]  # (N, N, 2), tau_ui - tau_uj
 

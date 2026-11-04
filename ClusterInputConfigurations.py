@@ -83,12 +83,13 @@ gutzwiller_input_params = [
     ("jastrow_nn_xy", float, 0.0),
     ("jastrow_trotter_res", optional_float, None),
     ("z2_bond_sign", int, 1),
-    ("virtual_parity", optional_int, None)
+    ("virtual_parity", optional_int, None),
+    ("helical", parse_bool, False)
 ]
 
 # the Kagome Gutzwiller run has the triangular parameters without the triangular geometry and ansatz choice, in the
 # same order
-triangular_only_gutzwiller_params = ("geometry", "model_type", "z2_bond_sign")
+triangular_only_gutzwiller_params = ("geometry", "model_type", "z2_bond_sign", "helical")
 kagome_gutzwiller_input_params = [param for param in gutzwiller_input_params
                                   if param[0] not in triangular_only_gutzwiller_params]
 

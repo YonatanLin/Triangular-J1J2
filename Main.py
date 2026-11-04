@@ -27,7 +27,7 @@ from tenpy import networks
 from tenpy import MPSEnvironment
 import threading
 import time
-from ClusterInputConfigurations import optional_bool
+from ClusterInputConfigurations import optional_bool, parse_bool
 from WaveFunctionProperties import (plot_scalar_spin_chirality, compute_structure_factor_grid,
                                     plot_structure_factor, structure_factor, ComputeMomentumSpaceStructureFactor,
                                     CalculateSpinSpinCorrelations, SpinComponentsOutput, SaveSpinComponentsOutput)
@@ -135,7 +135,11 @@ def _VirtualParityForDirName(virtual_parity, bc_MPS):
 def GutzwillerCaseDirName(main_results_dir, Lx, Ly, chi_max, flux, geometry, bc_MPS,
                           gs_manifold_index, model_type, norm_magz, monopole_Q, svd_min=None,
                           jastrow_nn_zz=0.0, jastrow_chi_max=None, jastrow_nn_xy=0.0, jastrow_trotter_res=None,
-                          z2_bond_sign=None, virtual_parity=None):
+                          z2_bond_sign=None, virtual_parity=None, helical=False):
+    # helical: the helical YC cylinder, YCLy-1 in the notation of He et al., PRX 7, 031020 (2017)
+    if parse_bool(helical):
+        assert geometry == "YC", "the helical cylinder is implemented for YC only"
+        geometry = f"YC{Ly}-1"
     case_name = f"{bc_MPS}_Lx_{Lx}_Ly_{Ly}_chi_{chi_max}_flux_{flux}_{geometry}_gsindex_{gs_manifold_index}"
 
     if model_type is not None:

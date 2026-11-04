@@ -1210,10 +1210,9 @@ class TriangularGutzwillerSpec(GutzwillerLatticeSpec):
     def case_dir(self, main_results_dir, Lx, Ly, chi_max, flux, bc_MPS, gs_manifold_index, norm_magz, monopole_Q,
                  **suffix_kwargs):
         z2_bond_sign = self.z2_bond_sign if self.model_type == model_type_Z2 else None
-        geometry_tag = f"YC{Ly}-1" if self.helical else self.geometry
-        return CreateGutzwillerCaseDir(main_results_dir, Lx, Ly, chi_max, flux, geometry_tag, bc_MPS,
+        return CreateGutzwillerCaseDir(main_results_dir, Lx, Ly, chi_max, flux, self.geometry, bc_MPS,
                                        gs_manifold_index, self.model_type, norm_magz, monopole_Q,
-                                       z2_bond_sign=z2_bond_sign, **suffix_kwargs)
+                                       z2_bond_sign=z2_bond_sign, helical=self.helical, **suffix_kwargs)
 
 
 class KagomeGutzwillerSpec(GutzwillerLatticeSpec):

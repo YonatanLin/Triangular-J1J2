@@ -641,6 +641,7 @@ def BuildTriangularLattice(Lx, Ly, site, bc_MPS, bc = ('periodic', 'periodic'), 
     else:
         raise ValueError("unrecognized geometry")
 
+
 def BuildKagomeLattice(Lx, Ly, site, bc_MPS, bc=('open', 'periodic')):
     """ tenpy's Kagome lattice, a_x = (2, 0), a_y = (1, sqrt(3)), next nearest neighbors at distance sqrt(3) """
     return tenpy.models.lattice.Kagome(Lx, Ly, site, bc=bc, bc_MPS=bc_MPS)
@@ -810,6 +811,10 @@ def GenerateJ1J2SpinModel(J2, Delz, lat):
     return J1J2_model, nnn_couplings_list
 
 
+# the spin lattice of the Gutzwiller MPS, saved by the Gutzwiller runs next to psi_gutzwiller.pkl
+MPS_LATTICE_FILE = "mps_lattice.pkl"
+
+
 def LoadGutzwillerState(gutz_case_dir, psi_fname='psi_gutzwiller.pkl'):
     with open(gutz_case_dir + psi_fname, 'rb') as f_gutz:
         return pickle.load(f_gutz)
@@ -829,6 +834,53 @@ def calculateGutzwillerEnergyTriangularJ1J2(psi, Lx, Ly, bc_MPS, J2, Delz, bc, g
         E /= triangular_lat.N_sites
     print("Energy: ", E)
     return E
+
+
+def KagomeCylinderBC(bc_MPS):
+    """ the bc of the Kagome Gutzwiller runs (Gutzwiller.GetPiFluxKagomeLattice) and the Kagome DMRG overlaps """
+    return ("open", "periodic") if bc_MPS == "finite" else ("periodic", "periodic")
+
+
+def LatticeOfMPSByRings(psi, build_lattice, Ly):
+    """
+        For runs that did not save their MPS_LATTICE_FILE: the lattice build_lattice(Lx) of the MPS psi, with Lx read
+        off the MPS length as psi.L / (sites per ring), the sites per ring (sites per unit cell x Ly) taken from
+        build_lattice(1). Valid when psi covers whole rings of the lattice build_lattice makes, in its MPS order, so
+        only for runs known to be of the geometry of build_lattice.
+    """
+    sites_per_ring = build_lattice(1).N_sites_per_ring
+    assert sites_per_ring % Ly == 0, f"{sites_per_ring} sites per ring is not a multiple of Ly = {Ly}"
+    assert psi.L % sites_per_ring == 0, f"MPS length {psi.L} is not a multiple of {sites_per_ring} sites per ring"
+    lat = build_lattice(psi.L // sites_per_ring)
+    assert psi.L == lat.N_sites, f"MPS length {psi.L} != number of lattice sites {lat.N_sites}"
+    return lat
+
+
+def calculateGutzwillerEnergiesJ1J2(psi, lat, J2s, Delz=1.0):
+    """
+        Energies per site of the Gutzwiller MPS psi w.r.t. the XXZ J1J2 model (GenerateJ1J2SpinModel) on lat, the
+        lattice of psi (MPS_LATTICE_FILE of the run), for each J2 in J2s. The energy is linear in J2,
+        E(J2) = E_J1 + J2 E_J2, so only the J1 and J2 parts are evaluated (two MPO expectation values for any number
+        of J2s).
+    """
+    assert psi.L == lat.N_sites, f"MPS length {psi.L} != number of lattice sites {lat.N_sites}"
+    assert lat.bc_MPS == psi.bc, f"lattice bc_MPS {lat.bc_MPS} != MPS bc {psi.bc}"
+    assert all(psi_site.conserve == "Sz" for psi_site in psi.sites), "gutzwiller MPS must conserve Sz"
+    finite = (psi.bc == "finite")
+
+    def energy(J2):
+        model, _ = GenerateJ1J2SpinModel(J2, Delz, lat)
+        E = model.H_MPO.expectation_value(psi)
+        return E / lat.N_sites if finite else E
+
+    print(f"calculating energies of gutzwiller MPS with J1J2 model on {type(lat).__name__}, Ls={lat.Ls}, "
+          f"bc={lat.boundary_conditions}, {psi.bc}, Delz={Delz}")
+    E_J1 = energy(0.0)
+    E_J2 = energy(1.0) - E_J1
+    energies = np.array([E_J1 + J2 * E_J2 for J2 in np.atleast_1d(J2s)])
+    for J2, E in zip(np.atleast_1d(J2s), energies):
+        print(f"J2={J2}: E={E}")
+    return energies
 
 
 def SaveSimulationOutput(results_dir, spin_corr_x, ks, spin_corr_k, fig_corr_k, fig_lat,

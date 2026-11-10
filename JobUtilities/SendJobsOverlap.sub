@@ -1,0 +1,21 @@
+# <psi1|psi2> of the wavefunctions in two results directories (OverlapRunner.py). Usage, full paths without a
+# trailing slash:
+#   condor_submit SendJobsOverlap.sub dir1=/storage/.../case1 dir2=/storage/.../case2
+# optional: psi1=<pkl name> psi2=<pkl name> (default auto: psi_gutzwiller.pkl, else psi_gs.pkl), mem=<MB>, cpus=<n>
+# Log and result go to dir1/overlap_with_<dir2 name>.{log,out,err,txt}
+executable = /Local/ph_keselman/anaconda3/envs/tenpy/bin/python
+arguments = /srv01/technion/yonlin/scripts/Triangular-J1J2/OverlapRunner.py $(dir1) $(dir2) $(psi1:auto) $(psi2:auto)
+
+# $Fnx: last path component with its "extension" (directory names contain dots, e.g. flux_1.0)
+log_name = overlap_with_$Fnx(dir2)
+log = $(dir1)/$(log_name).log
+output = $(dir1)/$(log_name).out
+error = $(dir1)/$(log_name).err
+
+request_cpus = $(cpus:10)
+RequestMemory = $(mem:40000)
+environment = "OMP_NUM_THREADS=$(cpus:10) MKL_NUM_THREADS=$(cpus:10)"
+Initialdir = $(dir1)
+universe = vanilla
+
+queue

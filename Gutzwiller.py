@@ -28,7 +28,7 @@ from Main import (AbsMagzFromNormMagz, BuildTriangularLattice, TriangularXC, LxI
                   calculateStructureFactorAtSpecialPoints, getTriangularLatticeSpecielBzPoints, KagomeSpecialBzPoints,
                   BuildKagomeLattice, PlotKagomeBrillouinZone, glob_results_dir, code_dir, meetings_dir,
                   model_type_dirac, model_type_Z2, pauli_x, pauli_y, pauli_z, ResolveJastrowTrotterRes,
-                  ResolveVirtualParity)
+                  ResolveVirtualParity, MPS_LATTICE_FILE)
 
 svd_min_slater_default = 5e-7
 jastrow_default_total_trunc = 1.e-5
@@ -873,8 +873,11 @@ def getPiFluxLatticeOrdering(Lx, Ly, unit_cell_size):
 # tenpy bc shift of the helical YC cylinder (YCLy-1 in the notation of He et al., PRX 7, 031020 (2017)): (x, y + Ly) is
 # identified with (x + 1, y), so that with the MPS ordering n = x Ly + y the cylinder is a chain with bonds n -> n + 1,
 # n + Ly, n + Ly - 1, and a shift by one MPS site is a lattice symmetry.
-# Each projected site holds one fermion, so the shift by one site maps the virtual parity sector of the projected iMPS
-# (see iMPSAbrikosovPH) to the other one: the iMPS of a fixed virtual_parity is only invariant under a shift by two sites
+# The virtual parity of the projected iMPS (see iMPSAbrikosovPH) is that of 2 Sz of the left half, which each site
+# changes by +-1, so the shift by one site maps virtual_parity p to 1 - p (Lieb-Schultz-Mattis: no injective iMPS of
+# spin 1/2 per site is invariant under a one site shift), and for the pi flux ansatz also the spinon flux theta to
+# theta + pi. The iMPS of a fixed virtual_parity is only invariant under a shift by two sites (Tests.py,
+# TestHelicalProjectionTranslation)
 helical_bc_shift = -1
 
 
@@ -1286,6 +1289,7 @@ def GetFluxSlaterMPS(spec, Lx, Ly, spinfull, site, slater_trunc_par, bc_MPS, gs_
     if finite:
         abs_magz = AbsMagzFromNormMagz(norm_magz, lat_finite.N_sites // 2)
         model_params["lattice"] = lat_finite
+
         C, lattice = CalculateExactCMatrixForMeanFieldModel(spec.mean_field_model(model_params), spec.model_type,
                                                             gs_manifold_index, particle_hole,
                                                             zero_energy_tol=zero_energy_tol, abs_magz=abs_magz,
@@ -1798,6 +1802,11 @@ def SpinonMeanFieldGutzwillerProjection(spec, Ly, bc_MPS, gs_manifold_index, Lx=
 
     with open(results_dir + 'psi_gutzwiller' + ".pkl", 'wb') as f:
         pickle.dump(psi_pi_flux, f)
+    # the lattice the MPS lives on (one site per MPS site, its geometry, bc and order), for evaluating Hamiltonians on
+    # psi later; not lattice.pkl, which is the (longer, for an iMPS) lattice of the correlations
+    assert spin_lat.N_sites == psi_pi_flux.L, f"spin lattice has {spin_lat.N_sites} sites, the MPS {psi_pi_flux.L}"
+    with open(results_dir + MPS_LATTICE_FILE, 'wb') as f:
+        pickle.dump(spin_lat, f)
 
     assert(abs(psi_pi_flux.overlap(psi_pi_flux) - 1.0) < 1e-7)
 
@@ -2141,9 +2150,9 @@ def plotXC6PiFlux():
 if __name__ == "__main__":
     # XC6 lattice (the XC unit cell has two rows, so Ly=3 is a circumference of 6 sites) and its pi flux hoppings
 
-    SpinonTriangularLatticeMeanFieldGutzwillerProjection(8, "YC", "infinite", 0,
-                                                         model_type_dirac, Lx=2, chi_max=500, flux=1.0,
-                                                         jastrow_nn_xy=0.0, monopole_Q=0)
+    SpinonTriangularLatticeMeanFieldGutzwillerProjection(3, "YC", "finite", 0,
+                                                         model_type_dirac, Lx=4, chi_max=500, flux=1.0,
+                                                         jastrow_nn_xy=0.0, monopole_Q=0, helical=False)
     #SpinonKagomeMeanFieldGutzwillerProjection(2, "finite", 0, chi_max=1000,
     #                                          Lx=6, flux=1)
     exit(0)

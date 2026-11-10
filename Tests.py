@@ -345,6 +345,137 @@ def TestRandomStateCorrelations(geometry="YC", bc_MPS="finite"):
     plt.show()
 
 
+def HelicalUpSpinonHoppings(model_type, Lx, Ly, flux, helical=True):
+    """ hopping matrix of the up spinons of the triangular mean field ansatz on the finite (helical) YC cylinder """
+    from Gutzwiller import TriangularGutzwillerSpec
+    spec = TriangularGutzwillerSpec("YC", model_type, helical=helical)
+    lat = spec.fermion_lattice(FermionSite(conserve="N"), Lx, Ly, True, "finite")
+    model_params = spec.mean_field_params(flux, 0, True)
+    model_params["lattice"] = lat
+    # asserts hermiticity
+    H = CreateHamiltonianMatrixFromCouplingsList(spec.mean_field_model(model_params), lat.N_sites,
+                                                 dtype=np.complex128)
+    return H[0::2, 0::2] # the chain index n = x Ly + y of the spin lattice
+
+
+def TestHelicalCylinder():
+    """
+        The helical YC cylinder YCLy-1 (Gutzwiller.helical_bc_shift): (x, y + Ly) ~ (x + 1, y), a chain n = x Ly + y with
+        nearest neighbor bonds n -> n + 1, n + Ly - 1, n + Ly only.
+    """
+    from Gutzwiller import TriangularGutzwillerSpec, helical_bc_shift
+    from Main import model_type_Z2, GutzwillerCaseDirName
+    from WaveFunctionProperties import minimum_image_displacements, triangular_plaquettes
+    tol = 1e-12
+
+    for Lx, Ly in [(4, 4), (4, 5), (6, 3)]:
+        N = Lx * Ly
+        chain_bonds = {d: [(n, n + d) for n in range(N - d)] for d in (1, Ly - 1, Ly)}
+
+        # the spin lattice: the bonds of the chain, in both the finite and the infinite MPS
+        spin_lat = BuildTriangularLattice(Lx, Ly, SpinHalfSite(None), "finite", ("open", helical_bc_shift))
+        bonds = set()
+        for u1, u2, dr in spin_lat.pairs["nearest_neighbors"]:
+            mps_i, mps_j, _, _ = spin_lat.possible_couplings(u1, u2, dr)
+            bonds |= {(min(i, j), max(i, j)) for i, j in zip(mps_i, mps_j)}
+        assert bonds == set(sum(chain_bonds.values(), [])), "helical lattice bonds are not those of the chain"
+        inf_lat = BuildTriangularLattice(Lx, Ly, SpinHalfSite(None), "infinite", ("periodic", helical_bc_shift))
+        for u1, u2, dr in inf_lat.pairs["nearest_neighbors"]:
+            mps_i, mps_j, _, _ = inf_lat.possible_couplings(u1, u2, dr)
+            assert len(mps_i) == N and set(np.abs(np.asarray(mps_j) - np.asarray(mps_i))) <= {1, Ly - 1, Ly}
+
+        # the Dirac pi flux ansatz: hermitian, flux 0 through up and pi through down triangles, also on the seam
+        t = HelicalUpSpinonHoppings(model_type_dirac, Lx, Ly, 0.0)
+        for d, ds in chain_bonds.items():
+            assert all(abs(abs(t[i, j]) - 1) < tol for i, j in ds), f"missing pi flux hopping along d = {d}"
+        assert np.sum(np.abs(t) > tol) == 2 * sum(len(ds) for ds in chain_bonds.values())
+        loop = lambda path: np.prod([t[path[k], path[(k + 1) % len(path)]] for k in range(len(path))])
+        for n in range(N - Ly - 1):
+            assert abs(loop([n, n + Ly, n + 1]) - 1) < tol, f"up triangle at {n} should have zero flux"
+            assert abs(loop([n + 1, n + Ly, n + Ly + 1]) + 1) < tol, f"down triangle at {n} should have pi flux"
+
+        # threaded flux: once on each loop around the helix n -> n + 1 -> ... -> n + Ly -> n, as on the YC cylinder
+        flux = 0.3
+        t_flux = HelicalUpSpinonHoppings(model_type_dirac, Lx, Ly, flux)
+        around = lambda t, path: np.prod([t[path[k], path[k + 1]] for k in range(len(path) - 1)]) * t[path[-1], path[0]]
+        for n in range(N - Ly):
+            path = list(range(n, n + Ly + 1))
+            assert abs(around(t_flux, path) / around(t, path) - np.exp(-1j * pi * flux)) < tol
+        t_YC, t_YC_flux = (HelicalUpSpinonHoppings(model_type_dirac, Lx, Ly, f, helical=False) for f in (0.0, flux))
+        path_YC = list(range(Ly, 2 * Ly))
+        assert abs(around(t_YC_flux, path_YC) / around(t_YC, path_YC) - np.exp(-1j * pi * flux)) < tol
+
+        # the Z2 ansatz is uniform, so its hoppings are translation invariant along the chain, except for the seam
+        # sign of the vison (flux = 1)
+        t_Z2 = HelicalUpSpinonHoppings(model_type_Z2, Lx, Ly, 0)
+        for d, ds in chain_bonds.items():
+            assert np.ptp([t_Z2[i, j] for i, j in ds]) < tol, f"Z2 hoppings along d = {d} are not uniform"
+
+        # seam aware minimum image displacements and plaquettes
+        rdisp = minimum_image_displacements(spin_lat, N)
+        for d, ds in chain_bonds.items():
+            for i, j in ds:
+                assert abs(np.linalg.norm(rdisp[i, j]) - 1) < tol, f"bond {i}, {j} should have unit length"
+        plaquettes = triangular_plaquettes(spin_lat)
+        assert len(plaquettes) == 2 * (N - Ly) - 1
+        for plaquette in plaquettes:
+            i, j, k = plaquette["sites"]
+            assert all(abs(np.linalg.norm(rdisp[a, b]) - 1) < tol for a, b in [(i, j), (j, k), (k, i)])
+
+    # results directory, as generated from an input file (string parameters)
+    dir_name = GutzwillerCaseDirName("r/", 2, 6, 1000, 0.0, "YC", "infinite", 0, model_type_dirac, 0.0, 0,
+                                     helical="True")
+    assert "_YC6-1_" in dir_name, dir_name
+    assert "_YC_" in GutzwillerCaseDirName("r/", 2, 6, 1000, 0.0, "YC", "infinite", 0, model_type_dirac, 0.0, 0,
+                                           helical="False")
+    print("TestHelicalCylinder finished successfully")
+
+
+def HelicalProjectedBondCorrelations(model_type, Ly, flux, virtual_parities, Lx=2, chi_max=600):
+    """ <Sz_n Sz_n+d> for d = 1, Ly of the projected iMPS on the helical cylinder, for each virtual parity """
+    from Gutzwiller import (TriangularGutzwillerSpec, GetFluxSlaterMPS, RescaleMPSForGutzwiller, iMPSAbrikosovPH,
+                            svd_min_slater_default)
+    trunc_par = {"chi_max": chi_max, "svd_min": svd_min_slater_default, "degeneracy_tol": 1e-12}
+    psi_slater, _, _ = GetFluxSlaterMPS(TriangularGutzwillerSpec("YC", model_type, helical=True), Lx, Ly, True,
+                                        FermionSite(conserve="N"), trunc_par, "infinite", 0, flux=flux)
+    psi_slater.canonical_form()
+    RescaleMPSForGutzwiller(psi_slater)
+    correlations = {}
+    for virtual_parity in virtual_parities:
+        psi = psi_slater.copy()
+        iMPSAbrikosovPH(psi, virtual_parity)
+        psi.canonical_form()
+        correlations[virtual_parity] = np.array([[np.real(psi.correlation_function("Sz", "Sz", sites1=[n],
+                                                                                   sites2=[n + d])[0, 0])
+                                                  for n in range(psi.L)] for d in (1, Ly)])
+    return correlations
+
+
+def TestHelicalProjectionTranslation(Ly=3, tol=1e-6):
+    """
+        On the helical cylinder, the shift by one site T maps the virtual parity sector p of the projected iMPS to 1 - p
+        (each projected site changes 2 Sz of the left half by +-1), and for the Dirac pi flux ansatz also the spinon
+        flux theta to theta + pi (neighboring loops around the helix differ by a pi flux rhombus). So a fixed sector
+        is only invariant under a shift by two sites, and T relates the sectors:
+            Z2:    <O>_(theta, p)(n) = <O>_(theta, 1 - p)(n + 1)
+            Dirac: <O>_(theta, p)(n) = <O>_(theta + pi, 1 - p)(n + 1)
+    """
+    from Main import model_type_Z2
+    shift = lambda corr: np.roll(corr, -1, axis=1)
+
+    z2 = HelicalProjectedBondCorrelations(model_type_Z2, Ly, 0, (0, 1))
+    assert np.max(np.abs(z2[0] - shift(z2[1]))) < tol, "Z2: T should map virtual parity 0 to 1"
+    assert np.max(np.abs(z2[1] - np.roll(z2[1], -2, axis=1))) < tol, "Z2: a sector should be invariant under T^2"
+    assert np.max(np.abs(z2[0] - z2[1])) > 1e3 * tol, "Z2: expected locally distinct sectors at this Ly"
+
+    dirac_0 = HelicalProjectedBondCorrelations(model_type_dirac, Ly, 0.0, (0, 1))
+    dirac_pi = HelicalProjectedBondCorrelations(model_type_dirac, Ly, 1.0, (0, 1))
+    for p in (0, 1):
+        assert np.max(np.abs(dirac_0[p] - shift(dirac_pi[1 - p]))) < tol, \
+            f"Dirac: T should map (flux 0, virtual parity {p}) to (flux pi, virtual parity {1 - p})"
+    print("TestHelicalProjectionTranslation finished successfully")
+
+
 def StaticCorrelationsTests():
     Test120State(6, 6)
     Test120State(9, 9)
@@ -355,4 +486,6 @@ def StaticCorrelationsTests():
 
 
 if __name__ == "__main__":
+    TestHelicalCylinder()
+    TestHelicalProjectionTranslation()
     TestZ2MeanFieldModel()

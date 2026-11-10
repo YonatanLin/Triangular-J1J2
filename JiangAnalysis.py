@@ -11,11 +11,12 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 from tenpy.networks.site import SpinHalfSite
 
+from Gutzwiller import TriangularCylinderBC
 from Main import BuildTriangularLattice, calculateGutzwillerEnergyTriangularJ1J2
-from WaveFunctionProperties import (plot_structure_factor, minimum_image_displacements, _reference_site_index,
-                                    k_grid)
+from WaveFunctionProperties import _reference_site_index
 
 KS_FILES = {"xx": "ks_xx.csv", "zz": "ks_zz.csv"}
 CORR_FILES = {"xx": "spin_corr_xx_x.csv", "zz": "spin_corr_zz_x.csv"}
@@ -42,23 +43,28 @@ def _case_title(results_dir):
 
 
 def _reference_lattice():
-    """1x1 YC triangular lattice (lattice spacing 1). plot_structure_factor only needs the lattice for its
+    """1x1 YC triangular lattice (lattice spacing 1). the structure factor plots only need the lattice for its
     reciprocal basis (to tile the BZ), which is the same for all triangular runs, so the lattice.pkl of each
     run is not needed (it is not copied from the cluster)."""
     return BuildTriangularLattice(1, 1, SpinHalfSite(None), "finite", ("open", "open"), "YC")
 
 
 def _state_label(results_dir):
-    """e.g. 'flux=1.0' (+ ', monQ=1' / ', gs=1' when not 0), falls back to _case_title."""
+    """e.g. 'flux=1.0' (+ ', monQ=1' / ', gs=1' when not 0, ', vpar=0' if in the name), falls back to _case_title."""
     name = Path(results_dir).name
     flux = re.search(r"flux_([0-9.]+?)_", name)
     if flux is None:
         return _case_title(results_dir)
-    label = f"flux={flux.group(1)}"
+    label = r"flux=$\pi$" if float(flux.group(1)) == 1.0 else f"flux={flux.group(1)}"  # flux in units of pi
     for tag, key in (("monQ", "monQ"), ("gs", "gsindex")):
         value = re.search(rf"{key}_(-?\d+)", name)
         if value and value.group(1) != "0":
             label += f", {tag}={value.group(1)}"
+    if _Helical(results_dir):
+        label += ", " + re.search(r"_(YC\d+-1)", name).group(1)
+    vpar = re.search(r"_vpar_(\d)", name)
+    if vpar:
+        label += f", vpar={vpar.group(1)}"
     jastrow = _case_title(results_dir)
     return label if jastrow in ("no Jastrow", name) else f"{label}, {jastrow}"
 
@@ -86,10 +92,33 @@ def _LoadTotalStructureFactor(results_dir):
 
 
 def _Geometry(results_dir):
-    """'YC' or 'XC', from the directory name."""
-    geometry = re.search(r"_(YC|XC)(?:_|$)", Path(results_dir).name)
+    """'YC' or 'XC', from the directory name (the helical YC cylinder is named YC<Ly>-1, see _Helical)."""
+    geometry = re.search(r"_(YC|XC)(?:\d+-1)?(?:_|$)", Path(results_dir).name)
     assert geometry is not None, f"no geometry (YC / XC) in the directory name {Path(results_dir).name}"
     return geometry.group(1)
+
+
+def _Helical(results_dir):
+    """Whether results_dir is of the helical YC cylinder, YC<Ly>-1 in its name (Main.GutzwillerCaseDirName)."""
+    return re.search(r"_YC\d+-1(?:_|$)", Path(results_dir).name) is not None
+
+
+def _LatticeBC(lat):
+    """The bc argument of BuildTriangularLattice that rebuilds the boundary conditions of the tenpy lattice lat,
+    with the shift of a helical cylinder (lat.bc_shift) in place of 'periodic' around it."""
+    bc = ["open" if is_open else "periodic" for is_open in lat.bc]
+    if lat.bc_shift is not None and int(lat.bc_shift[0]) != 0:
+        bc[1] = int(lat.bc_shift[0])
+    return tuple(bc)
+
+
+def _WrapAroundCylinder(lat, x, y):
+    """(x, y) wrapped into 0 <= y < Ly; on a helical cylinder (x, y + Ly) is (x - bc_shift, y) (see
+    Gutzwiller.helical_bc_shift), which lat2mps_idx doesn't do."""
+    Ly = lat.Ls[1]
+    shift = 0 if lat.bc_shift is None else int(lat.bc_shift[0])
+    winding = y // Ly
+    return x - winding * shift, y - winding * Ly
 
 
 def _LoadLongCorrelationsBlock(results_dir):
@@ -106,8 +135,8 @@ def _LoadLongCorrelationsBlock(results_dir):
     sites_per_column = Ly * len(lat_pkl.unit_cell)
     assert C.shape[0] % sites_per_column == 0, \
         f"{C.shape[0]} correlated sites are not whole columns of {sites_per_column} sites"
-    bc = tuple("open" if is_open else "periodic" for is_open in lat_pkl.bc)
-    lat = BuildTriangularLattice(C.shape[0] // sites_per_column, Ly, SpinHalfSite(None), lat_pkl.bc_MPS, bc,
+    lat = BuildTriangularLattice(C.shape[0] // sites_per_column, Ly, SpinHalfSite(None), lat_pkl.bc_MPS,
+                                 _LatticeBC(lat_pkl),
                                  _Geometry(results_dir))
     # the correlations are between the first sites of the MPS, which are the same sites in both lattices
     n_common = min(lat.N_sites, lat_pkl.N_sites)
@@ -121,7 +150,7 @@ def _NearestNeighborBonds(C, lat):
     """
         The nearest neighbor bonds of lat inside the correlated block (each counted once): a list of
         (column of the first site, r_i, r_j, <S_i.S_j>). r_j is not wrapped around the cylinder, so r_j - r_i is the
-        bond vector.
+        bond vector. On a helical cylinder the bonds crossing the seam go to the next / previous column.
     """
     Lx, Ly = lat.Ls
     bonds = []
@@ -129,9 +158,10 @@ def _NearestNeighborBonds(C, lat):
         dx = np.asarray(dx)
         for i in range(lat.N_sites):
             x, y, u = lat.mps2lat_idx(i)
-            if u != u1 or not 0 <= x + dx[0] < Lx:
+            x_j, y_j = _WrapAroundCylinder(lat, x + dx[0], y + dx[1])
+            if u != u1 or not 0 <= x_j < Lx:
                 continue
-            j = lat.lat2mps_idx([x + dx[0], (y + dx[1]) % Ly, u2])
+            j = lat.lat2mps_idx([x_j, y_j, u2])
             bonds.append((x, lat.position([x, y, u1]), lat.position([x + dx[0], y + dx[1], u2]), C[i, j]))
     return bonds
 
@@ -154,8 +184,8 @@ def _RowLattice(lat_pkl, geometry, n_columns):
     """The lattice of the first n_columns columns of the MPS of lattice.pkl (lat_pkl itself if finite)."""
     if lat_pkl.bc_MPS == "finite":
         return lat_pkl
-    bc = tuple("open" if is_open else "periodic" for is_open in lat_pkl.bc)
-    return BuildTriangularLattice(n_columns, lat_pkl.Ls[1], SpinHalfSite(None), lat_pkl.bc_MPS, bc, geometry)
+    return BuildTriangularLattice(n_columns, lat_pkl.Ls[1], SpinHalfSite(None), lat_pkl.bc_MPS, _LatticeBC(lat_pkl),
+                                  geometry)
 
 
 def CalculateCorrelationRow(psi, results_dir, n_columns=None):
@@ -182,79 +212,107 @@ def CalculateCorrelationRow(psi, results_dir, n_columns=None):
     return row, lat, ref
 
 
+SIGN_EDGE_COLUMNS = 3  # Fig. 5 of Jiang et al.: columns of the correlated window excluded on each edge
+SIGN_Q_POINTS = 401  # per axis, of the q grid of the sign Fourier transform
+
+
 def _LoadCorrelationRow(results_dir):
-    """(row, lattice, reference site) from CORR_ROW_FILE, the lattice rebuilt from lattice.pkl and the header."""
-    results_dir = Path(results_dir)
-    path = results_dir / CORR_ROW_FILE
+    """
+        (row, positions, columns, reference site) of CORR_ROW_FILE: <S_r0.S_r>, the positions of its sites, their
+        column (the MPS is ordered column by column) and r0.
+    """
+    path = Path(results_dir) / CORR_ROW_FILE
     with open(path) as f:
         header = f.readline()
     ref = int(re.search(r"reference_site=(\d+)", header).group(1))
     n_columns = int(re.search(r"n_columns=(\d+)", header).group(1))
     data = np.loadtxt(path, ndmin=2)
-    with open(results_dir / "lattice.pkl", "rb") as f:
-        lat_pkl = pickle.load(f)
-    lat = _RowLattice(lat_pkl, _Geometry(results_dir), n_columns)
-    positions = np.array([lat.position(lat.mps2lat_idx(i)) for i in range(lat.N_sites)])
-    assert np.allclose(positions, data[:, 1:3]), f"the rebuilt lattice doesn't match {path}"
-    return data[:, 3], lat, ref
+    assert len(data) % n_columns == 0, f"the {len(data)} sites of {path} aren't {n_columns} whole columns"
+    return data[:, 3], data[:, 1:3], data[:, 0].astype(int) // (len(data) // n_columns), ref
 
 
-def _SignStructureFactor(row, lat, ks, ref, amplitude_cutoff=SIGN_AMPLITUDE_CUTOFF):
+def _SignStructureFactor(row, positions, ref, qs, amplitude_cutoff=SIGN_AMPLITUDE_CUTOFF):
     """
         Fourier transform of the sign of the correlations row = <S_r0.S_r> with the reference site r0 = ref
         (Fig. 5 of Jiang et al.): S~(q) = sum_r e^{-iq.(r - r0)} <S_r0.S_r> / |<S_r0.S_r>|, sites with
-        |<S_r0.S_r>| < amplitude_cutoff excluded. Returns (signs, S~(q)), signs is 0 for the excluded sites.
+        |<S_r0.S_r>| < amplitude_cutoff excluded. Returns (signs, S~(qs)), signs is 0 for the excluded sites.
     """
     signs = np.sign(row)
     signs[np.abs(row) < amplitude_cutoff] = 0
-    rdisp = minimum_image_displacements(lat, len(row))[:, ref]  # r - r0, wrapped around the cylinder
-    return signs, np.exp(-1j * ks @ rdisp.T) @ signs
+    S_sign = np.zeros(len(qs), dtype=np.complex128)
+    for r, sign in zip(positions - positions[ref], signs):  # site by site, qs is a dense grid
+        if sign != 0:
+            S_sign += sign * np.exp(-1j * qs @ r)
+    return signs, S_sign
 
 
-def PlotSignStructureFactor(results_dir, amplitude_cutoff=SIGN_AMPLITUDE_CUTOFF, lower_cutoff=0.2, save=True):
+def PlotSignStructureFactor(results_dir, amplitude_cutoff=SIGN_AMPLITUDE_CUTOFF, lower_cutoff=0.2,
+                            edge_columns=SIGN_EDGE_COLUMNS, save=True):
     """
-        As Fig. 5 of Jiang et al.: left, the sign of <S_r0.S_r> on the correlated block of the cylinder (green +,
-        yellow -, crosses for |<S_r0.S_r>| < amplitude_cutoff, r0 in a red circle); right, |S~(q)| normalized to its
-        maximum, with a lower cutoff of the color scale, on the allowed ky of the cylinder. Uses the correlations of
-        CalculateCorrelationRow (CORR_ROW_FILE), or, for older runs without it, the row of the site closest to the
-        center of spin_corr_x.csv (whose window is longer than that of lattice.pkl).
-        Saves sign_structure_factor.pdf in results_dir.
+        As Fig. 5 of Jiang et al., on the correlated window without edge_columns columns on each edge: top, the sign
+        of <S_r0.S_r> (green +, yellow -, crosses for |<S_r0.S_r>| < amplitude_cutoff, r0 in red, the Ly columns
+        around r0 shaded); bottom, |S~(q)| normalized to its maximum, with a lower cutoff of the color scale, on a
+        dense q grid of the parallelogram |q.a_i| <= 2 pi. Uses the correlations of CalculateCorrelationRow
+        (CORR_ROW_FILE), or, for older runs without it, the row of the site closest to the center of
+        spin_corr_x.csv (whose window is longer than that of lattice.pkl). Saves sign_structure_factor.pdf in
+        results_dir.
     """
     results_dir = Path(results_dir)
     if (results_dir / CORR_ROW_FILE).exists():
-        row, lat, ref = _LoadCorrelationRow(results_dir)
+        row, positions, columns, ref = _LoadCorrelationRow(results_dir)
     else:
         C, lat = _LoadLongCorrelationsBlock(results_dir)
         ref = _reference_site_index(lat, lat.N_sites)
         row = C[ref]
-    ks = k_grid(lat, *lat.Ls, *lat.reciprocal_basis)
-    signs, S_sign = _SignStructureFactor(row, lat, ks, ref, amplitude_cutoff)
-    S_sign = np.abs(S_sign) / np.max(np.abs(S_sign))
+        positions = np.array([lat.position(lat.mps2lat_idx(i)) for i in range(lat.N_sites)])
+        columns = np.array([lat.mps2lat_idx(i)[0] for i in range(lat.N_sites)])
+    keep = (columns >= edge_columns) & (columns <= columns.max() - edge_columns)
+    assert keep[ref], "the reference site is in the excluded edge columns"
+    ref = np.count_nonzero(keep[:ref])
+    row, positions, columns = row[keep], positions[keep], columns[keep]
 
-    fig, (ax_x, ax_k) = plt.subplots(1, 2, figsize=(17, 5), width_ratios=[2.6, 1], constrained_layout=True)
-    positions = np.array([lat.position(lat.mps2lat_idx(i)) for i in range(lat.N_sites)])
-    for value, style in ((1, dict(color="tab:green", marker="o", label="+")),
-                         (-1, dict(color="gold", marker="o", label="-")),
-                         (0, dict(color="gray", marker="x", label=rf"$|C| < {amplitude_cutoff:g}$"))):
-        on = signs == value
-        if on.any():
-            ax_x.scatter(*positions[on].T, s=40, edgecolors="k" if value else None, linewidths=0.5, **style)
-    ax_x.scatter(*positions[ref], s=200, facecolors="none", edgecolors="red", linewidths=2)
+    basis = np.asarray(_reference_lattice().basis)
+    q = np.linspace(-2 * np.pi, 2 * np.pi, SIGN_Q_POINTS)
+    qs = np.stack(np.meshgrid(q, q), axis=-1).reshape(-1, 2)
+    signs, S_sign = _SignStructureFactor(row, positions, ref, qs, amplitude_cutoff)
+    S_sign = np.abs(S_sign)
+    S_sign[np.any(np.abs(qs @ basis.T) > 2 * np.pi + 1e-9, axis=1)] = np.nan  # outside the q parallelogram
+    S_sign = (S_sign / np.nanmax(S_sign)).reshape(len(q), len(q))
+
+    fig = plt.figure(figsize=(9, 6.5))
+    grid = fig.add_gridspec(2, 3, height_ratios=[1, 1.3], width_ratios=[1, 1.4, 1], hspace=0.15)
+    ax_x, ax_k = fig.add_subplot(grid[0, :]), fig.add_subplot(grid[1, 1])
+
+    # the Ly columns around r0, a parallelogram in the lattice coordinates of the sites
+    coords = positions @ np.linalg.inv(basis)
+    sites_per_column = np.count_nonzero(columns == columns[ref])
+    near = np.abs(columns - columns[ref]) <= sites_per_column // 2
+    (x0, y0), (x1, y1) = coords[near].min(axis=0) - 0.5, coords[near].max(axis=0) + 0.5
+    ax_x.fill(*(np.array([[x0, y0], [x1, y0], [x1, y1], [x0, y1]]) @ basis).T, color="0.85", zorder=0)
+    for value, color in ((1, "#5ACD3C"), (-1, "#FFE600")):
+        ax_x.scatter(*positions[signs == value].T, s=45, color=color, edgecolors="0.35", linewidths=0.6)
+    ax_x.scatter(*positions[signs == 0].T, s=25, color="k", marker="x", linewidths=1)
+    ax_x.scatter(*positions[ref], s=120, color="red", zorder=3)
     ax_x.set_aspect("equal")
-    ax_x.set_xlabel("x")
-    ax_x.set_ylabel("y")
-    ax_x.legend(loc="upper left", bbox_to_anchor=(1, 1), fontsize="small")
-    ax_x.set_title(r"sign of $\langle \mathbf{S}_{r_0}\cdot\mathbf{S}_r\rangle$")
+    ax_x.set_axis_off()
+    ax_x.text(-0.01, 0.5, _state_label(results_dir), transform=ax_x.transAxes, ha="right", va="center",
+              fontsize="large")
 
-    _, artist = plot_structure_factor(ks, S_sign, lat, ax=ax_k, cmap="magma", show_kpoints=False)
-    artist.set_clim(lower_cutoff, 1)
-    fig.axes[-1].set_ylabel(r"$|\tilde S(\mathbf{q})| / \max|\tilde S|$")
-    _reference_lattice().plot_brillouin_zone(ax_k)  # not lat's: for XC that is the BZ of the two site unit cell
-    ax_k.set_title(r"$\tilde S(\mathbf{q}) = \sum_r e^{-i\mathbf{q}\cdot\mathbf{r}}\,"
-                   r"\mathrm{sgn}\langle \mathbf{S}_{r_0}\cdot\mathbf{S}_r\rangle$", fontsize=11)
-    fig.suptitle(_state_label(results_dir))
+    cmap = plt.get_cmap("jet").copy()
+    cmap.set_bad("white")
+    artist = ax_k.imshow(S_sign, origin="lower", extent=[-2, 2, -2, 2], cmap=cmap, vmin=lower_cutoff, vmax=1,
+                         interpolation="nearest")
+    cax = make_axes_locatable(ax_k).append_axes("right", size="6%", pad=0.15)  # as high as ax_k
+    fig.colorbar(artist, cax=cax, ticks=np.arange(lower_cutoff, 1.01, 0.2))
+    hexagon = 4 / 3 * np.exp(1j * np.pi / 3 * np.arange(7))  # the BZ, with K points at q = 4 pi / 3
+    ax_k.plot(hexagon.real, hexagon.imag, "w--", linewidth=1)
+    ax_k.set_xticks([-2, 0, 2])
+    ax_k.set_yticks([-2, 0, 2])
+    ax_k.grid(False)
+    ax_k.set_xlabel(r"$q_x/\pi$")
+    ax_k.set_ylabel(r"$q_y/\pi$")
     if save:
-        fig.savefig(results_dir / "sign_structure_factor.pdf", dpi=200)
+        fig.savefig(results_dir / "sign_structure_factor.pdf", dpi=200, bbox_inches="tight")
     return fig
 
 
@@ -368,13 +426,13 @@ def PlotBondCorrelationsVsLx(results_dir, save=True):
 def GutzwillerJ1J2Energies(psi, results_dir, J2s=JIANG_J2S, Delz=1.0):
     """
         Energy per site of the Gutzwiller MPS psi of results_dir w.r.t. the J1-J2 model (calculateGutzwillerEnergy
-        TriangularJ1J2), for each J2; the geometry is read from the directory name.
+        TriangularJ1J2), for each J2; the geometry (and the helical cylinder) is read from the directory name.
     """
     name = Path(results_dir).name
     Lx, Ly = (int(L) for L in re.search(r"Lx_(\d+)_Ly_(\d+)", name).groups())
     geometry = _Geometry(results_dir)
     bc_MPS = "finite" if "_finite_" in name else "infinite"
-    bc = ("open", "periodic") if bc_MPS == "finite" else ("periodic", "periodic")  # as in GutzwillerDMRGOverlaps
+    bc = tuple(TriangularCylinderBC(bc_MPS, geometry, _Helical(results_dir)))  # as in GutzwillerDMRGOverlaps
     return np.array([np.real(calculateGutzwillerEnergyTriangularJ1J2(psi, Lx, Ly, bc_MPS, J2, Delz, bc, geometry))
                      for J2 in J2s])
 

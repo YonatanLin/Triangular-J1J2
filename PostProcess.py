@@ -3,7 +3,7 @@ from pathlib import Path
 
 import numpy as np
 
-from ResultsIO import FindPkl, LoadLattice, LoadPsi, LATTICE_FILE, MPS_LATTICE_FILE
+from ResultsIO import FindPkl, FindPsi, LoadLattice, LoadPath, LoadPsi, LATTICE_FILE, MPS_LATTICE_FILE
 
 
 ENTANGLEMENT_ENTROPY = "entanglement_entropy"
@@ -13,9 +13,12 @@ SPIN_COMPONENTS_STRUCTURE_FACTOR = "spin_components_structure_factor"
 DIMER_CORRELATIONS = "dimer_correlations"
 JIANG_ANALYSIS = "jiang_analysis"
 KAGOME_GUTZWILLER_ENERGY = "kagome_gutzwiller_energy"
+VIRTUAL_PARITY_DIR_NAMES = "virtual_parity_dir_names"  # results_dir is the parent dir of the cases
 SUPPORTED_POST_PROCESS_TYPES = {ENTANGLEMENT_ENTROPY, SPECIAL_POINTS_STRUCTURE_FACTOR, MAGZ,
                                 SPIN_COMPONENTS_STRUCTURE_FACTOR, DIMER_CORRELATIONS, JIANG_ANALYSIS,
-                                KAGOME_GUTZWILLER_ENERGY}
+                                KAGOME_GUTZWILLER_ENERGY, VIRTUAL_PARITY_DIR_NAMES}
+# run once on the parent dir of the cases (one condor job), not per case
+PARENT_DIR_POST_PROCESS_TYPES = {VIRTUAL_PARITY_DIR_NAMES}
 
 # per-case output files, which CollectPostProcessResults gathers
 EE_FILE = "EE_central_bond.txt"
@@ -291,6 +294,58 @@ def CalculateKagomeGutzwillerEnergies(parent_dir, J2_file=J2_FILE, Delz=1.0, out
     CollectPostProcessResults(parent_dir, KAGOME_GUTZWILLER_ENERGY, output_path)
 
 
+def FirstBondParities(psi):
+    """The parities of the charges (2*Sz) of the first virtual bond of psi, i.e. its virtual parities."""
+    leg = psi.get_B(0).get_leg("vL")
+    assert leg.chinfo.qnumber == 1, f"expected a single (2*Sz) charge, got {leg.chinfo.names}"
+    return set(int(q) % 2 for q in leg.to_qflat()[:, 0])
+
+
+def _with_virtual_parity_tag(case_name, parity):
+    """case_name with _vpar_<parity> where GutzwillerCaseNameSuffix puts it: before _bondsign_, else at the end."""
+    tag = f"_vpar_{parity}"
+    return case_name.replace("_bondsign_", tag + "_bondsign_", 1) if "_bondsign_" in case_name else case_name + tag
+
+
+def AddVirtualParityToDirNames(parent_dir, psi_filename="psi_gutzwiller.pkl"):
+    """
+    Tags with _vpar_<p> the infinite Gutzwiller case dirs directly under parent_dir that were run before the
+    virtual_parity param (no vpar in the name), p being the parity of the first virtual bond's charges. Its
+    pklFiles_ sibling is renamed with it. A case is left as is if those parities are mixed, if the renamed dir (or
+    its pklFiles_) already exists, or if it has no psi_filename. Finite cases are left untagged, as
+    GutzwillerCaseDirName names them (they only have the even sector). Returns {old dir: new dir} of the renamed.
+    """
+    parent_dir = _normalize_results_dir(parent_dir)
+    renamed = {}
+    for case_dir in sorted(p for p in parent_dir.iterdir() if p.is_dir() and not p.name.startswith("pklFiles_")):
+        if "vpar" in case_dir.name:
+            continue
+        psi_path = FindPsi(case_dir, psi_filename)
+        if psi_path is None:
+            print(f"skipping {case_dir.name}: no {psi_filename}")
+            continue
+        psi = LoadPath(psi_path)
+        if psi.bc != "infinite":
+            print(f"skipping {case_dir.name}: {psi.bc} MPS (untagged by convention)")
+            continue
+        parities = FirstBondParities(psi)
+        del psi
+        if len(parities) != 1:
+            print(f"skipping {case_dir.name}: mixed virtual parities {sorted(parities)}")
+            continue
+        new_dir = case_dir.with_name(_with_virtual_parity_tag(case_dir.name, parities.pop()))
+        pkl_dir, new_pkl_dir = (d.with_name(f"pklFiles_{d.name}") for d in (case_dir, new_dir))
+        if new_dir.exists() or new_pkl_dir.exists():
+            print(f"skipping {case_dir.name}: {new_dir.name} already exists")
+            continue
+        case_dir.rename(new_dir)
+        if pkl_dir.exists():
+            pkl_dir.rename(new_pkl_dir)
+        print(f"renamed {case_dir.name} -> {new_dir.name}")
+        renamed[case_dir] = new_dir
+    return renamed
+
+
 # ----------------------------------------------------------------------
 # Collecting the per-case outputs of many results dirs (run locally after the cluster jobs finished)
 # ----------------------------------------------------------------------
@@ -378,6 +433,8 @@ def PostProcessResults(results_dir, post_process_type):
         CalculateJiangAnalysis(results_dir)
     elif post_process_type == KAGOME_GUTZWILLER_ENERGY:
         CalculateKagomeGutzwillerEnergy(results_dir)
+    elif post_process_type == VIRTUAL_PARITY_DIR_NAMES:
+        AddVirtualParityToDirNames(results_dir)
     else:
         raise ValueError(
             f"Unsupported post process type: {post_process_type}. "

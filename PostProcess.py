@@ -1,3 +1,4 @@
+import os
 import re
 from pathlib import Path
 
@@ -307,6 +308,24 @@ def _with_virtual_parity_tag(case_name, parity):
     return case_name.replace("_bondsign_", tag + "_bondsign_", 1) if "_bondsign_" in case_name else case_name + tag
 
 
+def _RetargetLinks(dirs, renames):
+    """
+    Points the symlinks in dirs (recursively) whose target goes through a renamed dir (a path component in renames,
+    {old name: new name}) to the renamed one, e.g. a case dir's links to the files of its pklFiles_ sibling.
+    """
+    for d in dirs:
+        if not d.exists():
+            continue
+        for link in [p for p in d.rglob("*") if p.is_symlink()]:
+            target = os.readlink(link)
+            parts = re.split(r"([/\\])", target)  # keeps the separators, so the target is rebuilt as written
+            new_target = "".join(renames.get(part, part) for part in parts)
+            if new_target != target:
+                link.unlink()
+                os.symlink(new_target, link)
+                print(f"  link {link.name}: {target} -> {new_target}")
+
+
 def AddVirtualParityToDirNames(parent_dir, psi_filename="psi_gutzwiller.pkl"):
     """
     Tags with _vpar_<p> the infinite Gutzwiller case dirs directly under parent_dir that were run before the
@@ -341,6 +360,7 @@ def AddVirtualParityToDirNames(parent_dir, psi_filename="psi_gutzwiller.pkl"):
         case_dir.rename(new_dir)
         if pkl_dir.exists():
             pkl_dir.rename(new_pkl_dir)
+        _RetargetLinks([new_dir, new_pkl_dir], {case_dir.name: new_dir.name, pkl_dir.name: new_pkl_dir.name})
         print(f"renamed {case_dir.name} -> {new_dir.name}")
         renamed[case_dir] = new_dir
     return renamed

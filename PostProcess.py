@@ -1,8 +1,9 @@
-import pickle
 import re
 from pathlib import Path
 
 import numpy as np
+
+from ResultsIO import FindPkl, LoadLattice, LoadPsi, LATTICE_FILE, MPS_LATTICE_FILE
 
 
 ENTANGLEMENT_ENTROPY = "entanglement_entropy"
@@ -33,29 +34,15 @@ def _normalize_results_dir(results_dir):
 
 
 def _with_trailing_slash(results_dir):
-    # _result_file_path locates the pklFiles_<case> directory by splitting the path on "/"
     return str(results_dir).replace("\\", "/").rstrip("/") + "/"
 
 
 def _result_file_path(results_dir, filename, assert_exist=True):
-    default_path = _normalize_results_dir(results_dir) / filename
-
-    pkl_results_dir_split = results_dir.split("/")
-    pkl_results_dir_split[-2] = "pklFiles_" + pkl_results_dir_split[-2]
-    pkl_results_dir = "/".join(pkl_results_dir_split)
-    pkl_path = _normalize_results_dir(pkl_results_dir) / filename
-
-    default_path_exists = default_path.exists()
-    pkl_path_exists = pkl_path.exists()
-    if filename.split(".")[-1] == "pkl":
-        if assert_exist:
-            assert pkl_path_exists, f"pkl file path {str(pkl_path)} does not exist"
-        return pkl_path
-    else:
-        if assert_exist:
-            assert default_path_exists, f"file path {str(default_path)} does not exist"
-        return default_path
-
+    """filename in results_dir (the pickles are loaded with ResultsIO, which also looks in pklFiles_<case>)."""
+    path = _normalize_results_dir(results_dir) / filename
+    if assert_exist:
+        assert path.exists(), f"file path {str(path)} does not exist"
+    return path
 
 
 def _load_last_energy(results_dir):
@@ -68,10 +55,7 @@ def _load_last_energy(results_dir):
 def CalculateCentralBondEntanglementEntropy(results_dir, psi_filename="psi_gs.pkl"):
     """Saves results_dir/EE_central_bond.txt: bond, bond_dimension, entanglement_entropy, energy."""
     print(results_dir)
-    print(psi_filename)
-    psi_path = _result_file_path(results_dir, psi_filename)
-    with open(psi_path, "rb") as f:
-        psi = pickle.load(f)
+    psi = LoadPsi(results_dir, psi_filename)
 
     E_gs = _load_last_energy(results_dir)
     # TODO: is this the central bond always?
@@ -99,11 +83,7 @@ def PlotEntanglementProfileAndFitCentralCharge(psi, results_dir):
     assert(psi.finite)
     S = np.asarray(psi.entanglement_entropy())  # bond i is between sites i and i + 1
     bonds = np.arange(len(S))
-    sites_per_column = 1
-    lattice_path = _result_file_path(results_dir, "lattice.pkl", assert_exist=False)
-    if lattice_path.exists():
-        with open(lattice_path, "rb") as f:
-            sites_per_column = pickle.load(f).N_sites_per_ring
+    sites_per_column = LoadLattice(results_dir).N_sites_per_ring if FindPkl(results_dir, LATTICE_FILE) else 1
     n_columns = psi.L // sites_per_column
     column_bonds = np.arange(1, n_columns) * sites_per_column - 1  # bond after the last site of each column
     x = (column_bonds + 1) // sites_per_column
@@ -147,10 +127,7 @@ def PlotEntanglementProfileAndFitCentralCharge(psi, results_dir):
 
 def CalculatMagz(results_dir, psi_filename="psi_gs.pkl"):
     print(results_dir)
-    print(psi_filename)
-    psi_path = _result_file_path(results_dir, psi_filename)
-    with open(psi_path, "rb") as f:
-        psi = pickle.load(f)
+    psi = LoadPsi(results_dir, psi_filename)
     sz_exp = psi.expectation_value('Sz')
     np.savetxt(str(results_dir) + "sz_exp.txt", sz_exp)
 
@@ -164,12 +141,8 @@ def CalculateSpecialPointsStructureFactor(results_dir):
     point_names = list(special_bz_points.keys())
 
     print(results_dir)
-    spin_corr_path = _result_file_path(results_dir, "spin_corr_x.csv")
-    lattice_path = _result_file_path(results_dir, "lattice.pkl")
-
-    spin_corr_x = np.loadtxt(spin_corr_path, dtype=np.complex128)
-    with open(lattice_path, "rb") as f:
-        lattice = pickle.load(f)
+    spin_corr_x = np.loadtxt(_result_file_path(results_dir, "spin_corr_x.csv"), dtype=np.complex128)
+    lattice = LoadLattice(results_dir)
 
     special_points_structure_factor = np.zeros((len(point_names), 3))
     for ind_point, point_name in enumerate(point_names):
@@ -196,12 +169,8 @@ def CalculateSpinComponentsStructureFactor(results_dir, psi_filename="psi_gs.pkl
     from WaveFunctionProperties import SpinComponentsOutput, SaveSpinComponentsOutput
 
     print(results_dir)
-    psi_path = _result_file_path(results_dir, psi_filename)
-    lattice_path = _result_file_path(results_dir, "lattice.pkl")
-    with open(psi_path, "rb") as f:
-        psi = pickle.load(f)
-    with open(lattice_path, "rb") as f:
-        lattice = pickle.load(f)
+    psi = LoadPsi(results_dir, psi_filename)
+    lattice = LoadLattice(results_dir)
 
     # default k-grid resolution: the same as the DMRG run (Main.TriangularJ1J2DMRG)
     n1 = 2 * lattice.Ls[0] if n1 is None else n1
@@ -218,31 +187,25 @@ def CalculateDimerCorrelations(results_dir, psi_filename="psi_gs.pkl"):
     from WaveFunctionProperties import CalculateDimerDimerCorrelations
 
     print(results_dir)
-    psi_path = _result_file_path(results_dir, psi_filename)
-    lattice_path = _result_file_path(results_dir, "lattice.pkl")
-    with open(psi_path, "rb") as f:
-        psi = pickle.load(f)
-    with open(lattice_path, "rb") as f:
-        lattice = pickle.load(f)
+    psi = LoadPsi(results_dir, psi_filename)
+    lattice = LoadLattice(results_dir)
 
     dimer_corr = CalculateDimerDimerCorrelations(psi, lattice)
     np.savetxt(_result_file_path(results_dir, DIMER_CORR_FILE, assert_exist=False), dimer_corr)
 
 
-def CalculateJiangAnalysis(results_dir, psi_filename="psi_gutzwiller.pkl", n_columns=None):
+def CalculateJiangAnalysis(results_dir, psi_filename=None, n_columns=None):
     """
     The per-case analysis of Jiang et al., PRL 137, 056703 (2026) of results_dir (JiangAnalysis.AnalyzeCaseAsJiang):
     the correlations with a reference site on n_columns columns (default 4 Ly) and their sign Fourier transform, the
     nearest neighbor correlations (if the spin_components_structure_factor post-process ran), the J1-J2 energies vs
-    J2 (energies_vs_J2.txt) and the Schmidt spectrum.
+    J2 (energies_vs_J2.txt) and the Schmidt spectrum. psi_filename defaults to the DMRG or Gutzwiller MPS
+    (ResultsIO.FindPsi).
     """
     from JiangAnalysis import AnalyzeCaseAsJiang
 
     print(results_dir)
-    psi_path = _result_file_path(results_dir, psi_filename)  # asserts that it exists
-    print(f"loading {psi_path}")
-    with open(psi_path, "rb") as f:
-        psi = pickle.load(f)
+    psi = LoadPsi(results_dir, psi_filename)
     AnalyzeCaseAsJiang(psi, results_dir, n_columns=n_columns)
 
 
@@ -259,19 +222,9 @@ def _find_J2_file(results_dir, J2_file=J2_FILE):
     raise FileNotFoundError(f"{J2_file} not found, looked in {[str(c) for c in candidates]}")
 
 
-def _gutzwiller_pkl_path(results_dir, filename):
-    """filename in pklFiles_<case> (the cluster runs), else in the case dir itself (the local runs), None if in
-    neither."""
-    for path in (_result_file_path(results_dir, filename, assert_exist=False),
-                 _normalize_results_dir(results_dir) / filename):
-        if path.exists():
-            return path
-    return None
-
-
 def _legacy_kagome_mps_lattice(psi, results_dir):
     """
-    The lattice of the MPS psi of a Kagome Gutzwiller run from before the runs saved Main.MPS_LATTICE_FILE. All such
+    The lattice of the MPS psi of a Kagome Gutzwiller run from before the runs saved ResultsIO.MPS_LATTICE_FILE. All such
     runs are of tenpy's Kagome lattice (BuildKagomeLattice, Gutzwiller.KagomeGutzwillerSpec) with the bc of
     Main.KagomeCylinderBC; Ly is read from the case dir name, Lx off the MPS length (Main.LatticeOfMPSByRings). The
     name must have exactly the prefix of Main.KagomeGutzwillerCaseDirName of these runs, so that a run of another
@@ -295,26 +248,18 @@ def CalculateKagomeGutzwillerEnergy(results_dir, J2_file=J2_FILE, Delz=1.0, psi_
     """
     Energies per site of the Gutzwiller state of the Kagome Gutzwiller case dir results_dir (CreateKagomeGutzwillerInput)
     w.r.t. the J1J2 model on its lattice (Main.calculateGutzwillerEnergiesJ1J2), for the J2 values of J2_file (see
-    _find_J2_file). The lattice is the one the run saved (Main.MPS_LATTICE_FILE), or for older runs the one rebuilt
+    _find_J2_file). The lattice is the one the run saved (ResultsIO.MPS_LATTICE_FILE), or for older runs the one rebuilt
     by _legacy_kagome_mps_lattice. Saves results_dir/kagome_energies_vs_J2.txt: J2, energy per site.
     """
-    from Main import calculateGutzwillerEnergiesJ1J2, MPS_LATTICE_FILE
+    from Main import calculateGutzwillerEnergiesJ1J2
 
     print(results_dir)
     J2_path = _find_J2_file(results_dir, J2_file)
     J2s = np.atleast_1d(np.loadtxt(J2_path, dtype=np.float64))
     print(f"J2 values from {J2_path}: {J2s}")
-    psi_path = _gutzwiller_pkl_path(results_dir, psi_filename)
-    assert psi_path is not None, f"no {psi_filename} for {results_dir}"
-    print(f"loading {psi_path}")
-    with open(psi_path, "rb") as f:
-        psi = pickle.load(f)
-
-    lattice_path = _gutzwiller_pkl_path(results_dir, MPS_LATTICE_FILE)
-    if lattice_path is not None:
-        print(f"loading {lattice_path}")
-        with open(lattice_path, "rb") as f:
-            lat = pickle.load(f)
+    psi = LoadPsi(results_dir, psi_filename)
+    if FindPkl(results_dir, MPS_LATTICE_FILE) is not None:
+        lat = LoadLattice(results_dir, MPS_LATTICE_FILE)
     else:
         print(f"no {MPS_LATTICE_FILE}, rebuilding the Kagome lattice of the MPS from the case dir name")
         lat = _legacy_kagome_mps_lattice(psi, results_dir)

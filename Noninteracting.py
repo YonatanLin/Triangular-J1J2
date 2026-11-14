@@ -82,7 +82,7 @@ def ShiftedCylinderCircumference(a_x, a_y, Ly, shift=0):
     """
         Circumference vector C = Ly a_y + shift a_x of a YC cylinder with Ly sites around it, glued with an integer shift
         along the cylinder: (x, y + Ly) is identified with (x - shift, y), tenpy's bc_shift convention
-        (JiangAnalysis._WrapAroundCylinder). shift = Gutzwiller.helical_bc_shift = -1 is the helical cylinder YC{Ly}-1,
+        (WaveFunctionProperties.WrapAroundCylinder). shift = Gutzwiller.helical_bc_shift = -1 is the helical cylinder YC{Ly}-1,
         shift = 0 the ordinary YC cylinder.
     """
     return Ly * np.asarray(a_y, dtype=float) + shift * np.asarray(a_x, dtype=float)

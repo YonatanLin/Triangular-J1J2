@@ -61,6 +61,19 @@ def scalar_chirality_term(psi, i, j, k):
     assert(abs(np.imag(chi)) < 1e-14), "imaginary part of chirality should be 0"
     return np.real(chi)
 
+def WrapAroundCylinder(lattice, x, y):
+    """
+        Lattice coordinates (x, y) (scalars or arrays) wrapped into 0 <= y < Ly when y is periodic; on a helical
+        cylinder (see Gutzwiller.helical_bc_shift) (x, y + Ly) is (x - bc_shift, y), which lat2mps_idx doesn't do.
+    """
+    if lattice.bc[1]:  # open around the cylinder: nothing to wrap
+        return x, y
+    Ly = lattice.Ls[1]
+    shift = 0 if lattice.bc_shift is None else int(lattice.bc_shift[0])
+    winding = np.floor_divide(y, Ly)
+    return x - winding * shift, y - winding * Ly
+
+
 # ----------------------------------------------------------------------
 # 2) Enumerate the elementary 'up' and 'down' triangles of the lattice
 # ----------------------------------------------------------------------
@@ -101,15 +114,9 @@ def triangular_plaquettes(lattice, u=0):
     Lx, Ly = lattice.Ls
     # lattice.bc[d] is True for 'open', False for 'periodic'
     open_x, open_y = bool(lattice.bc[0]), bool(lattice.bc[1])
-    # helical (shifted) bc: (x, y + Ly) is identified with (x - bc_shift, y), which lat2mps_idx doesn't do
-    y_shift = 0 if lattice.bc_shift is None else int(lattice.bc_shift[0])
-
-    def wrap_y(cx, cy):
-        winding = cy // Ly if not open_y else 0
-        return cx - winding * y_shift, cy
 
     def in_bounds(cx, cy):
-        cx, cy = wrap_y(cx, cy)
+        cx, cy = WrapAroundCylinder(lattice, cx, cy)
         if open_x and not (0 <= cx < Lx):
             return False
         if open_y and not (0 <= cy < Ly):
@@ -117,7 +124,7 @@ def triangular_plaquettes(lattice, u=0):
         return True
 
     def site_index(cx, cy):
-        cx, cy = wrap_y(cx, cy)
+        cx, cy = WrapAroundCylinder(lattice, cx, cy)
         return int(lattice.lat2mps_idx(np.array([cx, cy, u])))
 
     def site_pos(cx, cy):

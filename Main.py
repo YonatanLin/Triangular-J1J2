@@ -28,6 +28,7 @@ from tenpy import MPSEnvironment
 import threading
 import time
 from ClusterInputConfigurations import optional_bool, parse_bool
+from ResultsIO import LoadLattice, LoadPsi, MPS_LATTICE_FILE
 from WaveFunctionProperties import (plot_scalar_spin_chirality, compute_structure_factor_grid,
                                     plot_structure_factor, structure_factor, ComputeMomentumSpaceStructureFactor,
                                     CalculateSpinSpinCorrelations, SpinComponentsOutput, SaveSpinComponentsOutput)
@@ -705,10 +706,7 @@ def GetLatticeInitialState(initial_state, lat, initial_psi_dir, abs_magz, ordere
         psi = ordered_states[initial_state](lat)
 
     elif initialStateFromFile(initial_state):
-        initial_psi_path = initial_psi_dir + 'psi_gs.pkl'
-        print(f"loading initial state: {initial_psi_path}")
-        with open(initial_psi_path, 'rb') as psi_load:
-            psi = pickle.load(psi_load)
+        psi = LoadPsi(initial_psi_dir, 'psi_gs.pkl')
         #psi.canonical_form()
 
     else:
@@ -809,15 +807,6 @@ def GenerateJ1J2SpinModel(J2, Delz, lat):
                                 nnn_couplings_list)
     J1J2_model.init_H_from_terms()
     return J1J2_model, nnn_couplings_list
-
-
-# the spin lattice of the Gutzwiller MPS, saved by the Gutzwiller runs next to psi_gutzwiller.pkl
-MPS_LATTICE_FILE = "mps_lattice.pkl"
-
-
-def LoadGutzwillerState(gutz_case_dir, psi_fname='psi_gutzwiller.pkl'):
-    with open(gutz_case_dir + psi_fname, 'rb') as f_gutz:
-        return pickle.load(f_gutz)
 
 
 def calculateGutzwillerEnergyTriangularJ1J2(psi, Lx, Ly, bc_MPS, J2, Delz, bc, geometry):
@@ -1033,6 +1022,7 @@ def J1J2DMRG(spec, Lx, Ly, bc, bc_MPS, conserve=True, initial_state="Random", J2
         site = SpinHalfSite(conserve=None)
 
     lat = spec.lattice(site, Lx, Ly, bc_MPS, bc)
+
     abs_magz = AbsMagzFromNormMagz(norm_magz, lat.N_sites)
     center_site_mps_index = lat.lat2mps_idx([Lx // 2, Ly // 2, 0])
     print("center site mps index: ", center_site_mps_index)
@@ -1041,6 +1031,12 @@ def J1J2DMRG(spec, Lx, Ly, bc, bc_MPS, conserve=True, initial_state="Random", J2
 
     fig_lat, ax_lat = plt.subplots(figsize=(6, 5))
     PlotLattice(lat, ax_lat, additional_couplings_to_plot=nnn_couplings_list)
+
+    for u1, u2, dx in lat.pairs['next_nearest_neighbors']:
+        print(f"u1={u1}, u2={u2}, dx={dx}")
+    fig_lat.savefig(results_dir + "lat.png")
+    exit(1)
+
 
     print_couplings = False
     if print_couplings:
@@ -1135,11 +1131,6 @@ def ExplicitMPSNorm(mps):
     return norm_transfer
 
 
-def LoadDMRGGroundState(dmrg_dir):
-    with open(dmrg_dir + 'psi_gs.pkl', 'rb') as f_dmrg:
-        return pickle.load(f_dmrg)
-
-
 def calculateOverlapBetweenGutzwillerAndDMRG(psi_dmrg, psi_gutz):
 
     #compressed_chi = 2000
@@ -1155,8 +1146,7 @@ def calculateOverlapBetweenGutzwillerAndDMRG(psi_dmrg, psi_gutz):
 
 def ComputeCorrelationsFromMPSFile(psi_dir, Lx, Ly, bc, geometry="YC", psi_fname="psi_gs.pkl",
                                    transverse_correlations=False, plot_mode="interpolate"):
-    with open(psi_dir + psi_fname, 'rb') as f:
-        psi = pickle.load(f)
+    psi = LoadPsi(psi_dir, psi_fname)
 
     bc_MPS = "finite" if psi.finite else "infinite"
     conserve = psi.sites[0].conserve
@@ -1195,8 +1185,7 @@ def PlotCorrelationsFromFiles(results_dir,
         if new_format:
             ks = np.loadtxt(results_dir + "ks.csv")
             corr_k = np.loadtxt(results_dir + "spin_corr_k.csv")
-            with open(results_dir + "lattice.pkl", 'rb') as f:
-                lattice = pickle.load(f)
+            lattice = LoadLattice(results_dir)
             plot_structure_factor(ks, corr_k, lattice, ax, mode=plot_mode)
         else:
             corr_k = np.loadtxt(results_dir + "spin_corr_k.csv", dtype=np.complex128)
@@ -1295,7 +1284,7 @@ def GutzwillerDMRGOverlaps(scanned_parameter_name, scanned_parameter_values, gut
 
         # in a gutzwiller parameter scan the dmrg state is fixed, so it is loaded and plotted only once
         if dmrg_dir != previous_dmrg_dir:
-            psi_dmrg = LoadDMRGGroundState(dmrg_dir)
+            psi_dmrg = LoadPsi(dmrg_dir, 'psi_gs.pkl')
             sweep_energies = np.loadtxt(dmrg_dir + "Energies.txt", dtype=np.float64)
             dmrg_energy = sweep_energies[-1]
             if finite:
@@ -1306,7 +1295,7 @@ def GutzwillerDMRGOverlaps(scanned_parameter_name, scanned_parameter_values, gut
         dmrg_energies.append(dmrg_energy)
 
         print(f"dmrg dir: {dmrg_dir}\ngutzwiller dir: {gutz_case_dir}")
-        psi_gutz = LoadGutzwillerState(gutz_case_dir)
+        psi_gutz = LoadPsi(gutz_case_dir, 'psi_gutzwiller.pkl')
         gutz_energy = calculateGutzwillerEnergyTriangularJ1J2(psi_gutz, Lx, Ly, bc_MPS, J2, Delz, bc, geometry)
         gutz_energies.append(gutz_energy)
 
@@ -1371,7 +1360,7 @@ def GutzwillerBondDimensionScaling(gutz_results_dir, Lx, Ly, chis, flux,
     for chi in chis:
         gutz_case_dir = GutzwillerCaseDirName(gutz_results_dir, Lx, Ly, chi, flux, geometry, bc_MPS,
                                               gs_manifold_index, model_type=None, norm_magz=0.0, monopole_Q=None)
-        E = calculateGutzwillerEnergyTriangularJ1J2(LoadGutzwillerState(gutz_case_dir), Lx, Ly, bc_MPS, J2, Delz,
+        E = calculateGutzwillerEnergyTriangularJ1J2(LoadPsi(gutz_case_dir, 'psi_gutzwiller.pkl'), Lx, Ly, bc_MPS, J2, Delz,
                                                     bc, geometry)
         Es.append(E)
 
@@ -1431,12 +1420,7 @@ def CompareGutzwillerGroundStateSectorsXC():
         i_dir = gutz_dir + f"{i}/"
         PlotCorrelationsFromFiles(i_dir, show_energies=False, output_dir=i_dir)
         for j in range(i + 1, 4):
-            psi1_path = i_dir + "psi_gutzwiller.pkl"
-            psi2_path = gutz_dir + f"{j}/" + "psi_gutzwiller.pkl"
-            with open(psi1_path, 'rb') as psi_load:
-                psi1 = pickle.load(psi_load)
-            with open(psi2_path, 'rb') as psi_load:
-                psi2 = pickle.load(psi_load)
+            psi1, psi2 = LoadPsi(i_dir), LoadPsi(gutz_dir + f"{j}/")
             print(f"overlap {i},{j}: ", psi1.overlap(psi2))
 
             C_i = np.loadtxt(gutz_dir + f"{i}/C_slater.csv")
@@ -1462,8 +1446,7 @@ def calculateZ2EntanglementEntropy():
 
     EEs = []
     for i_case, case in enumerate(cases):
-        with open(case + "psi_gutzwiller.pkl", 'rb') as f:
-            psi = pickle.load(f)
+        psi = LoadPsi(case)
         EE_central_bond = psi.entanglement_entropy(bonds=[central_bonds[i_case]])[0]
         EEs.append(EE_central_bond)
 
@@ -1514,7 +1497,7 @@ def calculateMonopoleEnergies(parent_dir, norm_magz, mon_Qs):
         gutz_case_dir = GutzwillerCaseDirName(parent_dir, Lx, Ly, chi, flux, "YC", "finite", 0,
                                               model_type=model_type_dirac, norm_magz=norm_magz,
                                               monopole_Q=monopole_Q)
-        E = calculateGutzwillerEnergyTriangularJ1J2(LoadGutzwillerState(gutz_case_dir), Lx, Ly, "finite", J2, Delz,
+        E = calculateGutzwillerEnergyTriangularJ1J2(LoadPsi(gutz_case_dir, 'psi_gutzwiller.pkl'), Lx, Ly, "finite", J2, Delz,
                                                     ("open", "periodic"), "YC")
         Es.append(E)
 
@@ -1534,10 +1517,7 @@ def calculateOverlapsFastLocal(Lx, Ly, Q, magz):
     dir_dmrg = glob_results_dir + (f"TriangularJ1J2DMRG_6_15_e476229/Lx_{Lx}_Ly_{Ly}_bc_op_YC/"
                        f"finite_init_Random_conserve_1_J2_0.1_chi_3500_maxsweeps_50_magz_{magz}/")
 
-    with open(dir_gutz + "psi_gutzwiller.pkl", 'rb') as f:
-        psi_gutz = pickle.load(f)
-    with open(dir_dmrg + "psi_gs.pkl", 'rb') as f:
-        psi_dmrg = pickle.load(f)
+    psi_gutz, psi_dmrg = LoadPsi(dir_gutz), LoadPsi(dir_dmrg)
 
     # psi_gutz.unit_cell_width = psi_dmrg.unit_cell_width
 
@@ -1557,10 +1537,7 @@ def plotMonopoleOrderParameter():
     dir1 = monopole_dir + f"Dirac_finite_Lx_{Lx}_Ly_{Ly}_chi_2000_flux_0.0_YC_gsindex_0_magz_{magz1}_monQ_{Q1}/"
     dir2 = monopole_dir + f"Dirac_finite_Lx_{Lx}_Ly_{Ly}_chi_2000_flux_0.0_YC_gsindex_0_magz_{magz2}_monQ_{Q2}/"
 
-    with open(dir1 + "psi_gutzwiller.pkl", 'rb') as f:
-        psi1 = pickle.load(f)
-    with open(dir2 + "psi_gutzwiller.pkl", 'rb') as f:
-        psi2 = pickle.load(f)
+    psi1, psi2 = LoadPsi(dir1), LoadPsi(dir2)
 
     psi1.unit_cell_width = lattice.mps_unit_cell_width
     psi2.unit_cell_width = lattice.mps_unit_cell_width
@@ -1663,7 +1640,8 @@ if __name__ == "__main__":
     #AnalyzeMagnetizedJ1J2Correlations(magz1_dir, ns)
     #AnalyzeMagnetizedJ1J2Correlations(magz2_dir, ns)
     #plt.show()
-
+    KagomeJ1J2DMRG(4, 4, ("open", "periodic"), "finite")
+    
     PlotStripesStructureFactors(output_dir="./")
     exit(0)
     TriangularJ1J2DMRG(8, 4, ("open", "periodic"), "finite", J2=0.1, chi_max=400, max_sweeps=15,

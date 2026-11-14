@@ -22,13 +22,15 @@ from temfpy.utils import HT
 from TryingTemfpy import local
 from Noninteracting import PiFluxBandStructure
 from WaveFunctionProperties import (plot_structure_factor, ComputeMomentumSpaceStructureFactor,
-                                    CalculateSpinSpinCorrelations, plot_scalar_spin_chirality, SpinComponentsOutput)
+                                    CalculateSpinSpinCorrelations, plot_scalar_spin_chirality, SpinComponentsOutput,
+                                    WrapAroundCylinder)
+from ResultsIO import MPS_LATTICE_FILE
 from Main import (AbsMagzFromNormMagz, BuildTriangularLattice, TriangularXC, LxInfiniteMPSCorrelations,
                   CreateGutzwillerCaseDir, CreateKagomeGutzwillerCaseDir, PlotLattice, PrintCouplings, ImshowMatrix, SaveSimulationOutput,
                   calculateStructureFactorAtSpecialPoints, getTriangularLatticeSpecielBzPoints, KagomeSpecialBzPoints,
                   BuildKagomeLattice, PlotKagomeBrillouinZone, glob_results_dir, code_dir, meetings_dir,
                   model_type_dirac, model_type_Z2, pauli_x, pauli_y, pauli_z, ResolveJastrowTrotterRes,
-                  ResolveVirtualParity, MPS_LATTICE_FILE)
+                  ResolveVirtualParity)
 
 svd_min_slater_default = 5e-7
 jastrow_default_total_trunc = 1.e-5
@@ -620,9 +622,7 @@ def HelicalSeamGaugeSigns(lat, dr):
     assert dr[1] >= 0
     k, y = np.meshgrid(np.arange(shape[0]), np.arange(shape[1]), indexing='ij')
     x1, y1 = k - shift[0], y
-    x2, y2 = x1 + dr[0], y1 + dr[1]
-    winding = y2 // Ly
-    x2, y2 = x2 - winding * lat.bc_shift[0], y2 - winding * Ly
+    x2, y2 = WrapAroundCylinder(lat, x1 + dr[0], y1 + dr[1])
     phi = lambda x, y: np.where(y == Ly - 1, 1 - 2 * (x % 2), 1)
     return phi(x1, y1) * phi(x2, y2)
 

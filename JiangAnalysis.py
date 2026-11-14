@@ -5,7 +5,6 @@ its Fourier transform (their Fig. 5), the nearest neighbor correlations by bond 
 energies and the Schmidt spectrum. Run by the "jiang_analysis" post-process (PostProcess.py); the comparisons between
 states are in Analysis.py.
 """
-import pickle
 import re
 from pathlib import Path
 
@@ -14,9 +13,9 @@ import numpy as np
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from tenpy.networks.site import SpinHalfSite
 
-from Gutzwiller import TriangularCylinderBC
-from Main import BuildTriangularLattice, calculateGutzwillerEnergyTriangularJ1J2
-from WaveFunctionProperties import _reference_site_index
+from Main import BuildTriangularLattice, calculateGutzwillerEnergiesJ1J2, LatticeOfMPSByRings
+from ResultsIO import LoadLattice
+from WaveFunctionProperties import _reference_site_index, WrapAroundCylinder
 
 KS_FILES = {"xx": "ks_xx.csv", "zz": "ks_zz.csv"}
 CORR_FILES = {"xx": "spin_corr_xx_x.csv", "zz": "spin_corr_zz_x.csv"}
@@ -77,8 +76,7 @@ def _LoadCorrelationsOnCylinder(results_dir):
     """
     results_dir = Path(results_dir)
     C_xx, C_zz = (np.loadtxt(results_dir / CORR_FILES[comp]) for comp in ("xx", "zz"))
-    with open(results_dir / "lattice.pkl", "rb") as f:
-        lat = pickle.load(f)
+    lat = LoadLattice(results_dir)
     assert C_xx.shape == C_zz.shape == (lat.N_sites, lat.N_sites), \
         f"correlations of shape {C_xx.shape} aren't on the {lat.N_sites} sites of lattice.pkl"
     return 2 * C_xx + C_zz, lat
@@ -92,10 +90,22 @@ def _LoadTotalStructureFactor(results_dir):
 
 
 def _Geometry(results_dir):
-    """'YC' or 'XC', from the directory name (the helical YC cylinder is named YC<Ly>-1, see _Helical)."""
+    """'YC' or 'XC', from the Gutzwiller case directory name (the helical YC cylinder is named YC<Ly>-1, see
+    _Helical). Only for directories without lattice.pkl; otherwise use _LatticeGeometry (the DMRG case directory
+    names don't carry the geometry, their parent directory does)."""
     geometry = re.search(r"_(YC|XC)(?:\d+-1)?(?:_|$)", Path(results_dir).name)
     assert geometry is not None, f"no geometry (YC / XC) in the directory name {Path(results_dir).name}"
     return geometry.group(1)
+
+
+def _LatticeGeometry(lat):
+    """'YC' or 'XC' of a triangular lattice of BuildTriangularLattice, by its Bravais basis: YC a_2 = (1/2, sqrt(3)/2)
+    (also of the helical YC cylinder, whose shift is in lat.bc_shift), XC a_2 = (0, sqrt(3))."""
+    basis = np.asarray(lat.basis)
+    for geometry, a2 in (("YC", (0.5, np.sqrt(3) / 2)), ("XC", (0.0, np.sqrt(3)))):
+        if np.allclose(basis, [(1.0, 0.0), a2]):
+            return geometry
+    raise ValueError(f"the lattice basis {basis.tolist()} is neither the YC nor the XC triangular basis")
 
 
 def _Helical(results_dir):
@@ -112,38 +122,31 @@ def _LatticeBC(lat):
     return tuple(bc)
 
 
-def _WrapAroundCylinder(lat, x, y):
-    """(x, y) wrapped into 0 <= y < Ly; on a helical cylinder (x, y + Ly) is (x - bc_shift, y) (see
-    Gutzwiller.helical_bc_shift), which lat2mps_idx doesn't do."""
-    Ly = lat.Ls[1]
-    shift = 0 if lat.bc_shift is None else int(lat.bc_shift[0])
-    winding = y // Ly
-    return x - winding * shift, y - winding * Ly
+def _ColumnsLattice(lat_pkl, n_columns, site=None):
+    """The lattice of the first n_columns columns of the MPS of lattice.pkl: its geometry, circumference, bc and
+    MPS order (site default SpinHalfSite(None)). Its sites are the first sites of lat_pkl, which is checked."""
+    lat = BuildTriangularLattice(n_columns, lat_pkl.Ls[1], SpinHalfSite(None) if site is None else site,
+                                 lat_pkl.bc_MPS, _LatticeBC(lat_pkl), _LatticeGeometry(lat_pkl))
+    n_common = min(lat.N_sites, lat_pkl.N_sites)
+    assert np.allclose([lat.position(lat.mps2lat_idx(i)) for i in range(n_common)],
+                       [lat_pkl.position(lat_pkl.mps2lat_idx(i)) for i in range(n_common)]), \
+        "the rebuilt lattice doesn't match lattice.pkl"
+    return lat
 
 
 def _LoadLongCorrelationsBlock(results_dir):
     """
         <S_i.S_j> of spin_corr_x.csv (older runs: between the first N sites of the infinite MPS, more columns than
-        lattice.pkl) and the cylinder of its N / (sites per column) columns, with the geometry of the directory name
-        and the circumference and boundary conditions of lattice.pkl.
+        lattice.pkl) and the cylinder of its N / (sites per column) columns, with the geometry, circumference and
+        boundary conditions of lattice.pkl.
     """
     results_dir = Path(results_dir)
     C = np.real_if_close(np.loadtxt(results_dir / "spin_corr_x.csv", dtype=np.complex128), tol=1e6)
-    with open(results_dir / "lattice.pkl", "rb") as f:
-        lat_pkl = pickle.load(f)
-    Ly = lat_pkl.Ls[1]
-    sites_per_column = Ly * len(lat_pkl.unit_cell)
+    lat_pkl = LoadLattice(results_dir)
+    sites_per_column = lat_pkl.N_sites_per_ring
     assert C.shape[0] % sites_per_column == 0, \
         f"{C.shape[0]} correlated sites are not whole columns of {sites_per_column} sites"
-    lat = BuildTriangularLattice(C.shape[0] // sites_per_column, Ly, SpinHalfSite(None), lat_pkl.bc_MPS,
-                                 _LatticeBC(lat_pkl),
-                                 _Geometry(results_dir))
-    # the correlations are between the first sites of the MPS, which are the same sites in both lattices
-    n_common = min(lat.N_sites, lat_pkl.N_sites)
-    assert np.allclose([lat.position(lat.mps2lat_idx(i)) for i in range(n_common)],
-                       [lat_pkl.position(lat_pkl.mps2lat_idx(i)) for i in range(n_common)]), \
-        f"the rebuilt lattice doesn't match lattice.pkl of {results_dir.name}"
-    return C, lat
+    return C, _ColumnsLattice(lat_pkl, C.shape[0] // sites_per_column)
 
 
 def _NearestNeighborBonds(C, lat):
@@ -158,7 +161,7 @@ def _NearestNeighborBonds(C, lat):
         dx = np.asarray(dx)
         for i in range(lat.N_sites):
             x, y, u = lat.mps2lat_idx(i)
-            x_j, y_j = _WrapAroundCylinder(lat, x + dx[0], y + dx[1])
+            x_j, y_j = WrapAroundCylinder(lat, x + dx[0], y + dx[1])
             if u != u1 or not 0 <= x_j < Lx:
                 continue
             j = lat.lat2mps_idx([x_j, y_j, u2])
@@ -166,26 +169,9 @@ def _NearestNeighborBonds(C, lat):
     return bonds
 
 
-def _GutzwillerPsiPath(results_dir, psi_fname="psi_gutzwiller.pkl"):
-    """psi_fname in results_dir, or else in its sibling pklFiles_<results_dir name> (None if in neither)."""
-    results_dir = Path(results_dir)
-    for d in (results_dir, results_dir.parent / f"pklFiles_{results_dir.name}"):
-        if (d / psi_fname).exists():
-            return d / psi_fname
-    return None
-
-
 CORR_ROW_FILE = "spin_corr_row_x.csv"
 ENERGIES_FILE = "energies_vs_J2.txt"
 DEFAULT_ROW_COLUMNS_PER_LY = 4  # columns of the window of CalculateCorrelationRow, in units of Ly
-
-
-def _RowLattice(lat_pkl, geometry, n_columns):
-    """The lattice of the first n_columns columns of the MPS of lattice.pkl (lat_pkl itself if finite)."""
-    if lat_pkl.bc_MPS == "finite":
-        return lat_pkl
-    return BuildTriangularLattice(n_columns, lat_pkl.Ls[1], SpinHalfSite(None), lat_pkl.bc_MPS, _LatticeBC(lat_pkl),
-                                  geometry)
 
 
 def CalculateCorrelationRow(psi, results_dir, n_columns=None):
@@ -197,11 +183,9 @@ def CalculateCorrelationRow(psi, results_dir, n_columns=None):
     """
     from WaveFunctionProperties import CalculateSpinSpinCorrelations
     results_dir = Path(results_dir)
-    with open(results_dir / "lattice.pkl", "rb") as f:
-        lat_pkl = pickle.load(f)
-    if n_columns is None:
-        n_columns = DEFAULT_ROW_COLUMNS_PER_LY * lat_pkl.Ls[1]
-    lat = _RowLattice(lat_pkl, _Geometry(results_dir), n_columns)
+    lat = LoadLattice(results_dir)
+    if not lat.bc_MPS == "finite":
+        lat = _ColumnsLattice(lat, DEFAULT_ROW_COLUMNS_PER_LY * lat.Ls[1] if n_columns is None else n_columns)
     ref = _reference_site_index(lat, lat.N_sites)
     print(f"correlations of site {ref} with the {lat.N_sites} sites of {lat.Ls[0]} columns")
     row = np.real_if_close(CalculateSpinSpinCorrelations(psi, sites1=[ref], sites2=np.arange(lat.N_sites))[0],
@@ -266,6 +250,10 @@ def PlotSignStructureFactor(results_dir, amplitude_cutoff=SIGN_AMPLITUDE_CUTOFF,
         row = C[ref]
         positions = np.array([lat.position(lat.mps2lat_idx(i)) for i in range(lat.N_sites)])
         columns = np.array([lat.mps2lat_idx(i)[0] for i in range(lat.N_sites)])
+    max_edge_columns = min(columns[ref], columns.max() - columns[ref])  # keeping the column of r0
+    if edge_columns > max_edge_columns:
+        print(f"only {columns.max() + 1} columns: excluding {max_edge_columns} edge columns, not {edge_columns}")
+        edge_columns = max_edge_columns
     keep = (columns >= edge_columns) & (columns <= columns.max() - edge_columns)
     assert keep[ref], "the reference site is in the excluded edge columns"
     ref = np.count_nonzero(keep[:ref])
@@ -390,7 +378,7 @@ def PlotBondCorrelationsVsLx(results_dir, save=True):
     for x, r_i, r_j, c in _NearestNeighborBonds(C, lat):
         by_column[(_BondType(r_i, r_j), x)].append(c)
     # columns in which every site has its bond of each type (each site has one bond of each type, counted once)
-    sites_per_column = Ly * len(lat.unit_cell)
+    sites_per_column = lat.N_sites_per_ring
     lxs = np.array([x for x in range(Lx) if all(len(by_column[(name, x)]) == sites_per_column
                                                  for name in JIANG_BOND_TYPES)])
     bond = {name: np.array([np.mean(by_column[(name, x)]) for x in lxs]) for name in JIANG_BOND_TYPES}
@@ -423,18 +411,16 @@ def PlotBondCorrelationsVsLx(results_dir, save=True):
     return fig, lxs, bond
 
 
-def GutzwillerJ1J2Energies(psi, results_dir, J2s=JIANG_J2S, Delz=1.0):
+def J1J2Energies(psi, results_dir, J2s=JIANG_J2S, Delz=1.0):
     """
-        Energy per site of the Gutzwiller MPS psi of results_dir w.r.t. the J1-J2 model (calculateGutzwillerEnergy
-        TriangularJ1J2), for each J2; the geometry (and the helical cylinder) is read from the directory name.
+        Energy per site of the MPS psi (Gutzwiller or DMRG) of results_dir w.r.t. the J1-J2 model
+        (calculateGutzwillerEnergiesJ1J2), for each J2, on the lattice of psi: the columns of psi of the lattice of
+        lattice.pkl (its geometry, helical shift, bc and bc_MPS).
     """
-    name = Path(results_dir).name
-    Lx, Ly = (int(L) for L in re.search(r"Lx_(\d+)_Ly_(\d+)", name).groups())
-    geometry = _Geometry(results_dir)
-    bc_MPS = "finite" if "_finite_" in name else "infinite"
-    bc = tuple(TriangularCylinderBC(bc_MPS, geometry, _Helical(results_dir)))  # as in GutzwillerDMRGOverlaps
-    return np.array([np.real(calculateGutzwillerEnergyTriangularJ1J2(psi, Lx, Ly, bc_MPS, J2, Delz, bc, geometry))
-                     for J2 in J2s])
+    lat_pkl = LoadLattice(results_dir)
+    site = SpinHalfSite(conserve=psi.sites[0].conserve)
+    lat = LatticeOfMPSByRings(psi, lambda Lx: _ColumnsLattice(lat_pkl, Lx, site), lat_pkl.Ls[1])
+    return np.real(calculateGutzwillerEnergiesJ1J2(psi, lat, J2s, Delz))
 
 
 def _Delz(results_dir):
@@ -476,9 +462,8 @@ def PlotSchmidtSpectrum(psi, results_dir, bonds=None, xi_max=20.0, save=True):
         infinite, the central one if finite). Bond i is left of site i. Saves schmidt_spectrum.pdf in results_dir.
     """
     results_dir = Path(results_dir)
-    with open(results_dir / "lattice.pkl", "rb") as f:
-        lat = pickle.load(f)
-    sites_per_column = lat.Ls[1] * len(lat.unit_cell)
+    lat = LoadLattice(results_dir)
+    sites_per_column = lat.N_sites_per_ring
     if bonds is None:
         bonds = (list(range(0, psi.L, sites_per_column)) if not psi.finite else
                  [(psi.L // sites_per_column // 2) * sites_per_column])
@@ -525,7 +510,7 @@ def AnalyzeCaseAsJiang(psi, results_dir, J2s=JIANG_J2S, n_columns=None):
     else:
         print(f"no {list(CORR_FILES.values())} in {results_dir} (spin_components_structure_factor post-process), "
               f"skipping the nearest neighbor correlation plots")
-    energies = GutzwillerJ1J2Energies(psi, results_dir, J2s, _Delz(results_dir))
+    energies = J1J2Energies(psi, results_dir, J2s, _Delz(results_dir))
     SaveEnergiesVsJ2(results_dir, J2s, energies)
     PlotEnergiesVsJ2(results_dir, J2s, energies)
     PlotSchmidtSpectrum(psi, results_dir)

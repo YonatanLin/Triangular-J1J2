@@ -1,31 +1,21 @@
 """
     python OverlapRunner.py <dir1> <dir2> [psi1_filename] [psi2_filename]
 
-    <psi1|psi2> for the MPS pickled in dir1 and dir2. A psi filename "auto" (or omitted) takes the first of
-    PSI_FILENAMES found in the directory. For an infinite MPS the overlap is per unit cell: the dominant eigenvalue eta
-    of the mixed transfer matrix (the overlap of N unit cells is eta^N); also |eta|^(1/L), per site.
+    <psi1|psi2> for the MPS pickled in dir1 and dir2 (or their pklFiles_ siblings, see ResultsIO.FindPsi). A psi
+    filename "auto" (or omitted) takes the DMRG or Gutzwiller MPS found. For an infinite MPS the overlap is per unit
+    cell: the dominant eigenvalue eta of the mixed transfer matrix (the overlap of N unit cells is eta^N); also
+    |eta|^(1/L), per site.
     Written to dir1/overlap_with_<dir2 name>.txt. Sent to the cluster by JobUtilities/SendJobsOverlap.sub.
 """
 import os
 import sys
-import pickle
 import warnings
 
-PSI_FILENAMES = ("psi_gutzwiller.pkl", "psi_gs.pkl")
-
-
-def ResolvePsiFile(results_dir, psi_filename="auto"):
-    if psi_filename != "auto":
-        return os.path.join(results_dir, psi_filename)
-    for fname in PSI_FILENAMES:
-        if os.path.isfile(os.path.join(results_dir, fname)):
-            return os.path.join(results_dir, fname)
-    raise FileNotFoundError(f"none of {PSI_FILENAMES} in {results_dir}")
+from ResultsIO import FindPsi, LoadPath
 
 
 def LoadCanonicalPsi(psi_file):
-    with open(psi_file, "rb") as f:
-        psi = pickle.load(f)
+    psi = LoadPath(psi_file)
     psi.canonical_form()
     return psi
 
@@ -36,7 +26,9 @@ def OverlapOutputFile(dir1, dir2):
 
 def CalculateOverlap(dir1, dir2, psi1_filename="auto", psi2_filename="auto"):
     """ <psi1|psi2> (per unit cell for an infinite MPS), written to OverlapOutputFile(dir1, dir2). Returns it. """
-    psi_files = [ResolvePsiFile(dir1, psi1_filename), ResolvePsiFile(dir2, psi2_filename)]
+    psi_files = [FindPsi(d, None if fname == "auto" else fname)
+                 for d, fname in ((dir1, psi1_filename), (dir2, psi2_filename))]
+    assert None not in psi_files, f"no MPS in {[d for d, f in zip((dir1, dir2), psi_files) if f is None]}"
     psi1, psi2 = (LoadCanonicalPsi(f) for f in psi_files)
     infinite = psi1.bc == "infinite"
     with warnings.catch_warnings():

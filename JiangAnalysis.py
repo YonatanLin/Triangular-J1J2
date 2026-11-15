@@ -179,17 +179,27 @@ def CalculateCorrelationRow(psi, results_dir, n_columns=None):
         <S_r0.S_r> between a reference site r0 (the closest to the center) and all the sites of a window of
         n_columns columns (default DEFAULT_ROW_COLUMNS_PER_LY * Ly; for a finite MPS, all of lattice.pkl), longer
         than the window of lattice.pkl, for the sign Fourier transform of Fig. 5 of Jiang et al. (which only needs
-        the correlations with r0). Saves CORR_ROW_FILE in results_dir: site, x, y, <S_r0.S_r>.
+        the correlations with r0). For a finite MPS the row is that of r0 in spin_corr_x.csv (<S_i.S_j> of all the
+        MPS sites, saved by the run), if there. Saves CORR_ROW_FILE in results_dir: site, x, y, <S_r0.S_r>.
     """
     from WaveFunctionProperties import CalculateSpinSpinCorrelations
     results_dir = Path(results_dir)
     lat = LoadLattice(results_dir)
-    if not lat.bc_MPS == "finite":
+    finite = lat.bc_MPS == "finite"
+    if not finite:
         lat = _ColumnsLattice(lat, DEFAULT_ROW_COLUMNS_PER_LY * lat.Ls[1] if n_columns is None else n_columns)
     ref = _reference_site_index(lat, lat.N_sites)
-    print(f"correlations of site {ref} with the {lat.N_sites} sites of {lat.Ls[0]} columns")
-    row = np.real_if_close(CalculateSpinSpinCorrelations(psi, sites1=[ref], sites2=np.arange(lat.N_sites))[0],
-                           tol=1e6)
+    corr_path = results_dir / "spin_corr_x.csv"
+    if finite and corr_path.exists():
+        print(f"correlations of site {ref} with the {lat.N_sites} sites of {lat.Ls[0]} columns, from {corr_path}")
+        C = np.loadtxt(corr_path, dtype=np.complex128)
+        assert C.shape == (lat.N_sites, lat.N_sites) and lat.N_sites == psi.L, \
+            f"{corr_path} is {C.shape}, not <S_i.S_j> of the {psi.L} sites of the MPS (lattice.pkl: {lat.N_sites})"
+        row = C[ref]
+    else:
+        print(f"correlations of site {ref} with the {lat.N_sites} sites of {lat.Ls[0]} columns")
+        row = CalculateSpinSpinCorrelations(psi, sites1=[ref], sites2=np.arange(lat.N_sites))[0]
+    row = np.real_if_close(row, tol=1e6)
     positions = np.array([lat.position(lat.mps2lat_idx(i)) for i in range(lat.N_sites)])
     np.savetxt(results_dir / CORR_ROW_FILE, np.column_stack([np.arange(lat.N_sites), positions, np.real(row)]),
                header=f"reference_site={ref} n_columns={lat.Ls[0]}; columns: site x y <S_r0.S_r>")

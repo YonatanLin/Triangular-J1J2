@@ -1032,12 +1032,6 @@ def J1J2DMRG(spec, Lx, Ly, bc, bc_MPS, conserve=True, initial_state="Random", J2
     fig_lat, ax_lat = plt.subplots(figsize=(6, 5))
     PlotLattice(lat, ax_lat, additional_couplings_to_plot=nnn_couplings_list)
 
-    for u1, u2, dx in lat.pairs['next_nearest_neighbors']:
-        print(f"u1={u1}, u2={u2}, dx={dx}")
-    fig_lat.savefig(results_dir + "lat.png")
-    exit(1)
-
-
     print_couplings = False
     if print_couplings:
         PrintCouplings(J1J2_model)

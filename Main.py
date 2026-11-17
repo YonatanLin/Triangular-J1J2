@@ -94,9 +94,10 @@ def JastrowTrotterResDirTag(jastrow_trotter_res, prefix, suffix):
     return f"{prefix}{jastrow_trotter_res}{suffix}"
 
 
-def ChangeChiInDMRGParams(dmrg_params, chi_max):
+def ChangeChiInDMRGParams(dmrg_params, chi_max, ramp=True):
+    """ chi_max of the DMRG, reached by the default chi ramp, or from the first sweep if not ramp """
     dmrg_params["trunc_params"]["chi_max"] = chi_max
-    dmrg_params["chi_list"] = {0: 50, 3: 100, 7: chi_max}
+    dmrg_params["chi_list"] = {0: 50, 3: 100, 7: chi_max} if ramp else {0: chi_max}
 
 
 def GutzwillerCaseNameSuffix(norm_magz, monopole_Q, svd_min=None, jastrow_nn_zz=0.0, jastrow_chi_max=None,
@@ -731,8 +732,16 @@ def MixerDisabled(mixer):
     return optional_bool(str(mixer)) is False
 
 
-def J1J2ParamsDirName(bc_MPS, initial_state, conserve, J2, chi, max_sweeps, norm_magz, Delz=1.0, mixer=None):
-    """ the lattice independent part of the J1J2 DMRG case directory name (mixer=None is the default, True) """
+def RampDisabled(ramp):
+    """ ramp is a bool, None (the default, True: the chi ramp of ChangeChiInDMRGParams) or one of them as an input
+        file string """
+    return optional_bool(str(ramp)) is False
+
+
+def J1J2ParamsDirName(bc_MPS, initial_state, conserve, J2, chi, max_sweeps, norm_magz, Delz=1.0, mixer=None,
+                      ramp=None):
+    """ the lattice independent part of the J1J2 DMRG case directory name (mixer=None and ramp=None are the
+        defaults, True) """
     params_dir = f"{bc_MPS}_init_{initial_state}_conserve_{conserve}_J2_{J2}"
     if Delz is not None and abs(float(Delz) - 1.0) > 1e-15:
         params_dir += f"_Delz_{Delz}"
@@ -742,6 +751,8 @@ def J1J2ParamsDirName(bc_MPS, initial_state, conserve, J2, chi, max_sweeps, norm
         params_dir += f"_maxsweeps_{max_sweeps}"
     if MixerDisabled(mixer):
         params_dir += "_mix_0"
+    if RampDisabled(ramp):
+        params_dir += "_ramp_0"
     if float(norm_magz) > 1e-15:
         norm_magz_float = float(norm_magz)
         params_dir += f"_magz_{norm_magz_float:.4f}"
@@ -749,17 +760,17 @@ def J1J2ParamsDirName(bc_MPS, initial_state, conserve, J2, chi, max_sweeps, norm
 
 
 def TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, geometry, chi, max_sweeps, norm_magz,
-                              Delz=1.0, mixer=None):
+                              Delz=1.0, mixer=None, ramp=None):
     geometry_dir = f"Lx_{Lx}_Ly_{Ly}_bc_{BcDirString(bc)}_{geometry}/"
     return geometry_dir, J1J2ParamsDirName(bc_MPS, initial_state, conserve, J2, chi, max_sweeps, norm_magz, Delz,
-                                           mixer)
+                                           mixer, ramp)
 
 
 def KagomeJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, chi, max_sweeps, norm_magz, Delz=1.0,
-                          mixer=None):
+                          mixer=None, ramp=None):
     geometry_dir = f"Kagome_Lx_{Lx}_Ly_{Ly}_bc_{BcDirString(bc)}/"
     return geometry_dir, J1J2ParamsDirName(bc_MPS, initial_state, conserve, J2, chi, max_sweeps, norm_magz, Delz,
-                                           mixer)
+                                           mixer, ramp)
 
 
 def CreateDMRGCaseDir(main_results_dir, geometry_dir, params_dir):
@@ -769,17 +780,17 @@ def CreateDMRGCaseDir(main_results_dir, geometry_dir, params_dir):
 
 
 def CreateTriangularCaseDir(main_results_dir, Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, geometry,
-                            chi_max=None, max_sweeps=None, norm_magz=0.0, Delz=1.0, mixer=None):
+                            chi_max=None, max_sweeps=None, norm_magz=0.0, Delz=1.0, mixer=None, ramp=None):
     return CreateDMRGCaseDir(main_results_dir,
                              *TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, geometry,
-                                                        chi_max, max_sweeps, norm_magz, Delz, mixer))
+                                                        chi_max, max_sweeps, norm_magz, Delz, mixer, ramp))
 
 
 def CreateKagomeCaseDir(main_results_dir, Lx, Ly, bc, bc_MPS, initial_state, conserve, J2,
-                        chi_max=None, max_sweeps=None, norm_magz=0.0, Delz=1.0, mixer=None):
+                        chi_max=None, max_sweeps=None, norm_magz=0.0, Delz=1.0, mixer=None, ramp=None):
     return CreateDMRGCaseDir(main_results_dir,
                              *KagomeJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, chi_max,
-                                                    max_sweeps, norm_magz, Delz, mixer))
+                                                    max_sweeps, norm_magz, Delz, mixer, ramp))
 
 
 def GenerateJ1J2SpinModel(J2, Delz, lat):
@@ -930,7 +941,7 @@ class DMRGLatticeSpec:
         return {}
 
     def case_dir(self, main_results_dir, Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, chi_max, max_sweeps,
-                 norm_magz, Delz, mixer=None):
+                 norm_magz, Delz, mixer=None, ramp=None):
         """ creates the results directory """
         raise NotImplementedError
 
@@ -961,9 +972,9 @@ class TriangularDMRGSpec(DMRGLatticeSpec):
                 "stripe120": lambda lat: GenerateStripeOrderedState(lat, angle=120)}
 
     def case_dir(self, main_results_dir, Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, chi_max, max_sweeps,
-                 norm_magz, Delz, mixer=None):
+                 norm_magz, Delz, mixer=None, ramp=None):
         return CreateTriangularCaseDir(main_results_dir, Lx, Ly, bc, bc_MPS, initial_state, conserve, J2,
-                                       self.geometry, chi_max, max_sweeps, norm_magz, Delz, mixer)
+                                       self.geometry, chi_max, max_sweeps, norm_magz, Delz, mixer, ramp)
 
 
 class KagomeDMRGSpec(DMRGLatticeSpec):
@@ -986,9 +997,9 @@ class KagomeDMRGSpec(DMRGLatticeSpec):
         PlotKagomeBrillouinZone(ax)
 
     def case_dir(self, main_results_dir, Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, chi_max, max_sweeps,
-                 norm_magz, Delz, mixer=None):
+                 norm_magz, Delz, mixer=None, ramp=None):
         return CreateKagomeCaseDir(main_results_dir, Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, chi_max,
-                                   max_sweeps, norm_magz, Delz, mixer)
+                                   max_sweeps, norm_magz, Delz, mixer, ramp)
 
 
 def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, geometry="YC", **kwargs):
@@ -1002,9 +1013,11 @@ def KagomeJ1J2DMRG(Lx, Ly, bc, bc_MPS, **kwargs):
 
 
 def J1J2DMRG(spec, Lx, Ly, bc, bc_MPS, conserve=True, initial_state="Random", J2=0.0,
-             chi_max=None, initial_psi_dir=None, max_sweeps=None, norm_magz=0.0, Delz=1.0, mixer=None):
+             chi_max=None, initial_psi_dir=None, max_sweeps=None, norm_magz=0.0, Delz=1.0, mixer=None, ramp=None):
     """ DMRG of the XXZ J1J2 Heisenberg model (GenerateJ1J2SpinModel) on the lattice of spec, a DMRGLatticeSpec.
-        mixer: the DMRG 'mixer' parameter, None for the default of default_dmrg_params (True) """
+        mixer: the DMRG 'mixer' parameter, None for the default of default_dmrg_params (True)
+        ramp: None / True for the default chi ramp (chi_list of ChangeChiInDMRGParams), False to start at chi_max from
+              the first sweep (an initial state from file always starts at chi_max) """
     if isinstance(bc, str):
         bc_parsed = bc.split("-")
         bc = (bc_parsed[0], bc_parsed[1])
@@ -1012,7 +1025,7 @@ def J1J2DMRG(spec, Lx, Ly, bc, bc_MPS, conserve=True, initial_state="Random", J2
     if local:
         main_results_dir = glob_results_dir + spec.local_results_dir_name
         results_dir = spec.case_dir(main_results_dir, Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, chi_max,
-                                    max_sweeps, norm_magz, Delz, mixer)
+                                    max_sweeps, norm_magz, Delz, mixer, ramp)
     else:
         results_dir = "./"
 
@@ -1046,8 +1059,9 @@ def J1J2DMRG(spec, Lx, Ly, bc, bc_MPS, conserve=True, initial_state="Random", J2
    
     dmrg_params = copy.deepcopy(default_dmrg_params)
 
-    if chi_max is not None:
-        ChangeChiInDMRGParams(dmrg_params, chi_max)
+    if chi_max is not None or RampDisabled(ramp):
+        ChangeChiInDMRGParams(dmrg_params, dmrg_params['trunc_params']['chi_max'] if chi_max is None else chi_max,
+                              ramp=not RampDisabled(ramp))
     chi_max = dmrg_params['trunc_params']['chi_max']
 
     if max_sweeps is not None:
@@ -1162,6 +1176,24 @@ def ComputeCorrelationsFromMPSFile(psi_dir, Lx, Ly, bc, geometry="YC", psi_fname
     fig.savefig(psi_dir + "momentum_space_correlations_local", bbox_inches='tight')
     if local:
             plt.show()
+
+
+def PlotMPSStructureFactor(psi_dir, psi_fname="psi_initial.pkl", fig_fname="correlations_initial.png"):
+    """S(k) of the MPS psi_fname in psi_dir (all-pairs <S_i.S_j> on the lattice.pkl of psi_dir), saved as
+    fig_fname in psi_dir."""
+    psi_dir = os.path.join(psi_dir, "")
+    psi = LoadPsi(psi_dir, psi_fname)
+    lat = LoadLattice(psi_dir)
+    sites = np.arange(lat.N_sites)
+    spin_corr_x = CalculateSpinSpinCorrelations(psi, sites1=sites, sites2=sites)
+    ks, spin_corr_k = ComputeMomentumSpaceStructureFactor(spin_corr_x, lat, assert_realness=True)
+
+    fig, ax = plt.subplots(figsize=(6, 5))
+    ax.set_title(f"Spin Structure Factor ({Path(psi_fname).stem})")
+    plot_structure_factor(ks, spin_corr_k, lat, ax)
+    lat.plot_brillouin_zone(ax)
+    fig.savefig(psi_dir + fig_fname, bbox_inches='tight')
+    return fig
 
 
 def PlotCorrelationsFromFiles(results_dir,
@@ -1634,9 +1666,12 @@ if __name__ == "__main__":
     #AnalyzeMagnetizedJ1J2Correlations(magz1_dir, ns)
     #AnalyzeMagnetizedJ1J2Correlations(magz2_dir, ns)
     #plt.show()
-    KagomeJ1J2DMRG(4, 4, ("open", "periodic"), "finite")
+    #KagomeJ1J2DMRG(4, 4, ("open", "periodic"), "finite")
     
-    PlotStripesStructureFactors(output_dir="./")
+    # PlotStripesStructureFactors(output_dir="./")
+    PlotMPSStructureFactor(project_dir + "ResultsFromCluster/"
+                                         "TriangularJ1J2DMRG_Nov/Lx_12_Ly_6_bc_op_YC/"
+                                         "finite_init_stripe60_conserve_1_J2_0.125_chi_2000_maxsweeps_20_mix_0/")
     exit(0)
     TriangularJ1J2DMRG(8, 4, ("open", "periodic"), "finite", J2=0.1, chi_max=400, max_sweeps=15,
                        Delz=1.5)

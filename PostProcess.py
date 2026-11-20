@@ -14,10 +14,11 @@ SPIN_COMPONENTS_STRUCTURE_FACTOR = "spin_components_structure_factor"
 DIMER_CORRELATIONS = "dimer_correlations"
 JIANG_ANALYSIS = "jiang_analysis"
 KAGOME_GUTZWILLER_ENERGY = "kagome_gutzwiller_energy"
+TRIANGULAR_GUTZWILLER_ENERGY = "triangular_gutzwiller_energy"
 VIRTUAL_PARITY_DIR_NAMES = "virtual_parity_dir_names"  # results_dir is the parent dir of the cases
 SUPPORTED_POST_PROCESS_TYPES = {ENTANGLEMENT_ENTROPY, SPECIAL_POINTS_STRUCTURE_FACTOR, MAGZ,
                                 SPIN_COMPONENTS_STRUCTURE_FACTOR, DIMER_CORRELATIONS, JIANG_ANALYSIS,
-                                KAGOME_GUTZWILLER_ENERGY, VIRTUAL_PARITY_DIR_NAMES}
+                                KAGOME_GUTZWILLER_ENERGY, TRIANGULAR_GUTZWILLER_ENERGY, VIRTUAL_PARITY_DIR_NAMES}
 # run once on the parent dir of the cases (one condor job), not per case
 PARENT_DIR_POST_PROCESS_TYPES = {VIRTUAL_PARITY_DIR_NAMES}
 
@@ -30,7 +31,14 @@ JIANG_ENERGIES_FILE = "energies_vs_J2.txt"  # JiangAnalysis.ENERGIES_FILE (not i
 KAGOME_ENERGIES_FILE = "kagome_energies_vs_J2.txt"
 # not KAGOME_ENERGIES_FILE: in the parent dir, it would be collected as a case
 KAGOME_ENERGIES_COLLECTED_FILE = "kagome_energies_vs_J2_collected.txt"
-J2_FILE = "J2.txt"  # the J2 values of the Kagome energies, as the parameter file of the overlaps runs
+TRIANGULAR_ENERGIES_FILE = "triangular_energies_vs_J2.txt"
+# not TRIANGULAR_ENERGIES_FILE: in the parent dir, it would be collected as a case
+TRIANGULAR_ENERGIES_COLLECTED_FILE = "triangular_energies_vs_J2_collected.txt"
+# the J2 values of the Kagome / triangular Gutzwiller energies, as the parameter file of the overlaps runs
+J2_FILE = "J2.txt"
+# the triangular Gutzwiller case dir names (Main.GutzwillerCaseDirName): bc_MPS, Ly, geometry, helical Ly (YC<Ly>-1)
+TRIANGULAR_GUTZWILLER_CASE_NAME = re.compile(r"(?:(?:Dirac|Z2)_)?(finite|infinite)_Lx_\d+_Ly_(\d+)_chi_\d+_"
+                                             r"flux_[-+0-9.e]+_(YC|XC|YC(\d+)-1)_gsindex_\d+(?:_|$)")
 
 
 def _normalize_results_dir(results_dir):
@@ -265,12 +273,40 @@ def _legacy_kagome_mps_lattice(psi, results_dir):
                                Ly)
 
 
-def CalculateKagomeGutzwillerEnergy(results_dir, J2_file=J2_FILE, Delz=1.0, psi_filename="psi_gutzwiller.pkl"):
+def _legacy_triangular_mps_lattice(psi, results_dir):
     """
-    Energies per site of the Gutzwiller state of the Kagome Gutzwiller case dir results_dir (CreateKagomeGutzwillerInput)
-    w.r.t. the J1J2 model on its lattice (Main.calculateGutzwillerEnergiesJ1J2), for the J2 values of J2_file (see
-    _find_J2_file). The lattice is the one the run saved (ResultsIO.MPS_LATTICE_FILE), or for older runs the one rebuilt
-    by _legacy_kagome_mps_lattice. Saves results_dir/kagome_energies_vs_J2.txt: J2, energy per site.
+    The lattice of the MPS psi of a triangular Gutzwiller run from before the runs saved ResultsIO.MPS_LATTICE_FILE:
+    Main.BuildTriangularLattice (as Gutzwiller.TriangularGutzwillerSpec.spin_lattice) with the bc of
+    Gutzwiller.TriangularCylinderBC. bc_MPS, Ly and the geometry (YC, XC or the helical YC<Ly>-1) are read from the case
+    dir name (Main.GutzwillerCaseDirName), Lx off the MPS length (Main.LatticeOfMPSByRings). A dir name of another
+    format (e.g. a Kagome run) fails here rather than being evaluated on the wrong lattice.
+    """
+    from tenpy.networks.site import SpinHalfSite
+    from Main import BuildTriangularLattice, LatticeOfMPSByRings
+    from Gutzwiller import TriangularCylinderBC
+
+    name = _normalize_results_dir(results_dir).name
+    match = TRIANGULAR_GUTZWILLER_CASE_NAME.match(name)
+    assert match is not None, (f"{name} is not a triangular Gutzwiller case dir name of the runs without a saved MPS "
+                               f"lattice (Main.GutzwillerCaseDirName)")
+    bc_MPS, Ly, geometry, helical_Ly = match.group(1), int(match.group(2)), match.group(3), match.group(4)
+    helical = helical_Ly is not None
+    if helical:
+        assert int(helical_Ly) == Ly, f"helical geometry {geometry} of a Ly = {Ly} case dir name"
+        geometry = "YC"
+    assert psi.bc == bc_MPS, f"MPS bc {psi.bc} != bc_MPS {bc_MPS} of the case dir name"
+    site = SpinHalfSite(conserve="Sz")
+    bc = TriangularCylinderBC(bc_MPS, geometry, helical)
+    return LatticeOfMPSByRings(psi, lambda Lx: BuildTriangularLattice(Lx, Ly, site, bc_MPS, bc=bc, geometry=geometry),
+                               Ly)
+
+
+def _CalculateGutzwillerEnergy(results_dir, legacy_mps_lattice, energies_file, J2_file, Delz, psi_filename):
+    """
+    Energies per site of the Gutzwiller state of results_dir w.r.t. the J1J2 model on its lattice
+    (Main.calculateGutzwillerEnergiesJ1J2), for the J2 values of J2_file (see _find_J2_file). The lattice is the one
+    the run saved (ResultsIO.MPS_LATTICE_FILE), or for older runs legacy_mps_lattice(psi, results_dir). Saves
+    results_dir/energies_file: J2, energy per site.
     """
     from Main import calculateGutzwillerEnergiesJ1J2
 
@@ -282,13 +318,43 @@ def CalculateKagomeGutzwillerEnergy(results_dir, J2_file=J2_FILE, Delz=1.0, psi_
     if FindPkl(results_dir, MPS_LATTICE_FILE) is not None:
         lat = LoadLattice(results_dir, MPS_LATTICE_FILE)
     else:
-        print(f"no {MPS_LATTICE_FILE}, rebuilding the Kagome lattice of the MPS from the case dir name")
-        lat = _legacy_kagome_mps_lattice(psi, results_dir)
+        print(f"no {MPS_LATTICE_FILE}, rebuilding the lattice of the MPS from the case dir name")
+        lat = legacy_mps_lattice(psi, results_dir)
 
     energies = np.real(calculateGutzwillerEnergiesJ1J2(psi, lat, J2s, Delz))
-    np.savetxt(_result_file_path(results_dir, KAGOME_ENERGIES_FILE, assert_exist=False),
+    np.savetxt(_result_file_path(results_dir, energies_file, assert_exist=False),
                np.column_stack([J2s, energies]), header=f"J2 energy_per_site; Delz={Delz}")
     return J2s, energies
+
+
+def _CalculateGutzwillerEnergies(parent_dir, is_case_dir, calculate_energy, post_process_type, collected_file,
+                                 J2_file, Delz, output_path):
+    """calculate_energy(case dir, J2_file, Delz) of every case dir directly under parent_dir with is_case_dir(name)
+    (cases without a Gutzwiller state are skipped), then CollectPostProcessResults into output_path (default
+    parent_dir/collected_file)."""
+    parent_dir = _normalize_results_dir(parent_dir)
+    case_dirs = sorted(p for p in parent_dir.iterdir() if p.is_dir() and is_case_dir(p.name))
+    if not case_dirs:
+        raise FileNotFoundError(f"no {post_process_type} case dirs in {parent_dir}")
+    for case_dir in case_dirs:
+        try:
+            calculate_energy(_with_trailing_slash(case_dir), J2_file, Delz)
+        except AssertionError as error:  # no Gutzwiller state (e.g. a failed run)
+            print(f"skipping {case_dir}: {error}")
+    if output_path is None:
+        output_path = parent_dir / collected_file
+    CollectPostProcessResults(parent_dir, post_process_type, output_path)
+
+
+def CalculateKagomeGutzwillerEnergy(results_dir, J2_file=J2_FILE, Delz=1.0, psi_filename="psi_gutzwiller.pkl"):
+    """
+    Energies per site of the Gutzwiller state of the Kagome Gutzwiller case dir results_dir (CreateKagomeGutzwillerInput)
+    w.r.t. the J1J2 model on its lattice (see _CalculateGutzwillerEnergy), for the J2 values of J2_file. Older runs
+    without a saved MPS lattice use the one rebuilt by _legacy_kagome_mps_lattice. Saves
+    results_dir/kagome_energies_vs_J2.txt: J2, energy per site.
+    """
+    return _CalculateGutzwillerEnergy(results_dir, _legacy_kagome_mps_lattice, KAGOME_ENERGIES_FILE, J2_file, Delz,
+                                      psi_filename)
 
 
 def CalculateKagomeGutzwillerEnergies(parent_dir, J2_file=J2_FILE, Delz=1.0, output_path=None):
@@ -298,18 +364,31 @@ def CalculateKagomeGutzwillerEnergies(parent_dir, J2_file=J2_FILE, Delz=1.0, out
     parent_dir/kagome_energies_vs_J2_collected.txt, see CollectPostProcessResults). J2_file is looked for in each case dir,
     then in parent_dir and the working directory.
     """
-    parent_dir = _normalize_results_dir(parent_dir)
-    case_dirs = sorted(p for p in parent_dir.iterdir() if p.is_dir() and p.name.startswith("Kagome_"))
-    if not case_dirs:
-        raise FileNotFoundError(f"no Kagome_* case dirs in {parent_dir}")
-    for case_dir in case_dirs:
-        try:
-            CalculateKagomeGutzwillerEnergy(_with_trailing_slash(case_dir), J2_file, Delz)
-        except AssertionError as error:  # no Gutzwiller state (e.g. a failed run)
-            print(f"skipping {case_dir}: {error}")
-    if output_path is None:
-        output_path = parent_dir / KAGOME_ENERGIES_COLLECTED_FILE
-    CollectPostProcessResults(parent_dir, KAGOME_GUTZWILLER_ENERGY, output_path)
+    _CalculateGutzwillerEnergies(parent_dir, lambda name: name.startswith("Kagome_"), CalculateKagomeGutzwillerEnergy,
+                                 KAGOME_GUTZWILLER_ENERGY, KAGOME_ENERGIES_COLLECTED_FILE, J2_file, Delz, output_path)
+
+
+def CalculateTriangularGutzwillerEnergy(results_dir, J2_file=J2_FILE, Delz=1.0, psi_filename="psi_gutzwiller.pkl"):
+    """
+    Energies per site of the Gutzwiller state of the triangular Gutzwiller case dir results_dir (CreateGutzwillerInput)
+    w.r.t. the triangular J1J2 model on its lattice (see _CalculateGutzwillerEnergy), for the J2 values of J2_file.
+    Older runs without a saved MPS lattice use the one rebuilt by _legacy_triangular_mps_lattice. Saves
+    results_dir/triangular_energies_vs_J2.txt: J2, energy per site.
+    """
+    return _CalculateGutzwillerEnergy(results_dir, _legacy_triangular_mps_lattice, TRIANGULAR_ENERGIES_FILE, J2_file,
+                                      Delz, psi_filename)
+
+
+def CalculateTriangularGutzwillerEnergies(parent_dir, J2_file=J2_FILE, Delz=1.0, output_path=None):
+    """
+    CalculateTriangularGutzwillerEnergy of every triangular Gutzwiller case dir (named as Main.GutzwillerCaseDirName)
+    directly under parent_dir (cases without a Gutzwiller state are skipped), then collects them into output_path
+    (default parent_dir/triangular_energies_vs_J2_collected.txt, see CollectPostProcessResults). J2_file is looked for
+    in each case dir, then in parent_dir and the working directory.
+    """
+    _CalculateGutzwillerEnergies(parent_dir, lambda name: TRIANGULAR_GUTZWILLER_CASE_NAME.match(name) is not None,
+                                 CalculateTriangularGutzwillerEnergy, TRIANGULAR_GUTZWILLER_ENERGY,
+                                 TRIANGULAR_ENERGIES_COLLECTED_FILE, J2_file, Delz, output_path)
 
 
 def FirstBondParities(psi):
@@ -405,6 +484,7 @@ def CollectPostProcessResults(parent_dir, post_process_type, output_path=None):
       spin_components_structure_factor: special_points_structure_factor_components.txt
       jiang_analysis:                   energies_vs_J2.txt  (dir_index J2 energy_per_site)
       kagome_gutzwiller_energy:         kagome_energies_vs_J2_collected.txt  (dir_index J2 energy_per_site)
+      triangular_gutzwiller_energy:     triangular_energies_vs_J2_collected.txt  (dir_index J2 energy_per_site)
     The case directories are listed, in dir_index order, in <output_path>.dirs.txt.
     """
     if post_process_type == ENTANGLEMENT_ENTROPY:
@@ -413,6 +493,8 @@ def CollectPostProcessResults(parent_dir, post_process_type, output_path=None):
         case_filename, default_output = JIANG_ENERGIES_FILE, "energies_vs_J2.txt"
     elif post_process_type == KAGOME_GUTZWILLER_ENERGY:
         case_filename, default_output = KAGOME_ENERGIES_FILE, KAGOME_ENERGIES_COLLECTED_FILE
+    elif post_process_type == TRIANGULAR_GUTZWILLER_ENERGY:
+        case_filename, default_output = TRIANGULAR_ENERGIES_FILE, TRIANGULAR_ENERGIES_COLLECTED_FILE
     elif post_process_type == SPECIAL_POINTS_STRUCTURE_FACTOR:
         case_filename, default_output = SPECIAL_POINTS_FILE, "special_points_structure_factor.txt"
     elif post_process_type == SPIN_COMPONENTS_STRUCTURE_FACTOR:
@@ -435,7 +517,7 @@ def CollectPostProcessResults(parent_dir, post_process_type, output_path=None):
             rows.append(data[0])
             header = "bond bond_dimension entanglement_entropy energy"
             continue
-        if post_process_type in (JIANG_ANALYSIS, KAGOME_GUTZWILLER_ENERGY):
+        if post_process_type in (JIANG_ANALYSIS, KAGOME_GUTZWILLER_ENERGY, TRIANGULAR_GUTZWILLER_ENERGY):
             rows.extend(np.concatenate([[ind_dir], row]) for row in data)
             header = "dir_index J2 energy_per_site"
             continue
@@ -470,6 +552,8 @@ def PostProcessResults(results_dir, post_process_type):
         CalculateJiangAnalysis(results_dir)
     elif post_process_type == KAGOME_GUTZWILLER_ENERGY:
         CalculateKagomeGutzwillerEnergy(results_dir)
+    elif post_process_type == TRIANGULAR_GUTZWILLER_ENERGY:
+        CalculateTriangularGutzwillerEnergy(results_dir)
     elif post_process_type == VIRTUAL_PARITY_DIR_NAMES:
         AddVirtualParityToDirNames(results_dir)
     else:

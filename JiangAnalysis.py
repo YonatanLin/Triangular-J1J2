@@ -15,7 +15,8 @@ from tenpy.networks.site import SpinHalfSite
 
 from Main import BuildTriangularLattice, calculateGutzwillerEnergiesJ1J2, LatticeOfMPSByRings
 from ResultsIO import LoadLattice
-from WaveFunctionProperties import _reference_site_index, WrapAroundCylinder
+from WaveFunctionProperties import (_reference_site_index, WrapAroundCylinder, HasRemovedSites, LatticeSiteExists,
+                                    CentralColumnCutBond)
 
 KS_FILES = {"xx": "ks_xx.csv", "zz": "ks_zz.csv"}
 CORR_FILES = {"xx": "spin_corr_xx_x.csv", "zz": "spin_corr_zz_x.csv"}
@@ -125,6 +126,8 @@ def _LatticeBC(lat):
 def _ColumnsLattice(lat_pkl, n_columns, site=None):
     """The lattice of the first n_columns columns of the MPS of lattice.pkl: its geometry, circumference, bc and
     MPS order (site default SpinHalfSite(None)). Its sites are the first sites of lat_pkl, which is checked."""
+    if HasRemovedSites(lat_pkl):
+        raise ValueError("can't rebuild the columns of a lattice with removed sites, use lattice.pkl itself")
     lat = BuildTriangularLattice(n_columns, lat_pkl.Ls[1], SpinHalfSite(None) if site is None else site,
                                  lat_pkl.bc_MPS, _LatticeBC(lat_pkl), _LatticeGeometry(lat_pkl))
     n_common = min(lat.N_sites, lat_pkl.N_sites)
@@ -143,6 +146,10 @@ def _LoadLongCorrelationsBlock(results_dir):
     results_dir = Path(results_dir)
     C = np.real_if_close(np.loadtxt(results_dir / "spin_corr_x.csv", dtype=np.complex128), tol=1e6)
     lat_pkl = LoadLattice(results_dir)
+    if HasRemovedSites(lat_pkl):  # finite: spin_corr_x.csv is on all the sites of lattice.pkl
+        assert C.shape == (lat_pkl.N_sites, lat_pkl.N_sites), \
+            f"spin_corr_x.csv is {C.shape}, not on the {lat_pkl.N_sites} sites of lattice.pkl"
+        return C, lat_pkl
     sites_per_column = lat_pkl.N_sites_per_ring
     assert C.shape[0] % sites_per_column == 0, \
         f"{C.shape[0]} correlated sites are not whole columns of {sites_per_column} sites"
@@ -153,7 +160,8 @@ def _NearestNeighborBonds(C, lat):
     """
         The nearest neighbor bonds of lat inside the correlated block (each counted once): a list of
         (column of the first site, r_i, r_j, <S_i.S_j>). r_j is not wrapped around the cylinder, so r_j - r_i is the
-        bond vector. On a helical cylinder the bonds crossing the seam go to the next / previous column.
+        bond vector. On a helical cylinder the bonds crossing the seam go to the next / previous column. Bonds to
+        removed sites (Main.ParseRemovedSites) are skipped.
     """
     Lx, Ly = lat.Ls
     bonds = []
@@ -162,7 +170,7 @@ def _NearestNeighborBonds(C, lat):
         for i in range(lat.N_sites):
             x, y, u = lat.mps2lat_idx(i)
             x_j, y_j = WrapAroundCylinder(lat, x + dx[0], y + dx[1])
-            if u != u1 or not 0 <= x_j < Lx:
+            if u != u1 or not 0 <= x_j < Lx or not LatticeSiteExists(lat, [x_j, y_j, u2]):
                 continue
             j = lat.lat2mps_idx([x_j, y_j, u2])
             bonds.append((x, lat.position([x, y, u1]), lat.position([x + dx[0], y + dx[1], u2]), C[i, j]))
@@ -180,7 +188,7 @@ def CalculateCorrelationRow(psi, results_dir, n_columns=None):
         n_columns columns (default DEFAULT_ROW_COLUMNS_PER_LY * Ly; for a finite MPS, all of lattice.pkl), longer
         than the window of lattice.pkl, for the sign Fourier transform of Fig. 5 of Jiang et al. (which only needs
         the correlations with r0). For a finite MPS the row is that of r0 in spin_corr_x.csv (<S_i.S_j> of all the
-        MPS sites, saved by the run), if there. Saves CORR_ROW_FILE in results_dir: site, x, y, <S_r0.S_r>.
+        MPS sites, saved by the run), if there. Saves CORR_ROW_FILE in results_dir: site, x, y, <S_r0.S_r>, column.
     """
     from WaveFunctionProperties import CalculateSpinSpinCorrelations
     results_dir = Path(results_dir)
@@ -201,8 +209,10 @@ def CalculateCorrelationRow(psi, results_dir, n_columns=None):
         row = CalculateSpinSpinCorrelations(psi, sites1=[ref], sites2=np.arange(lat.N_sites))[0]
     row = np.real_if_close(row, tol=1e6)
     positions = np.array([lat.position(lat.mps2lat_idx(i)) for i in range(lat.N_sites)])
-    np.savetxt(results_dir / CORR_ROW_FILE, np.column_stack([np.arange(lat.N_sites), positions, np.real(row)]),
-               header=f"reference_site={ref} n_columns={lat.Ls[0]}; columns: site x y <S_r0.S_r>")
+    columns = np.array([lat.mps2lat_idx(i)[0] for i in range(lat.N_sites)])  # not site // Ly with removed sites
+    np.savetxt(results_dir / CORR_ROW_FILE,
+               np.column_stack([np.arange(lat.N_sites), positions, np.real(row), columns]),
+               header=f"reference_site={ref} n_columns={lat.Ls[0]}; columns: site x y <S_r0.S_r> column")
     return row, lat, ref
 
 
@@ -221,6 +231,9 @@ def _LoadCorrelationRow(results_dir):
     ref = int(re.search(r"reference_site=(\d+)", header).group(1))
     n_columns = int(re.search(r"n_columns=(\d+)", header).group(1))
     data = np.loadtxt(path, ndmin=2)
+    if data.shape[1] > 4:  # the column of each site is saved
+        return data[:, 3], data[:, 1:3], data[:, 4].astype(int), ref
+    # older files: whole columns of equal length
     assert len(data) % n_columns == 0, f"the {len(data)} sites of {path} aren't {n_columns} whole columns"
     return data[:, 3], data[:, 1:3], data[:, 0].astype(int) // (len(data) // n_columns), ref
 
@@ -387,8 +400,10 @@ def PlotBondCorrelationsVsLx(results_dir, save=True):
     by_column = {(name, x): [] for name in JIANG_BOND_TYPES for x in range(Lx)}
     for x, r_i, r_j, c in _NearestNeighborBonds(C, lat):
         by_column[(_BondType(r_i, r_j), x)].append(c)
-    # columns in which every site has its bond of each type (each site has one bond of each type, counted once)
-    sites_per_column = lat.N_sites_per_ring
+    # columns in which every site has its bond of each type (each site has one bond of each type, counted once); with
+    # removed sites the full column has Ly * (sites per unit cell) sites, and the columns with or next to a removed
+    # site are left out
+    sites_per_column = lat.Ls[1] * len(lat.unit_cell)
     lxs = np.array([x for x in range(Lx) if all(len(by_column[(name, x)]) == sites_per_column
                                                  for name in JIANG_BOND_TYPES)])
     bond = {name: np.array([np.mean(by_column[(name, x)]) for x in lxs]) for name in JIANG_BOND_TYPES}
@@ -428,8 +443,11 @@ def J1J2Energies(psi, results_dir, J2s=JIANG_J2S, Delz=1.0):
         lattice.pkl (its geometry, helical shift, bc and bc_MPS).
     """
     lat_pkl = LoadLattice(results_dir)
-    site = SpinHalfSite(conserve=psi.sites[0].conserve)
-    lat = LatticeOfMPSByRings(psi, lambda Lx: _ColumnsLattice(lat_pkl, Lx, site), lat_pkl.Ls[1])
+    if HasRemovedSites(lat_pkl):  # a finite DMRG run: lattice.pkl is the lattice of the MPS
+        lat = lat_pkl
+    else:
+        site = SpinHalfSite(conserve=psi.sites[0].conserve)
+        lat = LatticeOfMPSByRings(psi, lambda Lx: _ColumnsLattice(lat_pkl, Lx, site), lat_pkl.Ls[1])
     return np.real(calculateGutzwillerEnergiesJ1J2(psi, lat, J2s, Delz))
 
 
@@ -473,8 +491,10 @@ def PlotSchmidtSpectrum(psi, results_dir, bonds=None, xi_max=20.0, save=True):
     """
     results_dir = Path(results_dir)
     lat = LoadLattice(results_dir)
-    sites_per_column = lat.N_sites_per_ring
-    if bonds is None:
+    if bonds is None and HasRemovedSites(lat):  # finite, columns of different lengths
+        bonds = [CentralColumnCutBond(lat)]
+    elif bonds is None:
+        sites_per_column = lat.N_sites_per_ring
         bonds = (list(range(0, psi.L, sites_per_column)) if not psi.finite else
                  [(psi.L // sites_per_column // 2) * sites_per_column])
     # entanglement_spectrum lists only the nontrivial bonds (all for infinite, 1 .. L-1 for finite)

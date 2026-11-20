@@ -13,6 +13,7 @@ import numpy as np
 from numpy import sin, cos, sqrt, pi
 from tenpy.models.model import CouplingModel, CouplingMPOModel
 from tenpy.networks.mps import MPS
+from tenpy.models.lattice import IrregularLattice
 import tenpy.linalg.np_conserved as npc
 import tenpy.models
 from tenpy.algorithms import dmrg
@@ -31,7 +32,8 @@ from ClusterInputConfigurations import optional_bool, parse_bool
 from ResultsIO import LoadLattice, LoadPsi, MPS_LATTICE_FILE
 from WaveFunctionProperties import (plot_scalar_spin_chirality, compute_structure_factor_grid,
                                     plot_structure_factor, structure_factor, ComputeMomentumSpaceStructureFactor,
-                                    CalculateSpinSpinCorrelations, SpinComponentsOutput, SaveSpinComponentsOutput)
+                                    CalculateSpinSpinCorrelations, SpinComponentsOutput, SaveSpinComponentsOutput,
+                                    HasRemovedSites, LatticeSiteExists)
 
 setup_logging(to_stdout="INFO")
 if not local:
@@ -613,8 +615,50 @@ class TriangularXC(tenpy.models.lattice.Lattice):
         tenpy.models.lattice.Lattice.__init__(self, [Lx, Ly], sites, **kwargs)
 
 
+REMOVE_SITES_EDGES = "edges"
+
+
+def RemovedSitesDisabled(remove_sites):
+    """ remove_sites is None or "None" (as an input file string): no sites removed """
+    return remove_sites is None or str(remove_sites) == "None"
+
+
+def ParseRemovedSites(remove_sites, Lx, Ly, geometry):
+    """
+        The lattice indices (x, y, u) of the sites removed from the finite cylinder (None if none):
+          None / "None": no sites removed
+          "edges": one site on each open edge, (0, 0, 0) and (Lx - 1, Ly - 1, 0), which the inversion
+                   (x, y) -> (Lx - 1 - x, Ly - 1 - y) through the center of the cylinder exchanges. On a YC cylinder of
+                   even Ly this gives the odd sector (an odd number of bonds cut by a cut between columns), as in
+                   Fig. 2(b) of Hu et al., PRB 92, 140403(R) (2015).
+    """
+    if RemovedSitesDisabled(remove_sites):
+        return None
+    if remove_sites != REMOVE_SITES_EDGES:
+        raise ValueError(f"unrecognized remove_sites {remove_sites}, expected None or '{REMOVE_SITES_EDGES}'")
+    if geometry != "YC":
+        raise ValueError(f"remove_sites='{REMOVE_SITES_EDGES}' is implemented only for the YC geometry, not {geometry}")
+    if int(Lx) < 2:
+        raise ValueError(f"remove_sites='{REMOVE_SITES_EDGES}' needs two edge columns, Lx = {Lx}")
+    return [[0, 0, 0], [int(Lx) - 1, int(Ly) - 1, 0]]
+
+
 def BuildTriangularLattice(Lx, Ly, site, bc_MPS, bc = ('periodic', 'periodic'), geometry="YC",
-                           spinfull_fermions=False):
+                           spinfull_fermions=False, remove_sites=None):
+    """ the triangular lattice of geometry (YC / XC); remove_sites (see ParseRemovedSites) removes sites of a finite
+        cylinder, making it a tenpy IrregularLattice """
+    removed = ParseRemovedSites(remove_sites, Lx, Ly, geometry)
+    lat = _BuildRegularTriangularLattice(Lx, Ly, site, bc_MPS, bc, geometry, spinfull_fermions)
+    if removed is None:
+        return lat
+    if spinfull_fermions:
+        raise ValueError("removing sites is implemented only for the spin lattice")
+    if bc_MPS != "finite" or bc[0] != "open":
+        raise ValueError(f"removing sites needs a finite MPS on a lattice open along x, got bc_MPS={bc_MPS}, bc={bc}")
+    return IrregularLattice(lat, remove=removed)
+
+
+def _BuildRegularTriangularLattice(Lx, Ly, site, bc_MPS, bc, geometry, spinfull_fermions):
     if geometry == "YC":
         basis = [[1.0, 0.0], [0.5, sqrt(3) / 2.]]
 
@@ -708,6 +752,8 @@ def GetLatticeInitialState(initial_state, lat, initial_psi_dir, abs_magz, ordere
 
     elif initialStateFromFile(initial_state):
         psi = LoadPsi(initial_psi_dir, 'psi_gs.pkl')
+        # e.g. a continuation of a run with removed sites (Main.ParseRemovedSites) on the full lattice
+        assert psi.L == N_sites, f"MPS of {initial_psi_dir} has {psi.L} sites, the lattice {N_sites}"
         #psi.canonical_form()
 
     else:
@@ -759,9 +805,18 @@ def J1J2ParamsDirName(bc_MPS, initial_state, conserve, J2, chi, max_sweeps, norm
     return params_dir + "/"
 
 
+def TriangularGeometryDirName(Lx, Ly, bc, geometry, remove_sites=None):
+    """ Lx_<Lx>_Ly_<Ly>_bc_<bc>_<geometry>/, with _rm_<remove_sites> before the / if sites are removed (see
+        ParseRemovedSites, which validates remove_sites here, before any job is sent) """
+    name = f"Lx_{Lx}_Ly_{Ly}_bc_{BcDirString(bc)}_{geometry}"
+    if ParseRemovedSites(remove_sites, Lx, Ly, geometry) is not None:
+        name += f"_rm_{remove_sites}"
+    return name + "/"
+
+
 def TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, geometry, chi, max_sweeps, norm_magz,
-                              Delz=1.0, mixer=None, ramp=None):
-    geometry_dir = f"Lx_{Lx}_Ly_{Ly}_bc_{BcDirString(bc)}_{geometry}/"
+                              Delz=1.0, mixer=None, ramp=None, remove_sites=None):
+    geometry_dir = TriangularGeometryDirName(Lx, Ly, bc, geometry, remove_sites)
     return geometry_dir, J1J2ParamsDirName(bc_MPS, initial_state, conserve, J2, chi, max_sweeps, norm_magz, Delz,
                                            mixer, ramp)
 
@@ -780,10 +835,12 @@ def CreateDMRGCaseDir(main_results_dir, geometry_dir, params_dir):
 
 
 def CreateTriangularCaseDir(main_results_dir, Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, geometry,
-                            chi_max=None, max_sweeps=None, norm_magz=0.0, Delz=1.0, mixer=None, ramp=None):
+                            chi_max=None, max_sweeps=None, norm_magz=0.0, Delz=1.0, mixer=None, ramp=None,
+                            remove_sites=None):
     return CreateDMRGCaseDir(main_results_dir,
                              *TriangularJ1J2CaseDirName(Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, geometry,
-                                                        chi_max, max_sweeps, norm_magz, Delz, mixer, ramp))
+                                                        chi_max, max_sweeps, norm_magz, Delz, mixer, ramp,
+                                                        remove_sites))
 
 
 def CreateKagomeCaseDir(main_results_dir, Lx, Ly, bc, bc_MPS, initial_state, conserve, J2,
@@ -949,12 +1006,15 @@ class DMRGLatticeSpec:
 class TriangularDMRGSpec(DMRGLatticeSpec):
     local_results_dir_name = "LocalJ1J2TriangularDMRGResults/"
 
-    def __init__(self, geometry):
+    def __init__(self, geometry, remove_sites=None):
+        """ remove_sites: see ParseRemovedSites """
         assert (geometry == "XC" or geometry == "YC")
         self.geometry = geometry
+        self.remove_sites = None if RemovedSitesDisabled(remove_sites) else remove_sites
 
     def lattice(self, site, Lx, Ly, bc_MPS, bc):
-        return BuildTriangularLattice(Lx, Ly, site, bc_MPS, bc=bc, geometry=self.geometry)
+        return BuildTriangularLattice(Lx, Ly, site, bc_MPS, bc=bc, geometry=self.geometry,
+                                      remove_sites=self.remove_sites)
 
     def Lx_correlations(self, Lx, Ly):
         return LxInfiniteMPSCorrelations(Lx, Ly, self.geometry)
@@ -974,7 +1034,8 @@ class TriangularDMRGSpec(DMRGLatticeSpec):
     def case_dir(self, main_results_dir, Lx, Ly, bc, bc_MPS, initial_state, conserve, J2, chi_max, max_sweeps,
                  norm_magz, Delz, mixer=None, ramp=None):
         return CreateTriangularCaseDir(main_results_dir, Lx, Ly, bc, bc_MPS, initial_state, conserve, J2,
-                                       self.geometry, chi_max, max_sweeps, norm_magz, Delz, mixer, ramp)
+                                       self.geometry, chi_max, max_sweeps, norm_magz, Delz, mixer, ramp,
+                                       self.remove_sites)
 
 
 class KagomeDMRGSpec(DMRGLatticeSpec):
@@ -1002,9 +1063,10 @@ class KagomeDMRGSpec(DMRGLatticeSpec):
                                    max_sweeps, norm_magz, Delz, mixer, ramp)
 
 
-def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, geometry="YC", **kwargs):
-    """ J1J2DMRG on the triangular lattice of geometry (YC / XC) """
-    J1J2DMRG(TriangularDMRGSpec(geometry), Lx, Ly, bc, bc_MPS, **kwargs)
+def TriangularJ1J2DMRG(Lx, Ly, bc, bc_MPS, geometry="YC", remove_sites=None, **kwargs):
+    """ J1J2DMRG on the triangular lattice of geometry (YC / XC), with the sites of remove_sites removed (see
+        ParseRemovedSites; finite MPS only) """
+    J1J2DMRG(TriangularDMRGSpec(geometry, remove_sites), Lx, Ly, bc, bc_MPS, **kwargs)
 
 
 def KagomeJ1J2DMRG(Lx, Ly, bc, bc_MPS, **kwargs):
@@ -1037,8 +1099,10 @@ def J1J2DMRG(spec, Lx, Ly, bc, bc_MPS, conserve=True, initial_state="Random", J2
     lat = spec.lattice(site, Lx, Ly, bc_MPS, bc)
 
     abs_magz = AbsMagzFromNormMagz(norm_magz, lat.N_sites)
-    center_site_mps_index = lat.lat2mps_idx([Lx // 2, Ly // 2, 0])
-    print("center site mps index: ", center_site_mps_index)
+    if LatticeSiteExists(lat, [Lx // 2, Ly // 2, 0]):
+        print("center site mps index: ", lat.lat2mps_idx([Lx // 2, Ly // 2, 0]))
+    if HasRemovedSites(lat):
+        print(f"removed sites (x, y, u): {lat.remove.tolist()}, {lat.N_sites} sites left")
 
     J1J2_model, nnn_couplings_list = GenerateJ1J2SpinModel(J2, Delz, lat)
 
@@ -1654,6 +1718,11 @@ def AnalyzeMagnetizedJ1J2Correlations(results_dir, n_sites_cases, postprocess_di
     fig.tight_layout()
     plt.legend()
 
+def checkFiniteDMRGParity():
+    path = project_dir + ("/ResultsFromCluster/TriangularJ1J2DMRG_Nov/17_11/Lx_12_Ly_6_bc_op_YC/"
+                          "finite_init_stripe60_conserve_1_J2_0.125_chi_3000_maxsweeps_20_mix_0_ramp_0/")
+    psi = LoadPsi(path)
+    print("Here")
 
 
 if __name__ == "__main__":
@@ -1667,7 +1736,7 @@ if __name__ == "__main__":
     #AnalyzeMagnetizedJ1J2Correlations(magz2_dir, ns)
     #plt.show()
     #KagomeJ1J2DMRG(4, 4, ("open", "periodic"), "finite")
-    
+    checkFiniteDMRGParity()
     # PlotStripesStructureFactors(output_dir="./")
     PlotMPSStructureFactor(project_dir + "ResultsFromCluster/"
                                          "TriangularJ1J2DMRG_Nov/Lx_12_Ly_6_bc_op_YC/"

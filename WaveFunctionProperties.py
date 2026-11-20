@@ -3,6 +3,38 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Polygon
 from matplotlib.collections import PatchCollection
 from numpy import pi
+from tenpy.models.lattice import IrregularLattice
+
+
+# ----------------------------------------------------------------------
+# Lattices with removed sites (tenpy IrregularLattice, see Main.ParseRemovedSites)
+# ----------------------------------------------------------------------
+def HasRemovedSites(lat):
+    """ whether lat is a tenpy IrregularLattice with removed sites: then N_sites < prod(Ls) * len(unit_cell),
+        N_sites_per_ring is None, and lat2mps_idx of a removed site is IrregularLattice._REMOVED (no error) """
+    return isinstance(lat, IrregularLattice) and lat.remove is not None and len(lat.remove) > 0
+
+
+def LatticeSiteExists(lat, lat_idx):
+    """ whether the lattice index (x, y, u) (inside the lattice) is a site of lat, i.e. not removed """
+    return not HasRemovedSites(lat) or int(lat.lat2mps_idx(lat_idx)) != IrregularLattice._REMOVED
+
+
+def ColumnCutBonds(lat):
+    """
+        The MPS sites i after which a column (x) of lat ends, for all columns but the last: cutting between i and i + 1
+        cuts the cylinder between two columns. Works with removed sites. In the bond convention of tenpy
+        (S[b], entanglement_entropy(bonds=[b]), chi[b]: bond b is left of site b) the cuts are the bonds i + 1.
+    """
+    columns = np.array([lat.mps2lat_idx(i)[0] for i in range(lat.N_sites)])
+    assert np.all(np.diff(columns) >= 0), "the columns of the lattice are not contiguous in its MPS order"
+    return np.flatnonzero(np.diff(columns) > 0)
+
+
+def CentralColumnCutBond(lat):
+    """ the tenpy bond (left of its site) between the columns Lx // 2 - 1 and Lx // 2 of the finite lattice lat """
+    return int(ColumnCutBonds(lat)[lat.Ls[0] // 2 - 1]) + 1
+
 
 # ----------------------------------------------------------------------
 # 1) Scalar chirality of a single triangle, <S_i . (S_j x S_k)>
@@ -121,7 +153,7 @@ def triangular_plaquettes(lattice, u=0):
             return False
         if open_y and not (0 <= cy < Ly):
             return False
-        return True
+        return LatticeSiteExists(lattice, [cx, cy, u])
 
     def site_index(cx, cy):
         cx, cy = WrapAroundCylinder(lattice, cx, cy)
@@ -231,7 +263,7 @@ def plot_chirality_map(plaquettes, ax=None, cmap='RdBu_r', vmax=None,
     if show_lattice and lattice is not None:
         Lx, Ly = lattice.Ls
         pts = np.array([lattice.position(np.array([x, y, 0]))
-                         for x in range(Lx) for y in range(Ly)])
+                         for x in range(Lx) for y in range(Ly) if LatticeSiteExists(lattice, [x, y, 0])])
         ax.scatter(pts[:, 0], pts[:, 1], s=15, color='k', zorder=3)
 
     all_corners = np.concatenate([p['corners'] for p in plaquettes], axis=0)

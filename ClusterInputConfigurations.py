@@ -55,13 +55,16 @@ dmrg_input_params = [
     ("initial_psi_dir", str),
     ("Delz", optional_float),
     ("mixer", optional_bool, None),  # None: DMRG with the mixer (default_dmrg_params)
-    ("ramp", optional_bool, None)]  # None: the default chi ramp; False (0): start at chi_max right away
+    ("ramp", optional_bool, None),  # None: the default chi ramp; False (0): start at chi_max right away
+    ("remove_sites", optional_str, None)]  # None: the full cylinder; edges: one site removed on each open edge
+                                           # (the odd sector, see Main.ParseRemovedSites)
 
 dmrg_params_excluded_from_dirname = ["initial_psi_dir"]
 
-# the Kagome DMRG run has the triangular parameters without the triangular geometry and the chi ramp switch (the
-# Kagome runs keep the default ramp), in the same order
-kagome_dmrg_input_params = [param for param in dmrg_input_params if param[0] not in ("geometry", "ramp")]
+# the Kagome DMRG run has the triangular parameters without the triangular geometry, the chi ramp switch (the
+# Kagome runs keep the default ramp) and the site removal, in the same order
+kagome_dmrg_input_params = [param for param in dmrg_input_params
+                            if param[0] not in ("geometry", "ramp", "remove_sites")]
 
 postprocess_input_params = [
     ("results_dir", str),

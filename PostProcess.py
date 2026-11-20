@@ -62,8 +62,17 @@ def CalculateCentralBondEntanglementEntropy(results_dir, psi_filename="psi_gs.pk
     psi = LoadPsi(results_dir, psi_filename)
 
     E_gs = _load_last_energy(results_dir)
-    # TODO: is this the central bond always?
+    # tenpy bond b (entanglement_entropy(bonds=[b]), chi[b]) is between sites b - 1 and b. For a finite MPS with its
+    # lattice the central bond is the cut between the columns Lx // 2 - 1 and Lx // 2 (also with removed sites, see
+    # Main.ParseRemovedSites); before, it was psi.L // 2 - 1, one site inside the column left of that cut
     central_bond = psi.L // 2 - 1
+    if psi.finite and FindPkl(results_dir, LATTICE_FILE):
+        from WaveFunctionProperties import HasRemovedSites, CentralColumnCutBond
+        lattice = LoadLattice(results_dir)
+        if lattice.N_sites == psi.L:
+            central_bond = CentralColumnCutBond(lattice)
+        else:
+            assert not HasRemovedSites(lattice), f"lattice.pkl has {lattice.N_sites} sites, the MPS {psi.L}"
     entanglement_entropy = psi.entanglement_entropy(bonds=[central_bond])[0]
     bond_dimension = psi.chi[central_bond]
     print(f"central bond: {central_bond}")
@@ -87,10 +96,18 @@ def PlotEntanglementProfileAndFitCentralCharge(psi, results_dir):
     assert(psi.finite)
     S = np.asarray(psi.entanglement_entropy())  # bond i is between sites i and i + 1
     bonds = np.arange(len(S))
-    sites_per_column = LoadLattice(results_dir).N_sites_per_ring if FindPkl(results_dir, LATTICE_FILE) else 1
-    n_columns = psi.L // sites_per_column
-    column_bonds = np.arange(1, n_columns) * sites_per_column - 1  # bond after the last site of each column
-    x = (column_bonds + 1) // sites_per_column
+    lattice = LoadLattice(results_dir) if FindPkl(results_dir, LATTICE_FILE) else None
+    from WaveFunctionProperties import HasRemovedSites, ColumnCutBonds
+    if lattice is not None and HasRemovedSites(lattice):  # columns of different lengths
+        assert lattice.N_sites == psi.L, f"lattice.pkl has {lattice.N_sites} sites, the MPS {psi.L}"
+        column_bonds = ColumnCutBonds(lattice)  # bond after the last site of each column
+        n_columns = len(column_bonds) + 1
+        sites_per_column = None  # columns of different lengths (in the header of EE_profile.txt)
+    else:
+        sites_per_column = lattice.N_sites_per_ring if lattice is not None else 1
+        n_columns = psi.L // sites_per_column
+        column_bonds = np.arange(1, n_columns) * sites_per_column - 1  # bond after the last site of each column
+    x = np.arange(1, n_columns)  # the number of columns left of each column bond
     chord = np.log((2 * n_columns / np.pi) * np.sin(np.pi * x / n_columns))
     fit = (x >= n_columns / 4) & (x <= 3 * n_columns / 4)
     if np.count_nonzero(fit) % 2:  # equally many even and odd x, an unbalanced window biases c by a few percent

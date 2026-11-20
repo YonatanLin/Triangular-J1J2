@@ -8,7 +8,8 @@ import os
 
 def AddTriangularCaseDirsToCondorCases(main_results_dir, condor_cases_file="condor_cases.txt", chi_input=None,
         max_sweeps_input=None):
-    geometry_re = re.compile(r"^Lx_(.+)_Ly_(.+)_bc_([op]{2})_(.+)$")
+    # Main.TriangularGeometryDirName: _rm_<remove_sites> after the geometry if sites are removed
+    geometry_re = re.compile(r"^Lx_(.+)_Ly_(.+)_bc_([op]{2})_(YC|XC)(?:_rm_(.+))?$")
     params_re = re.compile(r"^(.+)_init_(.+)_conserve_(.+)_J2_([^_]+)(?:_Delz_([^_]+))?_chi_(.+)_maxsweeps_([^_]+)"
                            r"(_mix_0)?(_ramp_0)?(?:_magz_([^_]+))?(?:_.*)?$")
 
@@ -21,7 +22,7 @@ def AddTriangularCaseDirsToCondorCases(main_results_dir, condor_cases_file="cond
             #print(geometry_match)
             if geometry_match is None:
                 continue
-            Lx, Ly, bc_short, geometry = geometry_match.groups()
+            Lx, Ly, bc_short, geometry, remove_sites = geometry_match.groups()
             bc = "-".join("periodic" if ax == "p" else "open" for ax in bc_short)
             for params_dir in sorted(geometry_dir.iterdir()):
                 if not params_dir.is_dir():
@@ -73,6 +74,7 @@ def AddTriangularCaseDirsToCondorCases(main_results_dir, condor_cases_file="cond
                     "Delz": Delz,
                     "mixer": mixer,
                     "ramp": ramp,
+                    "remove_sites": remove_sites,
                 }
                 input_for_condor.write(" ".join(str(row[field[0]]) for field in dmrg_input_params) + f" {cont_folder}\n")
 

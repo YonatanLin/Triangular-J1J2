@@ -30,7 +30,7 @@ from Main import (AbsMagzFromNormMagz, BuildTriangularLattice, TriangularXC, LxI
                   calculateStructureFactorAtSpecialPoints, getTriangularLatticeSpecielBzPoints, KagomeSpecialBzPoints,
                   BuildKagomeLattice, PlotKagomeBrillouinZone, glob_results_dir, code_dir, meetings_dir,
                   model_type_dirac, model_type_Z2, pauli_x, pauli_y, pauli_z, ResolveJastrowTrotterRes,
-                  ResolveVirtualParity)
+                  ResolveVirtualParity, RemovedSitesDisabled)
 
 svd_min_slater_default = 5e-7
 jastrow_default_total_trunc = 1.e-5
@@ -536,7 +536,9 @@ class MonopoleCondensatePiFluxModel(MeanFieldSpinonModel):
         self.init_MPO = init_MPO
         lat = self.lat
         bc = lat.boundary_conditions
-        dphi = monopole_Q * 2 * pi / (lat.N_sites / len(lat.unit_cell_positions))
+        # the flux per unit cell of the Lx x Ly cylinder (not N_sites / unit cell size, which is smaller with removed
+        # sites, see Main.ParseRemovedSites, while the flux per plaquette of the remaining ones stays the same)
+        dphi = monopole_Q * 2 * pi / np.prod(lat.Ls)
         geometry = "XC" if isinstance(lat, TriangularXC) else "YC"
         YC = (geometry == "YC")
         if particle_hole:
@@ -890,7 +892,8 @@ def TriangularCylinderBC(bc_MPS, geometry, helical=False):
     return bc
 
 
-def GetPiFluxTriangularLattice(site, Lx, Ly, spinfull, bc_MPS, geometry, helical=False):
+def GetPiFluxTriangularLattice(site, Lx, Ly, spinfull, bc_MPS, geometry, helical=False, remove_sites=None):
+    """ remove_sites: see Main.ParseRemovedSites (for spinfull fermions both flavors of a spin site are removed) """
 
     bc = TriangularCylinderBC(bc_MPS, geometry, helical)
 
@@ -903,7 +906,7 @@ def GetPiFluxTriangularLattice(site, Lx, Ly, spinfull, bc_MPS, geometry, helical
                     nearest_neighbors += [[i, i, dx]]
 
     return BuildTriangularLattice(Lx, Ly, site, bc_MPS, bc=bc, geometry=geometry,
-                                  spinfull_fermions=spinfull)
+                                  spinfull_fermions=spinfull, remove_sites=remove_sites)
 
 
 def GetPiFluxKagomeLattice(site, Lx, Ly, spinfull, bc_MPS, bc=None):
@@ -1106,6 +1109,7 @@ class GutzwillerLatticeSpec:
         MPS gives the MPS ordering of the spin lattice.
     """
     model_type = None
+    remove_sites = None  # sites removed from the finite cylinder (Main.ParseRemovedSites), finite MPS only
     results_dir_name = None # directory of the local results
     # n_repeat of plot_structure_factor: number of S(k) periods drawn on each side of the central one
     structure_factor_n_repeat = 0
@@ -1155,25 +1159,30 @@ class GutzwillerLatticeSpec:
 class TriangularGutzwillerSpec(GutzwillerLatticeSpec):
     results_dir_name = "MonopoleCondensateGutzwiller/"
 
-    def __init__(self, geometry, model_type, z2_bond_sign=1, helical=False):
-        """ helical: the helical YC cylinder YCLy-1, see helical_bc_shift """
+    def __init__(self, geometry, model_type, z2_bond_sign=1, helical=False, remove_sites=None):
+        """ helical: the helical YC cylinder YCLy-1, see helical_bc_shift
+            remove_sites: the spin sites removed from the finite cylinder (Main.ParseRemovedSites), the fermion lattice
+                          without both flavors of each """
         assert (geometry == "XC" or geometry == "YC")
         assert not helical or geometry == "YC", "the helical cylinder is implemented for YC only"
         self.geometry = geometry
         self.model_type = model_type
         self.z2_bond_sign = z2_bond_sign
         self.helical = helical
+        self.remove_sites = None if RemovedSitesDisabled(remove_sites) else remove_sites
 
     def fermion_lattice(self, site, Lx, Ly, spinfull, bc_MPS, bc=None):
         if bc is None:
-            return GetPiFluxTriangularLattice(site, Lx, Ly, spinfull, bc_MPS, self.geometry, self.helical)
-        return BuildTriangularLattice(Lx, Ly, site, bc_MPS, bc, self.geometry, spinfull)
+            return GetPiFluxTriangularLattice(site, Lx, Ly, spinfull, bc_MPS, self.geometry, self.helical,
+                                              self.remove_sites)
+        return BuildTriangularLattice(Lx, Ly, site, bc_MPS, bc, self.geometry, spinfull, self.remove_sites)
 
     def infinite_bc(self):
         return tuple(TriangularCylinderBC("infinite", self.geometry, self.helical))
 
     def spin_lattice(self, spin_site, Lx, Ly, bc_MPS, bc):
-        return BuildTriangularLattice(Lx, Ly, spin_site, bc_MPS, bc=bc, geometry=self.geometry)
+        return BuildTriangularLattice(Lx, Ly, spin_site, bc_MPS, bc=bc, geometry=self.geometry,
+                                      remove_sites=self.remove_sites)
 
     def mean_field_params(self, flux, monopole_Q, particle_hole):
         assert not self.helical or monopole_Q == 0, "monopole flux is not implemented for the helical cylinder"
@@ -1215,7 +1224,8 @@ class TriangularGutzwillerSpec(GutzwillerLatticeSpec):
         z2_bond_sign = self.z2_bond_sign if self.model_type == model_type_Z2 else None
         return CreateGutzwillerCaseDir(main_results_dir, Lx, Ly, chi_max, flux, self.geometry, bc_MPS,
                                        gs_manifold_index, self.model_type, norm_magz, monopole_Q,
-                                       z2_bond_sign=z2_bond_sign, helical=self.helical, **suffix_kwargs)
+                                       z2_bond_sign=z2_bond_sign, helical=self.helical,
+                                       remove_sites=self.remove_sites, **suffix_kwargs)
 
 
 class KagomeGutzwillerSpec(GutzwillerLatticeSpec):
@@ -1281,6 +1291,8 @@ def GetFluxSlaterMPS(spec, Lx, Ly, spinfull, site, slater_trunc_par, bc_MPS, gs_
     C = None
     finite = (bc_MPS == "finite")
     finite_bc_MPS = "finite"
+    # the iMPS is built from finite chains (lat_short, lat_long below), which must not have the edge sites removed
+    assert finite or spec.remove_sites is None, "removing sites is only supported for a finite MPS"
 
     model_params = spec.mean_field_params(flux, monopole_Q, particle_hole)
 
@@ -1679,14 +1691,16 @@ def XYJastrowTrotterSteps(v, trotter_res):
 
 
 def SpinonTriangularLatticeMeanFieldGutzwillerProjection(Ly, geometry, bc_MPS, gs_manifold_index, model_type,
-                                                         z2_bond_sign=1, helical=False, **kwargs):
+                                                         z2_bond_sign=1, helical=False, remove_sites=None, **kwargs):
     """
         SpinonMeanFieldGutzwillerProjection of the triangular lattice ansatz of model_type.
         z2_bond_sign: sign of the bond amplitudes relative to mu, zeta in the Z2 ansatz (see Z2MeanFieldModel).
         helical: the helical YC cylinder YCLy-1 (see helical_bc_shift), YC only, without monopole flux.
+        remove_sites: spin sites removed from the finite cylinder (Main.ParseRemovedSites; "edges": the odd sector),
+                      the mean field ansatz on the fermion lattice without both flavors of each.
     """
-    SpinonMeanFieldGutzwillerProjection(TriangularGutzwillerSpec(geometry, model_type, z2_bond_sign, helical), Ly,
-                                        bc_MPS, gs_manifold_index, **kwargs)
+    spec = TriangularGutzwillerSpec(geometry, model_type, z2_bond_sign, helical, remove_sites)
+    SpinonMeanFieldGutzwillerProjection(spec, Ly, bc_MPS, gs_manifold_index, **kwargs)
 
 
 def SpinonKagomeMeanFieldGutzwillerProjection(Ly, bc_MPS, gs_manifold_index, **kwargs):

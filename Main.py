@@ -140,12 +140,16 @@ def _VirtualParityForDirName(virtual_parity, bc_MPS):
 def GutzwillerCaseDirName(main_results_dir, Lx, Ly, chi_max, flux, geometry, bc_MPS,
                           gs_manifold_index, model_type, norm_magz, monopole_Q, svd_min=None,
                           jastrow_nn_zz=0.0, jastrow_chi_max=None, jastrow_nn_xy=0.0, jastrow_trotter_res=None,
-                          z2_bond_sign=None, virtual_parity=None, helical=False):
+                          z2_bond_sign=None, virtual_parity=None, helical=False, remove_sites=None):
     # helical: the helical YC cylinder, YCLy-1 in the notation of He et al., PRX 7, 031020 (2017)
+    # remove_sites: _rm_<remove_sites> after the gsindex (validated by ParseRemovedSites, before any job is sent)
+    removes_sites = ParseRemovedSites(remove_sites, Lx, Ly, geometry) is not None
     if parse_bool(helical):
         assert geometry == "YC", "the helical cylinder is implemented for YC only"
         geometry = f"YC{Ly}-1"
     case_name = f"{bc_MPS}_Lx_{Lx}_Ly_{Ly}_chi_{chi_max}_flux_{flux}_{geometry}_gsindex_{gs_manifold_index}"
+    if removes_sites:
+        case_name += f"_rm_{remove_sites}"
 
     if model_type is not None:
         case_name = f"{model_type}_" + case_name
@@ -647,13 +651,15 @@ def ParseRemovedSites(remove_sites, Lx, Ly, geometry):
 def BuildTriangularLattice(Lx, Ly, site, bc_MPS, bc = ('periodic', 'periodic'), geometry="YC",
                            spinfull_fermions=False, remove_sites=None):
     """ the triangular lattice of geometry (YC / XC); remove_sites (see ParseRemovedSites) removes sites of a finite
-        cylinder, making it a tenpy IrregularLattice """
+        cylinder, making it a tenpy IrregularLattice. For spinfull fermions a removed spin site (x, y, u) is the two
+        fermion sites (x, y, 2 u) (up) and (x, y, 2 u + 1) (down), so that the (up, down) pairs of the remaining
+        sites are still consecutive in the MPS, in the MPS order of the spin lattice with the same sites removed """
     removed = ParseRemovedSites(remove_sites, Lx, Ly, geometry)
     lat = _BuildRegularTriangularLattice(Lx, Ly, site, bc_MPS, bc, geometry, spinfull_fermions)
     if removed is None:
         return lat
     if spinfull_fermions:
-        raise ValueError("removing sites is implemented only for the spin lattice")
+        removed = [[x, y, 2 * u + spin] for x, y, u in removed for spin in (0, 1)]
     if bc_MPS != "finite" or bc[0] != "open":
         raise ValueError(f"removing sites needs a finite MPS on a lattice open along x, got bc_MPS={bc_MPS}, bc={bc}")
     return IrregularLattice(lat, remove=removed)

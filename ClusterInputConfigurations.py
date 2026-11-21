@@ -89,12 +89,14 @@ gutzwiller_input_params = [
     ("jastrow_trotter_res", optional_float, None),
     ("z2_bond_sign", int, 1),
     ("virtual_parity", optional_int, None),
-    ("helical", parse_bool, False)
+    ("helical", parse_bool, False),
+    ("remove_sites", optional_str, None)  # None: the full cylinder; edges: one spin site (both fermion flavors)
+                                          # removed on each open edge, the odd sector (see Main.ParseRemovedSites)
 ]
 
-# the Kagome Gutzwiller run has the triangular parameters without the triangular geometry and ansatz choice, in the
-# same order
-triangular_only_gutzwiller_params = ("geometry", "model_type", "z2_bond_sign", "helical")
+# the Kagome Gutzwiller run has the triangular parameters without the triangular geometry, ansatz choice and site
+# removal, in the same order
+triangular_only_gutzwiller_params = ("geometry", "model_type", "z2_bond_sign", "helical", "remove_sites")
 kagome_gutzwiller_input_params = [param for param in gutzwiller_input_params
                                   if param[0] not in triangular_only_gutzwiller_params]
 

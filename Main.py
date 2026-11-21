@@ -1,5 +1,6 @@
 import os.path
 import copy
+import re
 
 from TryingTemfpy import local
 from scipy.optimize import curve_fit
@@ -215,7 +216,7 @@ def CreateOverlapsCaseDir(main_results_dir, **kwargs):
     fixed_params_dir = ""
     if scanned_parameter_name != "J2" and J2 is not None:
         fixed_params_dir += f"J2_{J2}_"
-    if scanned_parameter_name != "Delz" and Delz is not None and abs(float(Delz) - 1.0) > 1e-15:
+    if scanned_parameter_name != "Delz" and not IsDefaultDelz(Delz):  # see DelzFromDirName
         fixed_params_dir += f"Delz_{Delz}_"
     if scanned_parameter_name != "jastrow_nn_zz" and jastrow_nn_zz is not None and float(jastrow_nn_zz) != 0.0:
         fixed_params_dir += f"jasNNzz_{float(jastrow_nn_zz)}_"
@@ -784,12 +785,36 @@ def RampDisabled(ramp):
     return optional_bool(str(ramp)) is False
 
 
+# the isotropic (Heisenberg) Delz, which the case directory names leave out (J1J2ParamsDirName, CreateOverlapsCaseDir)
+DEFAULT_DELZ = 1.0
+# _Delz_<Delz> of a case directory name; a number, so that the scan_Delz_ of an overlaps scan of Delz doesn't match
+_DELZ_IN_DIR_NAME = re.compile(r"_Delz_([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)(?:_|$)")
+
+
+def IsDefaultDelz(Delz):
+    """ whether a case directory name leaves Delz out: None or DEFAULT_DELZ """
+    return Delz is None or abs(float(Delz) - DEFAULT_DELZ) <= 1e-15
+
+
+def DelzFromDirName(name):
+    """
+        The Delz of a case directory name (a path's last component is used), the inverse of the naming of
+        J1J2ParamsDirName and CreateOverlapsCaseDir: the value of _Delz_<Delz>, DEFAULT_DELZ if it is left out. None
+        for an overlaps scan of Delz (scan_Delz_ without a value), which has no single Delz.
+    """
+    name = Path(name).name
+    match = _DELZ_IN_DIR_NAME.search(name)
+    if match is not None:
+        return float(match.group(1))
+    return None if "scan_Delz_" in name else DEFAULT_DELZ
+
+
 def J1J2ParamsDirName(bc_MPS, initial_state, conserve, J2, chi, max_sweeps, norm_magz, Delz=1.0, mixer=None,
                       ramp=None):
     """ the lattice independent part of the J1J2 DMRG case directory name (mixer=None and ramp=None are the
-        defaults, True) """
+        defaults, True; Delz is left out if IsDefaultDelz, see DelzFromDirName) """
     params_dir = f"{bc_MPS}_init_{initial_state}_conserve_{conserve}_J2_{J2}"
-    if Delz is not None and abs(float(Delz) - 1.0) > 1e-15:
+    if not IsDefaultDelz(Delz):
         params_dir += f"_Delz_{Delz}"
     if chi is not None:
         params_dir += f"_chi_{chi}"
@@ -938,6 +963,22 @@ def calculateGutzwillerEnergiesJ1J2(psi, lat, J2s, Delz=1.0):
     for J2, E in zip(np.atleast_1d(J2s), energies):
         print(f"J2={J2}: E={E}")
     return energies
+
+
+def calculateSiteEnergiesJ1J2(psi, lat, Delz=1.0):
+    """
+        The energy of each site of psi (WaveFunctionProperties.SiteEnergies, half of each bond on it) w.r.t. the XXZ
+        J1J2 model (GenerateJ1J2SpinModel) on lat, the lattice of psi, split as E_i(J2) = E_J1[i] + J2 E_J2[i].
+        Returns E_J1, E_J2 (arrays over the MPS sites). Each bond expectation value is evaluated once.
+    """
+    from WaveFunctionProperties import SiteEnergies
+
+    assert psi.L == lat.N_sites, f"MPS length {psi.L} != number of lattice sites {lat.N_sites}"
+    assert lat.bc_MPS == psi.bc, f"lattice bc_MPS {lat.bc_MPS} != MPS bc {psi.bc}"
+    cache = {}
+    E_J1 = SiteEnergies(psi, GenerateJ1J2SpinModel(0.0, Delz, lat)[0], cache)
+    E_J2 = SiteEnergies(psi, GenerateJ1J2SpinModel(1.0, Delz, lat)[0], cache) - E_J1
+    return E_J1, E_J2
 
 
 def SaveSimulationOutput(results_dir, spin_corr_x, ks, spin_corr_k, fig_corr_k, fig_lat,
@@ -1719,9 +1760,13 @@ def AnalyzeMagnetizedJ1J2Correlations(results_dir, n_sites_cases, postprocess_di
     plt.legend()
 
 def checkFiniteDMRGParity():
-    path = project_dir + ("/ResultsFromCluster/TriangularJ1J2DMRG_Nov/17_11/Lx_12_Ly_6_bc_op_YC/"
-                          "finite_init_stripe60_conserve_1_J2_0.125_chi_3000_maxsweeps_20_mix_0_ramp_0/")
+    #path = project_dir + ("/ResultsFromCluster/TriangularJ1J2DMRG_Nov/17_11/Lx_12_Ly_6_bc_op_YC/"
+    #                      "finite_init_stripe60_conserve_1_J2_0.125_chi_3000_maxsweeps_20_mix_0_ramp_0/")
+    path = project_dir + ("/ResultsFromCluster/TriangularJ1J2DMRG_Nov/14_11/Lx_24_Ly_6_bc_op_YC/"
+                          "finite_init_stripe60_conserve_1_J2_0.125_chi_2000_maxsweeps_20/")
     psi = LoadPsi(path)
+    spectra = psi.entanglement_spectrum(by_charge=True)
+    Sz = psi.expectation_value("Sz")
     print("Here")
 
 

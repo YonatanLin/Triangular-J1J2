@@ -1,4 +1,4 @@
-from Main import CreateTriangularCaseDir
+from Main import CreateTriangularCaseDir, DEFAULT_DELZ
 from ClusterInputConfigurations import dmrg_input_params
 import sys
 from pathlib import Path
@@ -40,7 +40,7 @@ def AddTriangularCaseDirsToCondorCases(main_results_dir, condor_cases_file="cond
                 # the continuation starts from file at chi_max anyway; the setting only keeps its directory name
                 ramp = False if no_ramp else None
                 if Delz is None:
-                    Delz = 1.0
+                    Delz = DEFAULT_DELZ  # Main.J1J2ParamsDirName leaves the default out
                 if "cont" in _initial_state:
                     continue
 

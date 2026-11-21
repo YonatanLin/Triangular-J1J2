@@ -13,7 +13,7 @@ import numpy as np
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from tenpy.networks.site import SpinHalfSite
 
-from Main import BuildTriangularLattice, calculateGutzwillerEnergiesJ1J2, LatticeOfMPSByRings
+from Main import BuildTriangularLattice, calculateGutzwillerEnergiesJ1J2, DelzFromDirName, LatticeOfMPSByRings
 from ResultsIO import LoadLattice
 from WaveFunctionProperties import (_reference_site_index, WrapAroundCylinder, HasRemovedSites, LatticeSiteExists,
                                     CentralColumnCutBond)
@@ -27,9 +27,9 @@ def _case_title(results_dir):
     """Short title from the directory name, e.g. 'J2=0.08, Delz=0.7' (falls back to the directory name)."""
     name = Path(results_dir).name
     j2 = re.search(r"J2_([0-9.]+?)(?:_|$)", name)
-    delz = re.search(r"Delz_([0-9.]+?)_", name)
-    if j2:  # no Delz in the name: an isotropic (Heisenberg) run
-        return rf"$J_2$={j2.group(1)}, $\Delta$={delz.group(1) if delz else 1}"
+    delz = DelzFromDirName(name)
+    if j2:
+        return rf"$J_2$={j2.group(1)}" + (rf", $\Delta$={delz:g}" if delz is not None else "")
 
     vz = re.search(r"jasNNzz_([0-9.]+?)_", name)
     if vz:
@@ -451,16 +451,10 @@ def J1J2Energies(psi, results_dir, J2s=JIANG_J2S, Delz=1.0):
     return np.real(calculateGutzwillerEnergiesJ1J2(psi, lat, J2s, Delz))
 
 
-def _Delz(results_dir):
-    """Delz of the directory name (DMRG runs of the XXZ model), 1 (isotropic) if absent."""
-    delz = re.search(r"_Delz_([0-9.]+?)(?:_|$)", Path(results_dir).name)
-    return float(delz.group(1)) if delz else 1.0
-
-
 def SaveEnergiesVsJ2(results_dir, J2s, energies):
     """Saves ENERGIES_FILE in results_dir: J2, energy per site."""
     np.savetxt(Path(results_dir) / ENERGIES_FILE, np.column_stack([J2s, energies]),
-               header=f"J2 energy_per_site; Delz={_Delz(results_dir)}")
+               header=f"J2 energy_per_site; Delz={DelzFromDirName(results_dir)}")
 
 
 def LoadEnergiesVsJ2(results_dir):
@@ -540,7 +534,7 @@ def AnalyzeCaseAsJiang(psi, results_dir, J2s=JIANG_J2S, n_columns=None):
     else:
         print(f"no {list(CORR_FILES.values())} in {results_dir} (spin_components_structure_factor post-process), "
               f"skipping the nearest neighbor correlation plots")
-    energies = J1J2Energies(psi, results_dir, J2s, _Delz(results_dir))
+    energies = J1J2Energies(psi, results_dir, J2s, DelzFromDirName(results_dir))
     SaveEnergiesVsJ2(results_dir, J2s, energies)
     PlotEnergiesVsJ2(results_dir, J2s, energies)
     PlotSchmidtSpectrum(psi, results_dir)

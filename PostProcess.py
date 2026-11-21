@@ -15,10 +15,12 @@ DIMER_CORRELATIONS = "dimer_correlations"
 JIANG_ANALYSIS = "jiang_analysis"
 KAGOME_GUTZWILLER_ENERGY = "kagome_gutzwiller_energy"
 TRIANGULAR_GUTZWILLER_ENERGY = "triangular_gutzwiller_energy"
+SITE_ENERGIES = "site_energies"  # of the DMRG ground states (the Gutzwiller states: the *_gutzwiller_energy types)
 VIRTUAL_PARITY_DIR_NAMES = "virtual_parity_dir_names"  # results_dir is the parent dir of the cases
 SUPPORTED_POST_PROCESS_TYPES = {ENTANGLEMENT_ENTROPY, SPECIAL_POINTS_STRUCTURE_FACTOR, MAGZ,
                                 SPIN_COMPONENTS_STRUCTURE_FACTOR, DIMER_CORRELATIONS, JIANG_ANALYSIS,
-                                KAGOME_GUTZWILLER_ENERGY, TRIANGULAR_GUTZWILLER_ENERGY, VIRTUAL_PARITY_DIR_NAMES}
+                                KAGOME_GUTZWILLER_ENERGY, TRIANGULAR_GUTZWILLER_ENERGY, SITE_ENERGIES,
+                                VIRTUAL_PARITY_DIR_NAMES}
 # run once on the parent dir of the cases (one condor job), not per case
 PARENT_DIR_POST_PROCESS_TYPES = {VIRTUAL_PARITY_DIR_NAMES}
 
@@ -34,6 +36,14 @@ KAGOME_ENERGIES_COLLECTED_FILE = "kagome_energies_vs_J2_collected.txt"
 TRIANGULAR_ENERGIES_FILE = "triangular_energies_vs_J2.txt"
 # not TRIANGULAR_ENERGIES_FILE: in the parent dir, it would be collected as a case
 TRIANGULAR_ENERGIES_COLLECTED_FILE = "triangular_energies_vs_J2_collected.txt"
+# the per-site energies of the Kagome / triangular Gutzwiller energy post-processes, see _site_energies_file
+KAGOME_SITE_ENERGIES_FILE = "kagome_site_energies.txt"
+TRIANGULAR_SITE_ENERGIES_FILE = "triangular_site_energies.txt"
+# the site_energies post-process of a DMRG ground state
+DMRG_SITE_ENERGIES_FILE = "site_energies.txt"
+DMRG_BULK_ENERGY_FILE = "bulk_energy.txt"
+# not DMRG_BULK_ENERGY_FILE: in the parent dir, it would be collected as a case
+DMRG_BULK_ENERGY_COLLECTED_FILE = "bulk_energy_collected.txt"
 # the J2 values of the Kagome / triangular Gutzwiller energies, as the parameter file of the overlaps runs
 J2_FILE = "J2.txt"
 # the triangular Gutzwiller case dir names (Main.GutzwillerCaseDirName): bc_MPS, Ly, geometry, helical Ly (YC<Ly>-1)
@@ -301,14 +311,24 @@ def _legacy_triangular_mps_lattice(psi, results_dir):
                                Ly)
 
 
+def _site_energies_file(energies_file):
+    """The per-site energies file saved next to the energies (vs J2) file energies_file."""
+    return {KAGOME_ENERGIES_FILE: KAGOME_SITE_ENERGIES_FILE,
+            TRIANGULAR_ENERGIES_FILE: TRIANGULAR_SITE_ENERGIES_FILE}[energies_file]
+
+
 def _CalculateGutzwillerEnergy(results_dir, legacy_mps_lattice, energies_file, J2_file, Delz, psi_filename):
     """
     Energies per site of the Gutzwiller state of results_dir w.r.t. the J1J2 model on its lattice
     (Main.calculateGutzwillerEnergiesJ1J2), for the J2 values of J2_file (see _find_J2_file). The lattice is the one
     the run saved (ResultsIO.MPS_LATTICE_FILE), or for older runs legacy_mps_lattice(psi, results_dir). Saves
-    results_dir/energies_file: J2, energy per site.
+    results_dir/energies_file: J2, energy per site, bulk energy per site; and results_dir/<site energies file>
+    (_site_energies_file): the energy of each site (Main.calculateSiteEnergiesJ1J2, half of each bond on it) as
+    E_J1 + J2 E_J2. The bulk energy per site is their mean over WaveFunctionProperties.BulkSites (the central columns
+    of a finite MPS, all sites of an infinite one).
     """
-    from Main import calculateGutzwillerEnergiesJ1J2
+    from Main import calculateGutzwillerEnergiesJ1J2, calculateSiteEnergiesJ1J2
+    from WaveFunctionProperties import BulkSites
 
     print(results_dir)
     J2_path = _find_J2_file(results_dir, J2_file)
@@ -322,9 +342,107 @@ def _CalculateGutzwillerEnergy(results_dir, legacy_mps_lattice, energies_file, J
         lat = legacy_mps_lattice(psi, results_dir)
 
     energies = np.real(calculateGutzwillerEnergiesJ1J2(psi, lat, J2s, Delz))
+
+    E_J1, E_J2 = calculateSiteEnergiesJ1J2(psi, lat, Delz)
+    site_energies = E_J1[np.newaxis, :] + J2s[:, np.newaxis] * E_J2[np.newaxis, :]  # [J2, site]
+    sum_rule = site_energies.sum(axis=1) / lat.N_sites if psi.finite else site_energies.mean(axis=1)
+    if not np.allclose(sum_rule, energies, rtol=1e-8, atol=1e-8):
+        print(f"WARNING: the site energies give energies per site {sum_rule}, the MPO {energies}")
+    bulk = BulkSites(lat)
+    bulk_energies = site_energies[:, bulk].mean(axis=1)
+    for J2, E_bulk in zip(J2s, bulk_energies):
+        print(f"J2={J2}: bulk E={E_bulk} (mean over {len(bulk)} sites)")
+
     np.savetxt(_result_file_path(results_dir, energies_file, assert_exist=False),
-               np.column_stack([J2s, energies]), header=f"J2 energy_per_site; Delz={Delz}")
-    return J2s, energies
+               np.column_stack([J2s, energies, bulk_energies]),
+               header=f"J2 energy_per_site bulk_energy_per_site; Delz={Delz}; bulk sites: {bulk.tolist()}")
+    _save_site_energies(_result_file_path(results_dir, _site_energies_file(energies_file), assert_exist=False), lat,
+                        [E_J1, E_J2], "E_J1 E_J2", f"E_i(J2) = E_J1 + J2 E_J2, J1 = 1; Delz={Delz}")
+    return J2s, energies, bulk_energies
+
+
+def _save_site_energies(path, lat, columns, column_names, comment):
+    """Saves per-site columns (arrays over the MPS sites of lat) after mps_index and the lattice index (x, y, u)."""
+    lat_idx = np.array([lat.mps2lat_idx(i) for i in range(lat.N_sites)])
+    np.savetxt(path, np.column_stack([np.arange(lat.N_sites), lat_idx, *columns]),
+               header=f"mps_index lattice_index ({lat_idx.shape[1]} columns) {column_names}; {comment}")
+
+
+def _dmrg_case_parameters(results_dir):
+    """J2 and Delz of a J1J2 DMRG case dir, from its name (Main.J1J2ParamsDirName: ..._J2_<J2>[_Delz_<Delz>]...;
+    Delz by Main.DelzFromDirName)."""
+    from Main import DelzFromDirName
+
+    name = _normalize_results_dir(results_dir).name
+    J2 = re.search(r"_J2_([^_]+)", name)
+    assert J2 is not None, f"no J2 in the DMRG case dir name {name} (Main.J1J2ParamsDirName)"
+    Delz = DelzFromDirName(name)
+    assert Delz is not None, f"no single Delz in the case dir name {name}"
+    return float(J2.group(1)), Delz
+
+
+def _dmrg_mps_lattice(psi, results_dir):
+    """
+    The lattice of the MPS psi of a J1J2 DMRG case dir. lattice.pkl is the lattice of the saved correlations: that of
+    the MPS for a finite run, a longer one (Main.LxInfiniteMPSCorrelations) for an infinite run, whose MPS lattice is
+    rebuilt as its first columns (Main.LatticeOfMPSByRings): the triangular one by JiangAnalysis._ColumnsLattice
+    (geometry, helical shift, bc), the Kagome one by Main.BuildKagomeLattice; the site positions are checked.
+    """
+    from tenpy.models.lattice import Kagome
+    from tenpy.networks.site import SpinHalfSite
+    from Main import BuildKagomeLattice, LatticeOfMPSByRings
+
+    lat_pkl = LoadLattice(results_dir)
+    assert lat_pkl.bc_MPS == psi.bc, f"lattice.pkl bc_MPS {lat_pkl.bc_MPS} != MPS bc {psi.bc}"
+    if lat_pkl.N_sites == psi.L:
+        return lat_pkl
+    assert psi.bc == "infinite", f"lattice.pkl has {lat_pkl.N_sites} sites, the finite MPS {psi.L}"
+    site = SpinHalfSite(conserve=psi.sites[0].conserve)
+    Ly = lat_pkl.Ls[1]
+    if isinstance(lat_pkl, Kagome):
+        bc = tuple("open" if is_open else "periodic" for is_open in lat_pkl.bc)
+        lat = LatticeOfMPSByRings(psi, lambda Lx: BuildKagomeLattice(Lx, Ly, site, "infinite", bc=bc), Ly)
+        assert np.allclose([lat.position(lat.mps2lat_idx(i)) for i in range(lat.N_sites)],
+                           [lat_pkl.position(lat_pkl.mps2lat_idx(i)) for i in range(lat.N_sites)]), \
+            "the rebuilt Kagome lattice doesn't match lattice.pkl"
+        return lat
+    from JiangAnalysis import _ColumnsLattice  # checks the positions
+    return LatticeOfMPSByRings(psi, lambda Lx: _ColumnsLattice(lat_pkl, Lx, site), Ly)
+
+
+def CalculateSiteEnergies(results_dir, psi_filename="psi_gs.pkl"):
+    """
+    The energy of each site of the DMRG ground state of the J1J2 DMRG case dir results_dir w.r.t. its J1J2 model
+    (J2, Delz of the dir name; WaveFunctionProperties.SiteEnergies, half of each bond on a site) and the bulk energy
+    per site, their mean over WaveFunctionProperties.BulkSites (the central columns of a finite MPS, all sites of an
+    infinite one). Saves results_dir/site_energies.txt (mps_index, lattice index, E) and results_dir/bulk_energy.txt:
+    J2, Delz, energy per site, bulk energy per site.
+    """
+    from Main import GenerateJ1J2SpinModel
+    from WaveFunctionProperties import BulkSites, SiteEnergies
+
+    print(results_dir)
+    J2, Delz = _dmrg_case_parameters(results_dir)
+    psi = LoadPsi(results_dir, psi_filename)
+    lat = _dmrg_mps_lattice(psi, results_dir)
+    model, _ = GenerateJ1J2SpinModel(J2, Delz, lat)
+
+    site_energies = SiteEnergies(psi, model)
+    E = np.sum(site_energies) / psi.L if psi.finite else np.mean(site_energies)
+    E_mpo = np.real(model.H_MPO.expectation_value(psi))
+    E_mpo = E_mpo / psi.L if psi.finite else E_mpo
+    if not np.isclose(E, E_mpo, rtol=1e-8, atol=1e-8):
+        print(f"WARNING: the site energies give an energy per site {E}, the MPO {E_mpo}")
+    bulk = BulkSites(lat)
+    E_bulk = np.mean(site_energies[bulk])
+    print(f"J2={J2}, Delz={Delz}: E={E}, bulk E={E_bulk} (mean over {len(bulk)} sites)")
+
+    _save_site_energies(_result_file_path(results_dir, DMRG_SITE_ENERGIES_FILE, assert_exist=False), lat,
+                        [site_energies], "E", f"J2={J2}; Delz={Delz}; J1 = 1")
+    np.savetxt(_result_file_path(results_dir, DMRG_BULK_ENERGY_FILE, assert_exist=False),
+               np.array([[J2, Delz, E, E_bulk]]),
+               header=f"J2 Delz energy_per_site bulk_energy_per_site; bulk sites: {bulk.tolist()}")
+    return site_energies, E, E_bulk
 
 
 def _CalculateGutzwillerEnergies(parent_dir, is_case_dir, calculate_energy, post_process_type, collected_file,
@@ -351,7 +469,7 @@ def CalculateKagomeGutzwillerEnergy(results_dir, J2_file=J2_FILE, Delz=1.0, psi_
     Energies per site of the Gutzwiller state of the Kagome Gutzwiller case dir results_dir (CreateKagomeGutzwillerInput)
     w.r.t. the J1J2 model on its lattice (see _CalculateGutzwillerEnergy), for the J2 values of J2_file. Older runs
     without a saved MPS lattice use the one rebuilt by _legacy_kagome_mps_lattice. Saves
-    results_dir/kagome_energies_vs_J2.txt: J2, energy per site.
+    results_dir/kagome_energies_vs_J2.txt: J2, energy per site, bulk energy per site; and kagome_site_energies.txt.
     """
     return _CalculateGutzwillerEnergy(results_dir, _legacy_kagome_mps_lattice, KAGOME_ENERGIES_FILE, J2_file, Delz,
                                       psi_filename)
@@ -373,7 +491,8 @@ def CalculateTriangularGutzwillerEnergy(results_dir, J2_file=J2_FILE, Delz=1.0, 
     Energies per site of the Gutzwiller state of the triangular Gutzwiller case dir results_dir (CreateGutzwillerInput)
     w.r.t. the triangular J1J2 model on its lattice (see _CalculateGutzwillerEnergy), for the J2 values of J2_file.
     Older runs without a saved MPS lattice use the one rebuilt by _legacy_triangular_mps_lattice. Saves
-    results_dir/triangular_energies_vs_J2.txt: J2, energy per site.
+    results_dir/triangular_energies_vs_J2.txt: J2, energy per site, bulk energy per site; and
+    triangular_site_energies.txt.
     """
     return _CalculateGutzwillerEnergy(results_dir, _legacy_triangular_mps_lattice, TRIANGULAR_ENERGIES_FILE, J2_file,
                                       Delz, psi_filename)
@@ -483,8 +602,13 @@ def CollectPostProcessResults(parent_dir, post_process_type, output_path=None):
       special_points_structure_factor:  special_points_structure_factor.txt
       spin_components_structure_factor: special_points_structure_factor_components.txt
       jiang_analysis:                   energies_vs_J2.txt  (dir_index J2 energy_per_site)
-      kagome_gutzwiller_energy:         kagome_energies_vs_J2_collected.txt  (dir_index J2 energy_per_site)
-      triangular_gutzwiller_energy:     triangular_energies_vs_J2_collected.txt  (dir_index J2 energy_per_site)
+      kagome_gutzwiller_energy:         kagome_energies_vs_J2_collected.txt
+                                        (dir_index J2 energy_per_site bulk_energy_per_site)
+      triangular_gutzwiller_energy:     triangular_energies_vs_J2_collected.txt
+                                        (dir_index J2 energy_per_site bulk_energy_per_site)
+      site_energies:                    bulk_energy_collected.txt
+                                        (dir_index J2 Delz energy_per_site bulk_energy_per_site)
+    (bulk_energy_per_site is nan for the Gutzwiller cases post-processed before it was added)
     The case directories are listed, in dir_index order, in <output_path>.dirs.txt.
     """
     if post_process_type == ENTANGLEMENT_ENTROPY:
@@ -495,6 +619,8 @@ def CollectPostProcessResults(parent_dir, post_process_type, output_path=None):
         case_filename, default_output = KAGOME_ENERGIES_FILE, KAGOME_ENERGIES_COLLECTED_FILE
     elif post_process_type == TRIANGULAR_GUTZWILLER_ENERGY:
         case_filename, default_output = TRIANGULAR_ENERGIES_FILE, TRIANGULAR_ENERGIES_COLLECTED_FILE
+    elif post_process_type == SITE_ENERGIES:
+        case_filename, default_output = DMRG_BULK_ENERGY_FILE, DMRG_BULK_ENERGY_COLLECTED_FILE
     elif post_process_type == SPECIAL_POINTS_STRUCTURE_FACTOR:
         case_filename, default_output = SPECIAL_POINTS_FILE, "special_points_structure_factor.txt"
     elif post_process_type == SPIN_COMPONENTS_STRUCTURE_FACTOR:
@@ -517,9 +643,19 @@ def CollectPostProcessResults(parent_dir, post_process_type, output_path=None):
             rows.append(data[0])
             header = "bond bond_dimension entanglement_entropy energy"
             continue
-        if post_process_type in (JIANG_ANALYSIS, KAGOME_GUTZWILLER_ENERGY, TRIANGULAR_GUTZWILLER_ENERGY):
+        if post_process_type == JIANG_ANALYSIS:
             rows.extend(np.concatenate([[ind_dir], row]) for row in data)
             header = "dir_index J2 energy_per_site"
+            continue
+        if post_process_type in (KAGOME_GUTZWILLER_ENERGY, TRIANGULAR_GUTZWILLER_ENERGY):
+            if data.shape[1] == 2:  # post-processed before the bulk energy column
+                data = np.column_stack([data, np.full(len(data), np.nan)])
+            rows.extend(np.concatenate([[ind_dir], row]) for row in data)
+            header = "dir_index J2 energy_per_site bulk_energy_per_site"
+            continue
+        if post_process_type == SITE_ENERGIES:
+            rows.extend(np.concatenate([[ind_dir], row]) for row in data)
+            header = "dir_index J2 Delz energy_per_site bulk_energy_per_site"
             continue
         names = _header_point_names(case_path)
         for ind_point in range(data.shape[0]):
@@ -554,6 +690,8 @@ def PostProcessResults(results_dir, post_process_type):
         CalculateKagomeGutzwillerEnergy(results_dir)
     elif post_process_type == TRIANGULAR_GUTZWILLER_ENERGY:
         CalculateTriangularGutzwillerEnergy(results_dir)
+    elif post_process_type == SITE_ENERGIES:
+        CalculateSiteEnergies(results_dir)
     elif post_process_type == VIRTUAL_PARITY_DIR_NAMES:
         AddVirtualParityToDirNames(results_dir)
     else:

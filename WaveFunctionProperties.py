@@ -995,6 +995,71 @@ def CalculateSpinSpinCorrelationComponents(psi, lat, sites1=None, sites2=None):
             "longitudinal": zz_corr}
 
 
+# ----------------------------------------------------------------------
+# Local (per site) energies
+# ----------------------------------------------------------------------
+def SiteEnergies(psi, model, cache=None):
+    """
+    The energy E_i of each MPS site i of psi w.r.t. model: its onsite terms, and half of each two-site coupling term
+    on it, E_i = sum_j 1/2 <h_ij> (the bulk energy per site, independent of which bonds are attributed to which site
+    in a translation invariant bulk). For a finite psi sum_i E_i = <H>; for an infinite psi the coupling terms leaving
+    the unit cell are folded back into it (by translation invariance), so mean_i E_i is the energy per site.
+
+    The coupling terms op1_i op2_j are evaluated grouped by (i, op1, op2), with one correlation_function call from i
+    to the farthest j. cache, a dict {(i, op1, op2, j): <op1_i op2_j>}, is filled and reused, e.g. between models of
+    different coupling strengths on the same lattice. Only two-site terms without operator strings (spins).
+    """
+    from tenpy.networks.terms import CouplingTerms
+
+    L = psi.L
+    cache = {} if cache is None else cache
+    E = np.zeros(L)
+    for i, terms_i in enumerate(model.all_onsite_terms().onsite_terms):
+        for op, strength in terms_i.items():
+            if strength != 0:
+                E[i] += np.real(strength * psi.expectation_value(op, [i])[0])
+
+    coupling_terms = model.all_coupling_terms()
+    assert type(coupling_terms) is CouplingTerms, f"only two-site couplings, got {type(coupling_terms).__name__}"
+    for i, terms_i in coupling_terms.coupling_terms.items():
+        i = int(i)
+        for (op1, op_str), terms_ij in terms_i.items():
+            assert op_str == "Id", f"coupling {op1}_{i} with operator string {op_str} (fermions?) is not supported"
+            by_op2 = {}  # op2: [(j, strength)]
+            for j, terms_j in terms_ij.items():
+                for op2, strength in terms_j.items():
+                    by_op2.setdefault(op2, []).append((int(j), strength))
+            for op2, j_strengths in by_op2.items():
+                missing = sorted({j for j, _ in j_strengths if (i, op1, op2, j) not in cache})
+                if missing:
+                    values = psi.correlation_function(op1, op2, sites1=[i], sites2=missing)[0]
+                    cache.update({(i, op1, op2, j): value for j, value in zip(missing, values)})
+                for j, strength in j_strengths:
+                    half_bond = 0.5 * np.real(strength * cache[(i, op1, op2, j)])
+                    E[i % L] += half_bond
+                    E[j % L] += half_bond
+    return E
+
+
+def BulkSites(lat):
+    """
+    The MPS indices of the bulk sites of lat: for a finite MPS the central column(s), those with
+    |x - (Lx - 1) / 2| < 1, i.e. the two central columns for even Lx (averaging out the even / odd in x alternation
+    induced by the open edges) and the central one for odd Lx; for an infinite MPS all the sites of the unit cell.
+    """
+    if lat.bc_MPS == "infinite":
+        return np.arange(lat.N_sites)
+    Lx = lat.Ls[0]
+    columns = np.array([lat.mps2lat_idx(i)[0] for i in range(lat.N_sites)])
+    return np.flatnonzero(np.abs(columns - (Lx - 1) / 2) < 1)
+
+
+def BulkEnergyPerSite(site_energies, lat):
+    """The mean of site_energies (SiteEnergies) over the BulkSites of lat."""
+    assert len(site_energies) == lat.N_sites, f"{len(site_energies)} site energies != {lat.N_sites} lattice sites"
+    return np.mean(np.asarray(site_energies)[BulkSites(lat)])
+
+
 def _site_positions(lattice, n_sites):
     return np.array([lattice.position(lattice.mps2lat_idx(i)) for i in range(n_sites)])
 
